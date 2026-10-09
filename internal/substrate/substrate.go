@@ -36,6 +36,7 @@ import (
 	"github.com/Hinkolas/skali/internal/platform"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/substrate/seaweed"
+	"github.com/Hinkolas/skali/internal/workstats"
 )
 
 // Namespace is the skalid-owned platform namespace holding every substrate
@@ -183,11 +184,28 @@ type workKey struct {
 	id   uuid.UUID
 }
 
+// Reasons work enters the queue, counted per arrival by the system
+// observation endpoint.
+const (
+	reasonEnsure      = "ensure"       // an environment pass recorded the claim
+	reasonRelease     = "release"      // a revision, or the object store, dropped the claim
+	reasonBucket      = "bucket"       // a bucket claim's pass needs the object store
+	reasonObjectStore = "object-store" // the object store's pass needs its metadata claim
+	reasonRotation    = "rotation"     // a credential rotation committed or retires
+	reasonMaintenance = "maintenance"  // storage upkeep found a passed retirement
+	reasonTeardown    = "teardown"     // an environment's removal releases its claims
+	reasonBoot        = "boot"         // startup, or the default pool's creation
+	reasonResync      = "resync"       // the periodic sweep of unsettled work
+	reasonAPI         = "api"          // an API handler's request
+	reasonRequeue     = "requeue"      // a pass asked to run again after a delay
+	reasonRetry       = "retry"        // a failed pass, after its backoff
+)
+
 // Controller drives the substrate. Create with New, start with Run.
 type Controller struct {
 	deps  Deps
 	cfg   Config
-	queue workqueue.TypedRateLimitingInterface[workKey]
+	queue *workstats.Queue[workKey]
 
 	mu        sync.Mutex
 	waiting   map[uuid.UUID]string // claim id -> current waiting reason
@@ -288,8 +306,9 @@ func New(deps Deps, cfg Config) *Controller {
 	c := &Controller{
 		deps: deps,
 		cfg:  cfg,
-		queue: workqueue.NewTypedRateLimitingQueue(workqueue.NewTypedWithMaxWaitRateLimiter(
-			workqueue.DefaultTypedControllerRateLimiter[workKey](), requeueWait)),
+		queue: workstats.NewQueue(workqueue.NewTypedWithMaxWaitRateLimiter(
+			workqueue.DefaultTypedControllerRateLimiter[workKey](), requeueWait),
+			func(key workKey) string { return string(key.kind) }),
 		waiting:           make(map[uuid.UUID]string),
 		pendingExtensions: make(map[uuid.UUID][]byte),
 	}
@@ -298,24 +317,37 @@ func New(deps Deps, cfg Config) *Controller {
 }
 
 // EnqueueClaim schedules one claim's reconciliation.
-func (c *Controller) EnqueueClaim(id uuid.UUID) {
-	c.queue.Add(workKey{kind: workClaim, id: id})
+func (c *Controller) EnqueueClaim(id uuid.UUID, reason string) {
+	c.queue.Add(workKey{kind: workClaim, id: id}, reason)
 }
 
-// EnqueuePool schedules one pool's reconciliation.
+// EnqueuePool schedules one pool's reconciliation; the API's re-apply
+// request.
 func (c *Controller) EnqueuePool(id uuid.UUID) {
-	c.queue.Add(workKey{kind: workPool, id: id})
+	c.enqueuePool(id, reasonAPI)
+}
+
+func (c *Controller) enqueuePool(id uuid.UUID, reason string) {
+	c.queue.Add(workKey{kind: workPool, id: id}, reason)
 }
 
 // EnqueueBucketClaim schedules one bucket claim's reconciliation.
-func (c *Controller) EnqueueBucketClaim(id uuid.UUID) {
-	c.queue.Add(workKey{kind: workBucket, id: id})
+func (c *Controller) EnqueueBucketClaim(id uuid.UUID, reason string) {
+	c.queue.Add(workKey{kind: workBucket, id: id}, reason)
 }
 
 // EnqueueObjectStore schedules the physical system's reconciliation; with
 // one live store per installation the key carries no id.
-func (c *Controller) EnqueueObjectStore() {
-	c.queue.Add(workKey{kind: workStore})
+func (c *Controller) EnqueueObjectStore(reason string) {
+	c.queue.Add(workKey{kind: workStore}, reason)
+}
+
+// QueueStats reads the queue's accounting for the system observation
+// endpoint.
+func (c *Controller) QueueStats() workstats.QueueStats {
+	stats := c.queue.Stats()
+	stats.Workers = c.cfg.Workers
+	return stats
 }
 
 // WaitingReason reports why a claim is not progressing, empty when it is.
@@ -385,7 +417,7 @@ func (c *Controller) clearExtensions(claimID uuid.UUID) {
 func (c *Controller) Run(ctx context.Context) {
 	defer c.queue.ShutDown()
 
-	c.queue.Add(workKey{kind: workBoot})
+	c.queue.Add(workKey{kind: workBoot}, reasonBoot)
 	c.resyncEnqueue(ctx)
 
 	var wg sync.WaitGroup
@@ -414,22 +446,25 @@ func (c *Controller) Run(ctx context.Context) {
 }
 
 func (c *Controller) processNext(ctx context.Context) bool {
-	key, shutdown := c.queue.Get()
+	key, waited, shutdown := c.queue.Take()
 	if shutdown {
 		return false
 	}
 	defer c.queue.Done(key)
 
-	requeue, err := c.process(ctx, key)
+	pass := workstats.NewPass("substrate")
+	requeue, err := c.process(workstats.WithPass(ctx, pass), key)
+	pass.Log(ctx, "substrate: pass", waited, "kind", key.kind, "id", key.id,
+		"requeue", requeue, "error", err != nil)
 	switch {
 	case ctx.Err() != nil:
 		return false
 	case err != nil:
 		slog.Warn("substrate: reconcile failed", "kind", key.kind, "id", key.id, "error", err)
-		c.queue.AddRateLimited(key)
+		c.queue.AddRateLimited(key, reasonRetry)
 	case requeue > 0:
 		c.queue.Forget(key)
-		c.queue.AddAfter(key, requeue)
+		c.queue.AddAfter(key, requeue, reasonRequeue)
 	default:
 		c.queue.Forget(key)
 	}
@@ -473,9 +508,9 @@ func (c *Controller) boot(ctx context.Context) (time.Duration, error) {
 	// (owner decision 2026-07-31: the dev substrate is always on); an
 	// existing store row resumes its reconciliation here either way.
 	if hasCapability(c.cfg.Capabilities, layout.CapabilityObjectStorage) {
-		c.EnqueueObjectStore()
+		c.EnqueueObjectStore(reasonBoot)
 	} else if _, err := c.deps.DB.LiveObjectStore(ctx); err == nil {
-		c.EnqueueObjectStore()
+		c.EnqueueObjectStore(reasonBoot)
 	}
 	return 0, nil
 }
@@ -486,24 +521,24 @@ func (c *Controller) resyncEnqueue(ctx context.Context) {
 		slog.Warn("substrate: list unsettled claims", "error", err)
 	}
 	for _, row := range claims {
-		c.EnqueueClaim(row.ID)
+		c.EnqueueClaim(row.ID, reasonResync)
 	}
 	pools, err := c.deps.DB.ListLiveClusters(ctx)
 	if err != nil {
 		slog.Warn("substrate: list live pools", "error", err)
 	}
 	for _, pool := range pools {
-		c.EnqueuePool(pool.ID)
+		c.enqueuePool(pool.ID, reasonResync)
 	}
 	buckets, err := c.deps.DB.ListUnsettledBucketClaims(ctx)
 	if err != nil {
 		slog.Warn("substrate: list unsettled bucket claims", "error", err)
 	}
 	for _, row := range buckets {
-		c.EnqueueBucketClaim(row.ID)
+		c.EnqueueBucketClaim(row.ID, reasonResync)
 	}
 	if _, err := c.deps.DB.LiveObjectStore(ctx); err == nil {
-		c.EnqueueObjectStore()
+		c.EnqueueObjectStore(reasonResync)
 	} else if !errors.Is(err, dbstore.ErrNotFound) {
 		slog.Warn("substrate: live object store", "error", err)
 	}
@@ -561,7 +596,7 @@ func (c *Controller) ensureDefaultSharedPool(ctx context.Context) (time.Duration
 		return 0, err
 	}
 	slog.Info("substrate: default shared pool created", "pool", pool.Name, "instances", pool.Instances)
-	c.EnqueuePool(pool.ID)
+	c.enqueuePool(pool.ID, reasonBoot)
 	return 0, nil
 }
 

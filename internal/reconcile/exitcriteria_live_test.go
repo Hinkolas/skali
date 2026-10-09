@@ -348,7 +348,7 @@ func restartKernel(t *testing.T, f *liveFixture) *liveFixture {
 	source := observe.NewKubeSource(client, observed, observe.SourceOptions{
 		Resync:         time.Hour,
 		StaleThreshold: 30 * time.Second,
-		Enqueue:        func(id uuid.UUID) { kernel.Enqueue(id) },
+		Enqueue:        func(id uuid.UUID, reason string) { kernel.EnqueueFor(id, reason) },
 	})
 	registry := module.NewRegistry()
 	require.NoError(t, registry.Register(app.Module{}))

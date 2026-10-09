@@ -718,7 +718,7 @@ func (h *deploymentsHandlers) cancelRun(w http.ResponseWriter, r *http.Request) 
 			}
 			if rows > 0 {
 				fallback = true
-				h.reconcile.Enqueue(deployment.EnvironmentID)
+				h.reconcile.EnqueueFor(deployment.EnvironmentID, reconcile.ReasonAPI)
 			}
 		}
 	case err == nil || errors.Is(err, pgx.ErrNoRows):
@@ -748,7 +748,7 @@ func (h *deploymentsHandlers) cancelRun(w http.ResponseWriter, r *http.Request) 
 				}
 				if rows > 0 {
 					fallback = true
-					h.reconcile.Enqueue(*run.EnvironmentID)
+					h.reconcile.EnqueueFor(*run.EnvironmentID, reconcile.ReasonAPI)
 				}
 			}
 		}

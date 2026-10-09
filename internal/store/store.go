@@ -7,6 +7,8 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/Hinkolas/skali/internal/workstats"
 )
 
 // NewPool connects a pgx pool and verifies the database is reachable.
@@ -15,6 +17,8 @@ func NewPool(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
 	if err != nil {
 		return nil, fmt.Errorf("store: parse DATABASE_URL: %w", err)
 	}
+	// Background passes are charged their round trips (see workstats).
+	cfg.ConnConfig.Tracer = workstats.DBTracer{}
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("store: connect: %w", err)

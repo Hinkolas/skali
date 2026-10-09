@@ -82,6 +82,11 @@ func TestSystemObservation(t *testing.T) {
 	require.Equal(t, "api-only", body["mode"], "the test kernel has no cluster")
 	require.Equal(t, false, body["ready"])
 	require.Equal(t, "unknown", body["observation"].(map[string]any)["state"])
+	// The queue accounting is served even before the kernel ran a pass.
+	kernel := body["queues"].(map[string]any)["kernel"].(map[string]any)
+	require.Equal(t, float64(0), kernel["depth"])
+	require.NotNil(t, body["passes"])
+	require.NotNil(t, body["requests"])
 }
 
 // The status stream sends the current document immediately and again on

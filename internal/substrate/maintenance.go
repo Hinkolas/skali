@@ -11,6 +11,7 @@ import (
 	"github.com/Hinkolas/skali/internal/dbstore"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/substrate/seaweed"
+	"github.com/Hinkolas/skali/internal/workstats"
 )
 
 const (
@@ -46,7 +47,9 @@ func (c *Controller) runStorageMaintenance(ctx context.Context) {
 			return
 		case <-ticker.C:
 		}
-		c.maintainStorage(ctx)
+		pass := workstats.NewPass("maintenance")
+		c.maintainStorage(workstats.WithPass(ctx, pass))
+		pass.Log(ctx, "substrate: storage maintenance", 0)
 	}
 }
 
@@ -144,7 +147,7 @@ func (c *Controller) maintainBucket(ctx context.Context, claimRow store.BucketCl
 	// the one writer of credential Secrets; upkeep only notices the
 	// instant has passed and wakes it.
 	if allocation.CredentialRetireAt != nil && !time.Now().Before(*allocation.CredentialRetireAt) {
-		c.EnqueueBucketClaim(claimRow.ID)
+		c.EnqueueBucketClaim(claimRow.ID, reasonMaintenance)
 	}
 	// Drift repair: a setting an application changed behind the platform
 	// is reset within one interval and reported as the audit trail. Before

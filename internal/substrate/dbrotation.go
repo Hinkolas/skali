@@ -79,7 +79,7 @@ func (c *Controller) RotateDatabaseCredentials(ctx context.Context, environmentI
 		return DatabaseRotation{}, err
 	}
 	if tenant.PendingLoginRole != nil && tenant.CredentialRetireAt != nil {
-		c.EnqueueClaim(row.ID)
+		c.EnqueueClaim(row.ID, reasonRotation)
 		return DatabaseRotation{LoginRole: *tenant.PendingLoginRole, RetireAt: *tenant.CredentialRetireAt}, nil
 	}
 	if tenant.PreviousLoginRole != nil {
@@ -113,7 +113,7 @@ func (c *Controller) RotateDatabaseCredentials(ctx context.Context, environmentI
 	}
 	slog.Info("substrate: database credential rotation committed",
 		"service", serviceKey, "database", tenant.DatabaseName, "loginRole", login, "retireAt", retireAt.Format(time.RFC3339))
-	c.EnqueueClaim(row.ID)
+	c.EnqueueClaim(row.ID, reasonRotation)
 	return DatabaseRotation{LoginRole: login, RetireAt: retireAt}, nil
 }
 
@@ -131,7 +131,7 @@ func (c *Controller) RetireDatabaseCredentials(ctx context.Context, environmentI
 	if err := c.deps.DB.RetireTenantCredentials(ctx, tenant.ID); err != nil {
 		return err
 	}
-	c.EnqueueClaim(row.ID)
+	c.EnqueueClaim(row.ID, reasonRotation)
 	return nil
 }
 

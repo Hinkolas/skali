@@ -367,7 +367,7 @@ func (h *environmentsHandlers) update(w http.ResponseWriter, r *http.Request) {
 		// Priority renders live from the environment row: the kernel
 		// re-applies the application workloads with the new class and the
 		// Deployments roll.
-		h.reconcile.Enqueue(env.ID)
+		h.reconcile.EnqueueFor(env.ID, reconcile.ReasonAPI)
 	}
 	writeJSON(w, http.StatusOK, struct {
 		Environment environmentPayload `json:"environment"`

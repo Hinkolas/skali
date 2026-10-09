@@ -103,7 +103,7 @@ func newLiveFixture(t *testing.T, cfg Config, config *rest.Config) *liveFixture 
 	source := observe.NewKubeSource(client, observed, observe.SourceOptions{
 		Resync:         time.Hour, // watches, not resync, must explain propagation
 		StaleThreshold: staleThreshold,
-		Enqueue:        func(id uuid.UUID) { kernel.Enqueue(id) },
+		Enqueue:        func(id uuid.UUID, reason string) { kernel.EnqueueFor(id, reason) },
 	})
 	kernel = New(Deps{
 		Store: st, Deploy: deploySvc, Values: valueSvc, Journal: journalSvc,

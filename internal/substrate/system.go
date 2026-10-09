@@ -32,7 +32,7 @@ func (c *Controller) EnsureSystemClaim(ctx context.Context, key string, spec dbs
 	if err != nil {
 		return SystemClaimOutputs{}, err
 	}
-	c.EnqueueClaim(row.ID)
+	c.EnqueueClaim(row.ID, reasonObjectStore)
 	if claim.Phase(row.Phase) != claim.PhaseProvisioned {
 		waiting := c.WaitingReason(row.ID)
 		if waiting == "" {
@@ -64,6 +64,6 @@ func (c *Controller) ReleaseSystemClaim(ctx context.Context, key string) error {
 	if _, err := c.deps.DB.ReleaseClaim(ctx, row.ID); err != nil {
 		return err
 	}
-	c.EnqueueClaim(row.ID)
+	c.EnqueueClaim(row.ID, reasonRelease)
 	return nil
 }

@@ -26,6 +26,7 @@ import (
 	"github.com/Hinkolas/skali/internal/redact"
 	"github.com/Hinkolas/skali/internal/revision"
 	"github.com/Hinkolas/skali/internal/store"
+	"github.com/Hinkolas/skali/internal/workstats"
 )
 
 // requeueHealthCheck is the safety interval while waiting on health; watch
@@ -40,13 +41,17 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 	// Edge probes are network waits (5s each); they run before the lock so
 	// a pass holds it only for database and cluster work and a Promote or
 	// Rollback waiting on the same lock is never parked behind DNS.
+	// Phase marks split the pass's duration in its log line (workstats).
+	pass := workstats.PassFrom(ctx)
 	probeInterval := k.prepareEdgeVerdicts(ctx, environmentID)
+	pass.Mark("probe")
 
 	unlock, lockErr := k.deps.Store.LockEnvironment(ctx, environmentID)
 	if lockErr != nil {
 		return 0, lockErr
 	}
 	defer unlock()
+	pass.Mark("lock")
 
 	target, err := k.deps.Store.GetEnvironmentTarget(ctx, environmentID)
 	if err != nil {
@@ -101,12 +106,14 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 	if err != nil {
 		return 0, err
 	}
+	pass.Mark("load")
 
 	// The traffic decision reads the live Service selectors and workload
 	// availability before rendering: blue-green applications keep their
 	// serving color until the new one is fully available.
 	desired, err := k.desiredSet(ctx, environmentID, rev, target.RestartedAt, appRestarts, generations, bucketNames, intercepts, env.Priority,
 		k.deps.Observed.Snapshot(environmentID))
+	pass.Mark("render")
 	if err != nil {
 		// Whatever stops this target from rendering, the pods of the active
 		// revision keep running: they stay isolated regardless.
@@ -156,6 +163,7 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 		k.journalOpFailure(ctx, attachment, "claims", "Record database claims", nil, err)
 		return 0, err
 	}
+	pass.Mark("claims")
 
 	snapshot := k.deps.Observed.Snapshot(environmentID)
 
@@ -267,7 +275,7 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 					if rows > 0 {
 						slog.WarnContext(ctx, "release command failed; target returned to the active revision",
 							"environment_id", environmentID, "service", service)
-						k.Enqueue(environmentID)
+						k.EnqueueFor(environmentID, ReasonFallback)
 					}
 					return 0, nil
 				}
@@ -321,6 +329,7 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 	// Blue-green switches narrate on the run: a waiting step while the new
 	// color starts, a completed step when traffic moves.
 	journalTraffic(ctx, attachment, desired.plans, k.cfg.RetireDrain)
+	pass.Mark("apply")
 
 	// Prune only with a complete desired set in hand, only stateless kinds,
 	// only objects owned by this environment, with UID preconditions. The
@@ -347,12 +356,14 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 	if err := k.releaseAbsentHostnames(ctx, environmentID); err != nil {
 		return 0, err
 	}
+	pass.Mark("prune")
 
 	// Route certificates come before the health evaluation: the pass's
 	// edge verdicts (a domain that does not reach this edge yet) ride into
 	// the module through the kernel cache, so a deferred route stops gating
 	// health in the same pass that discovered it.
 	tls := k.reconcileTLS(ctx, attachment, target, rev, desired, k.deps.Observed.Snapshot(environmentID), probeInterval)
+	pass.Mark("tls")
 
 	// Evaluate over a post-apply snapshot and activate when every service of
 	// the target revision passes its health conditions on a fresh view.
@@ -369,6 +380,7 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 	if k.deps.RefreshObservation != nil && unobservedDiagnostics(statuses) {
 		k.deps.RefreshObservation()
 	}
+	pass.Mark("health")
 	healthy := k.deps.Observed.Source().State == module.SourceFresh
 	for _, status := range statuses {
 		if status.Health != module.HealthHealthy {
@@ -444,7 +456,7 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 			if rows > 0 {
 				slog.WarnContext(ctx, "rollout deadline exceeded; target returned to the active revision",
 					"environment_id", environmentID)
-				k.Enqueue(environmentID)
+				k.EnqueueFor(environmentID, ReasonFallback)
 				return 0, nil
 			}
 			// A first deployment has nothing to fall back to; level-triggered

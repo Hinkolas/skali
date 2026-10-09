@@ -27,9 +27,27 @@ import (
 	"github.com/Hinkolas/skali/internal/revision"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/valuestore"
+	"github.com/Hinkolas/skali/internal/workstats"
 )
 
 var ErrEnvironmentNotFound = errors.New("reconcile: environment not found")
+
+// Reasons an environment enters the queue. The system observation endpoint
+// counts arrivals per reason; observation sources pass their own (see
+// observe.SourceOptions).
+const (
+	ReasonDeploy    = "deploy"    // a promotion, run start, or teardown request (Enqueue)
+	ReasonAPI       = "api"       // an API handler's direct request
+	ReasonPoll      = "poll"      // a provider poll reported the environment affected
+	ReasonSubstrate = "substrate" // a claim's state or outputs changed
+	ReasonBackup    = "backup"    // a restore stopped or resumed the environment
+	ReasonFallback  = "fallback"  // the kernel returned the target to the active revision
+	ReasonProbe     = "probe"     // a manual edge probe recorded new verdicts
+	ReasonResync    = "resync"    // the periodic sweep of out-of-sync environments
+	ReasonAudit     = "audit"     // the boot or periodic audit
+	ReasonRequeue   = "requeue"   // a pass asked to run again after a delay
+	ReasonRetry     = "retry"     // a failed pass, after its backoff
+)
 
 // Cluster is the mutation surface the kernel needs from the cluster client;
 // kube.Client implements it, tests record against a fake.
@@ -145,6 +163,9 @@ type Deps struct {
 	// wait in (the skalid image). Nil renders release Jobs without the
 	// wait.
 	WaitImage func(ctx context.Context) (string, error)
+	// SubstrateQueue reads the substrate controller's queue accounting for
+	// the system observation endpoint. Nil without a substrate.
+	SubstrateQueue func() workstats.QueueStats
 }
 
 type Config struct {
@@ -180,7 +201,7 @@ type Config struct {
 type Kernel struct {
 	deps  Deps
 	cfg   Config
-	queue workqueue.TypedRateLimitingInterface[uuid.UUID]
+	queue *workstats.Queue[uuid.UUID]
 
 	// retired holds, per Deployment that stopped serving, when it was first
 	// seen not serving; the drain window counts from there. In-memory by
@@ -236,18 +257,26 @@ func New(deps Deps, cfg Config) *Kernel {
 		domains: map[string]domainProbe{},
 		routes:  map[routeKey]routeRecord{},
 		health:  map[uuid.UUID]EnvironmentHealth{},
-		queue: workqueue.NewTypedRateLimitingQueue(workqueue.NewTypedWithMaxWaitRateLimiter(
-			workqueue.DefaultTypedControllerRateLimiter[uuid.UUID](), requeueHealthCheck)),
+		queue: workstats.NewQueue(workqueue.NewTypedWithMaxWaitRateLimiter(
+			workqueue.DefaultTypedControllerRateLimiter[uuid.UUID](), requeueHealthCheck),
+			func(uuid.UUID) string { return "environment" }),
 	}
 }
 
 // Connected reports whether a cluster is wired at all.
 func (k *Kernel) Connected() bool { return k.deps.Cluster != nil }
 
-// Enqueue implements deploy.Enqueuer and is the affected-owner entry point
-// for every watch-driven change.
+// Enqueue implements deploy.Enqueuer: promotions, run starts, and teardown
+// requests hand the environment over here.
 func (k *Kernel) Enqueue(environmentID uuid.UUID) {
-	k.queue.Add(environmentID)
+	k.queue.Add(environmentID, ReasonDeploy)
+}
+
+// EnqueueFor is the entry point for every other caller, naming why the
+// environment needs a pass: the observation sources' watch-driven changes,
+// the substrate, the API.
+func (k *Kernel) EnqueueFor(environmentID uuid.UUID, reason string) {
+	k.queue.Add(environmentID, reason)
 }
 
 // Run starts the observation source, waits for cache readiness, then runs
@@ -314,29 +343,32 @@ func (k *Kernel) resync(ctx context.Context) {
 		return
 	}
 	for _, target := range targets {
-		k.queue.Add(target.EnvironmentID)
+		k.queue.Add(target.EnvironmentID, ReasonResync)
 	}
 }
 
 func (k *Kernel) worker(ctx context.Context) {
 	for {
-		environmentID, shutdown := k.queue.Get()
+		environmentID, waited, shutdown := k.queue.Take()
 		if shutdown {
 			return
 		}
-		requeue, err := k.reconcileEnvironment(ctx, environmentID)
+		// The pass is charged its database round trips, Kubernetes requests,
+		// request-budget waits, and lock time through the context.
+		pass := workstats.NewPass("kernel")
+		requeue, err := k.reconcileEnvironment(workstats.WithPass(ctx, pass), environmentID)
 		k.queue.Done(environmentID)
-		slog.Debug("reconcile: dequeue", "environment", environmentID,
+		pass.Log(ctx, "reconcile: pass", waited, "environment", environmentID,
 			"requeue", requeue, "error", err != nil)
 		switch {
 		case ctx.Err() != nil:
 			return
 		case err != nil:
 			slog.Warn("reconcile failed", "environment", environmentID, "error", err)
-			k.queue.AddRateLimited(environmentID)
+			k.queue.AddRateLimited(environmentID, ReasonRetry)
 		case requeue > 0:
 			k.queue.Forget(environmentID)
-			k.queue.AddAfter(environmentID, requeue)
+			k.queue.AddAfter(environmentID, requeue, ReasonRequeue)
 		default:
 			k.queue.Forget(environmentID)
 		}
@@ -358,7 +390,7 @@ func (k *Kernel) audit(ctx context.Context) {
 	known := make(map[uuid.UUID]bool, len(targets))
 	for _, target := range targets {
 		known[target.EnvironmentID] = true
-		k.queue.Add(target.EnvironmentID)
+		k.queue.Add(target.EnvironmentID, ReasonAudit)
 	}
 	// The same authoritative set retires health verdicts of environments
 	// whose rows vanished without a pass.
@@ -384,6 +416,13 @@ type ObservationInfo struct {
 	Kinds      []observe.KindSync
 	QueueDepth int
 	Workers    int
+	// Queue and Substrate account for the kernel's and the substrate's work
+	// queues (Substrate is nil without one); Passes and Requests for what
+	// their passes and the Kubernetes requests cost (see workstats).
+	Queue     workstats.QueueStats
+	Substrate *workstats.QueueStats
+	Passes    []workstats.CallerTotals
+	Requests  []workstats.RequestTotals
 }
 
 // NodePlatforms exposes the observed cluster platforms to the API layer
@@ -417,6 +456,14 @@ func (k *Kernel) Observation() ObservationInfo {
 		Sources:    k.deps.Observed.Sources(),
 		QueueDepth: k.queue.Len(),
 		Workers:    k.cfg.Workers,
+		Passes:     workstats.Totals(),
+		Requests:   workstats.Requests(),
+	}
+	info.Queue = k.queue.Stats()
+	info.Queue.Workers = k.cfg.Workers
+	if k.deps.SubstrateQueue != nil {
+		substrate := k.deps.SubstrateQueue()
+		info.Substrate = &substrate
 	}
 	if k.Connected() {
 		info.Mode = "connected"

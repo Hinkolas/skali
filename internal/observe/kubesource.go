@@ -15,6 +15,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -29,6 +30,15 @@ import (
 )
 
 // SourceOptions tunes the Kubernetes watch source.
+// Reasons the source enqueues an environment (SourceOptions.Enqueue).
+const (
+	EnqueueWatch  = "watch"           // one of the environment's objects changed
+	EnqueueShared = "shared"          // a shared object it references (a pool, the object store) changed
+	EnqueueNode   = "node"            // a node it runs on changed
+	EnqueueEvent  = "event"           // a Kubernetes Event about one of its objects arrived
+	EnqueueResync = "informer-resync" // an informer's periodic resync redelivered an unchanged object
+)
+
 type SourceOptions struct {
 	// Resync re-fires update handlers for every cached object: the
 	// correctness backstop against missed watch edits.
@@ -36,9 +46,10 @@ type SourceOptions struct {
 	// StaleThreshold is how long after a list/watch failure without a
 	// successful re-establishment the source reports stale.
 	StaleThreshold time.Duration
-	// Enqueue receives the affected environment of every cache change; nil
-	// disables enqueueing (observation-only tests).
-	Enqueue func(uuid.UUID)
+	// Enqueue receives the affected environment of every cache change and
+	// why (an Enqueue* reason); nil disables enqueueing (observation-only
+	// tests).
+	Enqueue func(environmentID uuid.UUID, reason string)
 	// Dynamic adds label-selected dynamic informers for blessed operator
 	// CRDs (CNPG). The CRDs must exist on the cluster: skali-managed
 	// installations always install the operators before skalid, and a
@@ -409,13 +420,13 @@ func (k *KubeSource) addObjectInformer(kind string, example runtime.Object, lw c
 		AddFunc: func(raw any) {
 			if obj, ok := convert(raw); ok {
 				k.store.Upsert(obj)
-				k.enqueueAffected(obj)
+				k.enqueueAffected(obj, false)
 			}
 		},
-		UpdateFunc: func(_, raw any) {
+		UpdateFunc: func(old, raw any) {
 			if obj, ok := convert(raw); ok {
 				k.store.Upsert(obj)
-				k.enqueueAffected(obj)
+				k.enqueueAffected(obj, resynced(old, raw))
 			}
 		},
 		DeleteFunc: func(raw any) {
@@ -424,7 +435,7 @@ func (k *KubeSource) addObjectInformer(kind string, example runtime.Object, lw c
 			}
 			if obj, ok := convert(raw); ok {
 				k.store.Remove(obj.Ref)
-				k.enqueueAffected(obj)
+				k.enqueueAffected(obj, false)
 			}
 		},
 	})
@@ -433,14 +444,30 @@ func (k *KubeSource) addObjectInformer(kind string, example runtime.Object, lw c
 
 // enqueueAffected pokes the object's environment; a platform-scoped shared
 // object (a database pool) fans out to every environment referencing it.
-func (k *KubeSource) enqueueAffected(obj Object) {
+// resync marks an informer's periodic redelivery of an unchanged object.
+func (k *KubeSource) enqueueAffected(obj Object, resync bool) {
+	own, shared := EnqueueWatch, EnqueueShared
+	if resync {
+		own, shared = EnqueueResync, EnqueueResync
+	}
 	if obj.Environment != uuid.Nil || obj.SharedKey == "" {
-		k.enqueue(obj.Environment)
+		k.enqueue(obj.Environment, own)
 		return
 	}
 	for _, environment := range k.store.EnvironmentsForSharedKey(obj.SharedKey) {
-		k.enqueue(environment)
+		k.enqueue(environment, shared)
 	}
+}
+
+// resynced reports an informer's periodic resync: the same object version
+// delivered again as an update.
+func resynced(old, cur any) bool {
+	before, err := meta.Accessor(old)
+	if err != nil {
+		return false
+	}
+	after, err := meta.Accessor(cur)
+	return err == nil && before.GetResourceVersion() == after.GetResourceVersion()
 }
 
 func (k *KubeSource) addNodeInformer(lw cache.ListerWatcher) {
@@ -453,26 +480,32 @@ func (k *KubeSource) addNodeInformer(lw cache.ListerWatcher) {
 		node, ok := raw.(*corev1.Node)
 		return node, ok
 	}
-	fanOut := func(node *corev1.Node) {
+	fanOut := func(node *corev1.Node, reason string) {
 		for _, environment := range k.store.EnvironmentsOnNode(node.Name) {
-			k.enqueue(environment)
+			k.enqueue(environment, reason)
 		}
 	}
-	upsert := func(raw any) {
+	upsert := func(raw any, reason string) {
 		if node, ok := asNode(raw); ok {
 			k.store.SetNodeArch(node.Name, nodeArch(node))
 			k.store.SetNodeCapabilities(node.Name, nodeCapabilities(node))
 			k.store.SetNodeRecord(nodeRecord(node))
-			fanOut(node)
+			fanOut(node, reason)
 		}
 	}
 	_, _ = informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    upsert,
-		UpdateFunc: func(_, raw any) { upsert(raw) },
+		AddFunc: func(raw any) { upsert(raw, EnqueueNode) },
+		UpdateFunc: func(old, raw any) {
+			reason := EnqueueNode
+			if resynced(old, raw) {
+				reason = EnqueueResync
+			}
+			upsert(raw, reason)
+		},
 		DeleteFunc: func(raw any) {
 			if node, ok := asNode(raw); ok {
 				k.store.RemoveNode(node.Name)
-				fanOut(node)
+				fanOut(node, EnqueueNode)
 			}
 		},
 	})
@@ -559,7 +592,7 @@ func (k *KubeSource) addEventInformer(lw cache.ListerWatcher) {
 			Count:   event.Count,
 			At:      eventTime(event),
 		})
-		k.enqueue(environment)
+		k.enqueue(environment, EnqueueEvent)
 	}
 	_, _ = informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    record,
@@ -574,9 +607,9 @@ func (k *KubeSource) watchErrors(informer cache.SharedIndexInformer) {
 	})
 }
 
-func (k *KubeSource) enqueue(environmentID uuid.UUID) {
+func (k *KubeSource) enqueue(environmentID uuid.UUID, reason string) {
 	if k.opts.Enqueue != nil && environmentID != uuid.Nil {
-		k.opts.Enqueue(environmentID)
+		k.opts.Enqueue(environmentID, reason)
 	}
 }
 

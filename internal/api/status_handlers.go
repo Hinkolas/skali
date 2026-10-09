@@ -10,6 +10,7 @@ import (
 	"github.com/Hinkolas/skali/internal/module"
 	"github.com/Hinkolas/skali/internal/reconcile"
 	"github.com/Hinkolas/skali/internal/revision"
+	"github.com/Hinkolas/skali/internal/workstats"
 )
 
 // statusHandlers serves topology and health projections. Every read comes
@@ -389,6 +390,83 @@ type systemObservationPayload struct {
 	Kinds       []kindSyncPayload    `json:"kinds"`
 	QueueDepth  int                  `json:"queue_depth"`
 	Workers     int                  `json:"workers"`
+	// Queues, Passes and Requests account for background work since the
+	// process started; a sampler subtracts two readings to see an interval.
+	Queues   map[string]queuePayload `json:"queues"`
+	Passes   []passTotalsPayload     `json:"passes"`
+	Requests []requestTotalsPayload  `json:"requests"`
+}
+
+type queuePayload struct {
+	Depth   int                `json:"depth"`
+	Active  int                `json:"active"`
+	Workers int                `json:"workers"`
+	Kinds   []queueKindPayload `json:"kinds"`
+}
+
+type queueKindPayload struct {
+	Kind     string            `json:"kind"`
+	Arrivals map[string]uint64 `json:"arrivals"`
+	Wait     histogramPayload  `json:"wait"`
+	Pass     histogramPayload  `json:"pass"`
+}
+
+// histogramPayload is a cumulative distribution: each bucket counts the
+// observations at or below its bound in seconds.
+type histogramPayload struct {
+	Count      uint64          `json:"count"`
+	SumSeconds float64         `json:"sum_seconds"`
+	MaxSeconds float64         `json:"max_seconds"`
+	Buckets    []bucketPayload `json:"buckets"`
+}
+
+type bucketPayload struct {
+	LE    float64 `json:"le"`
+	Count uint64  `json:"count"`
+}
+
+type passTotalsPayload struct {
+	Caller             string  `json:"caller"`
+	Passes             uint64  `json:"passes"`
+	Seconds            float64 `json:"seconds"`
+	DBQueries          int     `json:"db_queries"`
+	DBSeconds          float64 `json:"db_seconds"`
+	DBAcquireSeconds   float64 `json:"db_acquire_seconds"`
+	KubeRequests       int     `json:"kube_requests"`
+	KubeSeconds        float64 `json:"kube_seconds"`
+	ThrottledSeconds   float64 `json:"throttled_seconds"`
+	LockConnectSeconds float64 `json:"lock_connect_seconds"`
+	LockWaitSeconds    float64 `json:"lock_wait_seconds"`
+}
+
+// requestTotalsPayload sums one caller's requests for one verb and
+// resource; seconds include the throttled wait.
+type requestTotalsPayload struct {
+	Caller           string  `json:"caller"`
+	Verb             string  `json:"verb"`
+	Resource         string  `json:"resource"`
+	Count            uint64  `json:"count"`
+	Seconds          float64 `json:"seconds"`
+	ThrottledSeconds float64 `json:"throttled_seconds"`
+}
+
+func newQueuePayload(stats workstats.QueueStats) queuePayload {
+	payload := queuePayload{Depth: stats.Depth, Active: stats.Active, Workers: stats.Workers,
+		Kinds: make([]queueKindPayload, 0, len(stats.Kinds))}
+	for _, kind := range stats.Kinds {
+		payload.Kinds = append(payload.Kinds, queueKindPayload{Kind: kind.Kind, Arrivals: kind.Arrivals,
+			Wait: newHistogramPayload(kind.Wait), Pass: newHistogramPayload(kind.Pass)})
+	}
+	return payload
+}
+
+func newHistogramPayload(h workstats.Histogram) histogramPayload {
+	payload := histogramPayload{Count: h.Count, SumSeconds: h.Sum.Seconds(), MaxSeconds: h.Max.Seconds(),
+		Buckets: make([]bucketPayload, len(workstats.Bounds))}
+	for i, bound := range workstats.Bounds {
+		payload.Buckets[i] = bucketPayload{LE: bound.Seconds(), Count: h.Buckets[i]}
+	}
+	return payload
 }
 
 func (h *statusHandlers) system(w http.ResponseWriter, r *http.Request) {
@@ -401,6 +479,24 @@ func (h *statusHandlers) system(w http.ResponseWriter, r *http.Request) {
 		Kinds:       make([]kindSyncPayload, 0, len(info.Kinds)),
 		QueueDepth:  info.QueueDepth,
 		Workers:     info.Workers,
+		Queues:      map[string]queuePayload{"kernel": newQueuePayload(info.Queue)},
+		Passes:      make([]passTotalsPayload, 0, len(info.Passes)),
+		Requests:    make([]requestTotalsPayload, 0, len(info.Requests)),
+	}
+	if info.Substrate != nil {
+		payload.Queues["substrate"] = newQueuePayload(*info.Substrate)
+	}
+	for _, t := range info.Passes {
+		payload.Passes = append(payload.Passes, passTotalsPayload{
+			Caller: t.Caller, Passes: t.Passes, Seconds: t.Took.Seconds(),
+			DBQueries: t.DBQueries, DBSeconds: t.DB.Seconds(), DBAcquireSeconds: t.DBAcquire.Seconds(),
+			KubeRequests: t.KubeRequests, KubeSeconds: t.Kube.Seconds(), ThrottledSeconds: t.Throttled.Seconds(),
+			LockConnectSeconds: t.LockConnect.Seconds(), LockWaitSeconds: t.LockWait.Seconds(),
+		})
+	}
+	for _, t := range info.Requests {
+		payload.Requests = append(payload.Requests, requestTotalsPayload{Caller: t.Caller, Verb: t.Verb,
+			Resource: t.Resource, Count: t.Count, Seconds: t.Took.Seconds(), ThrottledSeconds: t.Throttled.Seconds()})
 	}
 	for _, source := range info.Sources {
 		payload.Sources = append(payload.Sources, namedSourcePayload{

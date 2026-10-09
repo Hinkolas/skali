@@ -77,7 +77,7 @@ func (c *Controller) Ensure(ctx context.Context, in reconcile.ClaimEnsureInput) 
 		if extensionsChanged {
 			c.markExtensionsPending(row.ID, desiredExtensions)
 		}
-		c.EnqueueClaim(row.ID)
+		c.EnqueueClaim(row.ID, reasonEnsure)
 		c.publishClaim(*row)
 
 		state := reconcile.ClaimState{Service: dotted,
@@ -116,7 +116,7 @@ func (c *Controller) Ensure(ctx context.Context, in reconcile.ClaimEnsureInput) 
 		if err != nil {
 			return nil, err
 		}
-		c.EnqueueClaim(row.ID)
+		c.EnqueueClaim(row.ID, reasonRelease)
 		c.publishClaim(*released)
 	}
 	liveBuckets, err := c.deps.DB.ListEnvironmentBucketClaims(ctx, in.EnvironmentID)
@@ -131,7 +131,7 @@ func (c *Controller) Ensure(ctx context.Context, in reconcile.ClaimEnsureInput) 
 		if err != nil {
 			return nil, err
 		}
-		c.EnqueueBucketClaim(row.ID)
+		c.EnqueueBucketClaim(row.ID, reasonRelease)
 		c.publishBucketClaim(*released)
 	}
 	return states, nil
@@ -186,7 +186,7 @@ func (c *Controller) ensureBucketClaims(ctx context.Context, in reconcile.ClaimE
 		if err != nil {
 			return nil, err
 		}
-		c.EnqueueBucketClaim(row.ID)
+		c.EnqueueBucketClaim(row.ID, reasonEnsure)
 		c.publishBucketClaim(*row)
 
 		state := reconcile.ClaimState{Service: dotted,

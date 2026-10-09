@@ -111,7 +111,7 @@ func (c *Controller) RotateBucketCredentials(ctx context.Context, environmentID 
 	}
 	slog.Info("substrate: bucket credentials rotated", "bucket", allocation.BucketName,
 		"service", serviceKey, "retireAt", retireAt.Format(time.RFC3339))
-	c.EnqueueBucketClaim(claimRow.ID)
+	c.EnqueueBucketClaim(claimRow.ID, reasonRotation)
 	return BucketRotation{AccessKey: next.AccessKey, RetireAt: retireAt}, nil
 }
 

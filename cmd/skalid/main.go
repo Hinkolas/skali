@@ -64,6 +64,7 @@ import (
 	"github.com/Hinkolas/skali/internal/updates"
 	"github.com/Hinkolas/skali/internal/valuestore"
 	versionpkg "github.com/Hinkolas/skali/internal/version"
+	"github.com/Hinkolas/skali/internal/workstats"
 )
 
 const serviceName = "skalid"
@@ -201,6 +202,10 @@ func runServe() error {
 		slog.InfoContext(ctx, "failed interrupted deployments", "count", failed)
 	}
 
+	// Every Kubernetes request's latency and request-budget wait is
+	// accounted from here on (see workstats).
+	workstats.RegisterClientHooks()
+
 	// Cluster access is optional in development: without SKALI_KUBECONFIG or
 	// in-cluster credentials skalid runs API-only, observation reports
 	// unknown, and the reconcile workers idle.
@@ -238,7 +243,7 @@ func runServe() error {
 		source = observe.NewKubeSource(kubeClient, observed, observe.SourceOptions{
 			Resync:         cfg.ReconcileResync,
 			StaleThreshold: cfg.StaleThreshold,
-			Enqueue:        func(environmentID uuid.UUID) { kernel.Enqueue(environmentID) },
+			Enqueue:        func(environmentID uuid.UUID, reason string) { kernel.EnqueueFor(environmentID, reason) },
 			Dynamic:        append(cnpg.ObserveKinds(), edgeobserve.Kinds(cfg.CertManager)...),
 		})
 	}
@@ -331,13 +336,14 @@ func runServe() error {
 			Cluster:  substrate.KubeCluster{Client: kubeClient},
 			Observed: observed,
 			Seaweed:  seaweed.NewClient(kubeClient, substrate.Namespace),
-			Enqueue:  func(environmentID uuid.UUID) { kernel.Enqueue(environmentID) },
+			Enqueue:  func(environmentID uuid.UUID) { kernel.EnqueueFor(environmentID, reconcile.ReasonSubstrate) },
 		}, substrate.Config{
 			Managed:      cfg.ManagedCluster,
 			Capabilities: cfg.Capabilities,
 			Resync:       cfg.ReconcileResync,
 		})
 		kernelDeps.Claims = substrateCtl
+		kernelDeps.SubstrateQueue = substrateCtl.QueueStats
 	}
 	reconcileCfg := reconcile.Config{
 		Resync:             cfg.ReconcileResync,
@@ -373,7 +379,7 @@ func runServe() error {
 			Kube:    kubeClient,
 			Targets: backupTargets,
 			Buckets: substrateCtl,
-			Enqueue: func(environmentID uuid.UUID) { kernel.Enqueue(environmentID) },
+			Enqueue: func(environmentID uuid.UUID) { kernel.EnqueueFor(environmentID, reconcile.ReasonBackup) },
 			Version: versionpkg.Version,
 		}, backup.Config{
 			WorkerImage:     cfg.BackupWorkerImage,
@@ -524,7 +530,7 @@ func runServe() error {
 		// without touching cluster observation.
 		seaweedPoll := observe.NewPollSource(observed, substrateCtl.SeaweedProbe(), observe.PollOptions{
 			Source:  seaweed.SourceName,
-			Enqueue: func(environmentID uuid.UUID) { kernel.Enqueue(environmentID) },
+			Enqueue: func(environmentID uuid.UUID) { kernel.EnqueueFor(environmentID, reconcile.ReasonPoll) },
 		})
 		substrateCtl.SetProbePoke(seaweedPoll.Poke)
 		go func() {

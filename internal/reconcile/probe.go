@@ -72,7 +72,7 @@ func (k *Kernel) ProbeRoutes(ctx context.Context, environmentID uuid.UUID) ([]Ro
 		}(&probes[i])
 	}
 	group.Wait()
-	k.Enqueue(environmentID)
+	k.EnqueueFor(environmentID, ReasonProbe)
 	if k.deps.Observed != nil {
 		k.deps.Observed.Invalidate(environmentID)
 	}

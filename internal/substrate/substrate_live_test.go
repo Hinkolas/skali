@@ -162,7 +162,7 @@ func TestLiveClaimProvisioning(t *testing.T) {
 	pokeCount := map[uuid.UUID]int{}
 	source := observe.NewKubeSource(client, observedStore, observe.SourceOptions{
 		StaleThreshold: 30 * time.Second,
-		Enqueue: func(id uuid.UUID) {
+		Enqueue: func(id uuid.UUID, _ string) {
 			pokeMu.Lock()
 			pokeCount[id]++
 			pokeMu.Unlock()

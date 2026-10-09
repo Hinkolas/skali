@@ -114,7 +114,13 @@ python3 -B sample.py \
 ```
 
 It reads skali's observation endpoint every 5 seconds for 100 samples
-(`--interval`, `--samples`) and writes one JSON line per sample: queue
-depth, worker count, and the freshness of each observation source. A failed
-request is recorded as an error line and sampling continues, so a daemon
-restart shows up as a gap. The output file must not exist yet.
+(`--interval`, `--samples`) and writes one JSON line per sample: the
+freshness of each observation source and, for the kernel's and the
+substrate's queues, the depth, the arrivals per reason, and histograms of
+queue waits and pass durations. It also records what passes spent on
+database round trips, Kubernetes requests, the client's request budget, and
+the environment lock, and every request by caller, verb, and resource. The
+counters run since the daemon started; subtract two samples to see an
+interval. A failed request is recorded as an error line and sampling
+continues, so a daemon restart shows up as a gap. The output file must not
+exist yet.

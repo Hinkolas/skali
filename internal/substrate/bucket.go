@@ -92,7 +92,7 @@ func (c *Controller) provisionBucket(ctx context.Context, row store.BucketClaim)
 	if err != nil {
 		return false, err
 	}
-	c.EnqueueObjectStore()
+	c.EnqueueObjectStore(reasonBucket)
 	ready, reason, err := c.objectStoreReady(ctx, *sw)
 	if err != nil {
 		return false, err
