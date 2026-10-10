@@ -127,6 +127,7 @@ func runServe() error {
 	}
 	defer pool.Close()
 	st := store.NewStore(pool)
+	defer st.Close()
 
 	// The installation identity is minted with the database (migration
 	// 00015); serving without it would leave clients unable to tell a

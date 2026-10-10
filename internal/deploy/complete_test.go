@@ -110,6 +110,39 @@ func TestCompleteSurvivesClientDisconnect(t *testing.T) {
 	require.NotEqual(t, deployment.ID, next.ID)
 }
 
+// A promotion that waited out a pass holding the lock fails the deployment
+// as busy instead of waiting on, and moves nothing.
+func TestCompleteFailsBusyWhenLockStaysHeld(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.deploy.promotionWait = 200 * time.Millisecond
+	ctx := context.Background()
+	jsvc := journal.NewService(f.st, "executor-1")
+	definitionVersion := f.submit(t, testManifest, 0)
+	deployment := f.openForComplete(t, jsvc, f.environmentID, definitionVersion, "busy-plant-value")
+
+	unlock, err := f.st.LockEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	defer unlock()
+	c, err := f.deploy.beginComplete(ctx, deployment.ID, jsvc)
+	require.NoError(t, err)
+	defer f.deploy.release(deployment.ID)
+	_, err = f.deploy.finishComplete(ctx, c)
+	require.ErrorIs(t, err, ErrEnvironmentBusy)
+
+	tree, err := jsvc.RunTree(ctx, c.runID)
+	require.NoError(t, err)
+	require.Equal(t, "failed", tree.Run.Status)
+	require.NotNil(t, tree.Run.Failure)
+	require.Contains(t, *tree.Run.Failure, "environment busy")
+	row, err := f.deploy.GetDeployment(ctx, deployment.ID)
+	require.NoError(t, err)
+	require.Equal(t, string(DeploymentFailed), row.Status)
+	target, err := f.deploy.Target(ctx, f.environmentID)
+	require.NoError(t, err)
+	require.Nil(t, target.TargetRevisionID, "nothing promoted")
+}
+
 // The request context ending is not a failure of the deployment: the
 // promotion runs on the service lifetime and lands.
 func TestCompletePromotesOnLifetimeContextAfterRequestCancelled(t *testing.T) {

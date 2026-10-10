@@ -41,7 +41,7 @@ func (s *Service) DeleteEnvironment(ctx context.Context, environmentID uuid.UUID
 // namespace and the environment row deleted. The returned run is the
 // journaled teardown the caller can attach to.
 func (s *Service) Teardown(ctx context.Context, environmentID uuid.UUID, purge bool, jr *journal.Service, actor string) (*store.Run, error) {
-	unlock, lockErr := s.st.LockEnvironment(ctx, environmentID)
+	unlock, lockErr := s.st.LockEnvironmentWithin(ctx, environmentID, s.requestWait)
 	if lockErr != nil {
 		return nil, lockErr
 	}

@@ -192,7 +192,7 @@ func (s *Service) ResumeRevision(ctx context.Context, env, id uuid.UUID) error {
 }
 
 func (s *Service) FallbackTarget(ctx context.Context, in store.FallbackEnvironmentTargetParams) (int64, error) {
-	unlock, err := s.st.LockEnvironment(ctx, in.EnvironmentID)
+	unlock, err := s.st.LockEnvironmentWithin(ctx, in.EnvironmentID, s.requestWait)
 	if err != nil {
 		return 0, err
 	}

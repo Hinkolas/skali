@@ -112,8 +112,9 @@ func (p *Pass) Mark(name string) {
 	p.marked = now
 }
 
-// AddLock charges the environment lock: connecting its dedicated session
-// and waiting for the advisory lock.
+// AddLock charges the environment lock: taking a session from the lock
+// pool, which connects one when none is open, and waiting for the advisory
+// lock.
 func (p *Pass) AddLock(connect, wait time.Duration) {
 	p.charge(func(c *Cost) {
 		c.LockConnect += connect

@@ -13,6 +13,7 @@ import (
 	"maps"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -68,6 +69,9 @@ type Service struct {
 	// request that started it (deployment completion). nil means
 	// context.Background(), which is what tests and API-only mode want.
 	lifetimeCtx context.Context
+	// requestWait and promotionWait bound how long a change waits on the
+	// environment lock (lock.go).
+	requestWait, promotionWait time.Duration
 
 	mu sync.Mutex
 	// completing holds the deployments whose completion runs in a
@@ -81,6 +85,7 @@ func New(st *store.Store, valueSvc *valuestore.Service, artifactSvc *artifactsto
 	return &Service{
 		st: st, values: valueSvc, artifacts: artifactSvc,
 		builds: buildstore.New(st), version: compilerVersion,
+		requestWait: requestLockWait, promotionWait: promotionLockWait,
 		completing: make(map[uuid.UUID]struct{}),
 	}
 }
@@ -299,7 +304,7 @@ func (s *Service) Prepare(ctx context.Context, in PrepareInput) (*Prepared, erro
 // see a window where the target has already moved but the row still claims
 // the client owns it.
 func (s *Service) Promote(ctx context.Context, p *Prepared) error {
-	unlock, err := s.st.LockEnvironment(ctx, p.EnvironmentID)
+	unlock, err := s.st.LockEnvironmentWithin(ctx, p.EnvironmentID, s.promotionWait)
 	if err != nil {
 		return err
 	}
@@ -386,7 +391,7 @@ type RollbackResult struct {
 // untouched target; the unique running-run index serializes rollbacks
 // against deployments.
 func (s *Service) Rollback(ctx context.Context, in RollbackInput) (*RollbackResult, error) {
-	unlock, err := s.st.LockEnvironment(ctx, in.EnvironmentID)
+	unlock, err := s.st.LockEnvironmentWithin(ctx, in.EnvironmentID, s.requestWait)
 	if err != nil {
 		return nil, err
 	}

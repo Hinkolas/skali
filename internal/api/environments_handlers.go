@@ -400,6 +400,8 @@ func (h *environmentsHandlers) teardown(w http.ResponseWriter, r *http.Request) 
 		case errors.Is(err, deploy.ErrDeploymentInFlight):
 			writeError(w, http.StatusConflict, codeDeploymentInFlight,
 				"a deployment is in flight; cancel its run or wait for it to finish")
+		case errors.Is(err, deploy.ErrEnvironmentBusy):
+			writeEnvironmentBusy(w)
 		default:
 			writeInternalError(r.Context(), w, "teardown environment", err)
 		}

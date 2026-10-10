@@ -712,6 +712,10 @@ func (h *deploymentsHandlers) cancelRun(w http.ResponseWriter, r *http.Request) 
 				EnvironmentID:    deployment.EnvironmentID,
 				TargetRevisionID: deployment.RevisionID,
 			})
+			if errors.Is(err, deploy.ErrEnvironmentBusy) {
+				writeError(w, http.StatusConflict, codeEnvironmentBusy, fallbackBusy)
+				return
+			}
 			if err != nil {
 				writeInternalError(r.Context(), w, "fall back target", err)
 				return
@@ -742,6 +746,10 @@ func (h *deploymentsHandlers) cancelRun(w http.ResponseWriter, r *http.Request) 
 					EnvironmentID:    *run.EnvironmentID,
 					TargetRevisionID: target.TargetRevisionID,
 				})
+				if errors.Is(err, deploy.ErrEnvironmentBusy) {
+					writeError(w, http.StatusConflict, codeEnvironmentBusy, fallbackBusy)
+					return
+				}
 				if err != nil {
 					writeInternalError(r.Context(), w, "fall back target", err)
 					return
@@ -842,6 +850,18 @@ func parseDeploymentSelector(w http.ResponseWriter, definitionVersion, from, can
 	return uuid.Nil, fromEnvironmentID, candidateID, true
 }
 
+// fallbackBusy answers a cancel whose run finished but whose target could
+// not fall back while a reconcile pass or another change held the lock.
+const fallbackBusy = "the run is cancelled, but the environment stayed busy with a reconcile pass " +
+	"or another change and its target did not fall back"
+
+// writeEnvironmentBusy answers a change that waited out a reconcile pass or
+// another change holding the environment lock.
+func writeEnvironmentBusy(w http.ResponseWriter) {
+	writeError(w, http.StatusConflict, codeEnvironmentBusy,
+		"the environment is busy with a reconcile pass or another change; retry shortly")
+}
+
 // writeDeployError maps deploy and registry sentinel errors onto the
 // envelope.
 func writeDeployError(ctx context.Context, w http.ResponseWriter, err error) {
@@ -880,6 +900,8 @@ func writeDeployError(ctx context.Context, w http.ResponseWriter, err error) {
 	case errors.Is(err, deploy.ErrDeploymentInFlight):
 		writeError(w, http.StatusConflict, codeDeploymentInFlight,
 			"another deployment is already running for this environment")
+	case errors.Is(err, deploy.ErrEnvironmentBusy):
+		writeEnvironmentBusy(w)
 	case errors.Is(err, deploy.ErrDestructiveChange):
 		writeError(w, http.StatusConflict, codeDestructiveChange,
 			"the plan contains destructive changes; review it and explicitly allow them")

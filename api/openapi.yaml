@@ -1560,6 +1560,8 @@ paths:
             `deployment_in_flight`: another deployment or run is in
             flight. `unsupported_schema`: the revision document was
             written by another build and cannot be targeted.
+            `environment_busy`: a reconcile pass or another change held
+            the environment for 10 seconds; retry shortly.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -2960,7 +2962,16 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/ReauthRequired" }
         "404": { $ref: "#/components/responses/NotFound" }
-        "409": { $ref: "#/components/responses/Conflict" }
+        "409":
+          description: |
+            `conflict`: the environment is already releasing.
+            `deployment_in_flight`: a deployment is in flight; cancel its
+            run or wait for it to finish.
+            `environment_busy`: a reconcile pass or another change held
+            the environment for 10 seconds; retry shortly.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /v1/environments/{id}/backups:
     parameters:
@@ -3786,7 +3797,16 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
-        "409": { $ref: "#/components/responses/Conflict" }
+        "409":
+          description: |
+            `conflict`: the run is already terminal, or the deployment can
+            no longer be cancelled.
+            `environment_busy`: the run is cancelled, but a reconcile pass
+            or another change held the environment for 10 seconds and the
+            target did not fall back.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /v1/runs/{id}/steps:
     parameters:

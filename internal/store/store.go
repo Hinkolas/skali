@@ -4,7 +4,9 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -34,6 +36,19 @@ func NewPool(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
 type Store struct {
 	Pool *pgxpool.Pool
 	*Queries
+
+	locksOnce sync.Once
+	locks     *pgxpool.Pool // see lockPool
+	locksErr  error
+}
+
+// Close closes the environment lock connections. The query pool belongs to
+// the caller that opened it.
+func (s *Store) Close() {
+	s.locksOnce.Do(func() { s.locksErr = errors.New("store: closed") })
+	if s.locks != nil {
+		s.locks.Close()
+	}
 }
 
 func NewStore(pool *pgxpool.Pool) *Store {

@@ -73,6 +73,7 @@ func runSeed(args []string) error {
 	}
 	defer pool.Close()
 	st := store.NewStore(pool)
+	defer st.Close()
 
 	values, err := valuestore.New(st, cfg.AuthSecret)
 	if err != nil {
