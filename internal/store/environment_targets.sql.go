@@ -242,21 +242,24 @@ func (q *Queries) SetEnvironmentActiveRevision(ctx context.Context, arg SetEnvir
 
 const setEnvironmentTarget = `-- name: SetEnvironmentTarget :execrows
 UPDATE environment_targets
-SET target_revision_id = $2, state = 'active', updated_at = now()
-WHERE environment_id = $1 AND state <> 'releasing'
+SET target_revision_id = $1, state = 'active', updated_at = now(),
+    restarted_at = CASE WHEN $2::boolean THEN now() ELSE restarted_at END
+WHERE environment_id = $3 AND state <> 'releasing'
 `
 
 type SetEnvironmentTargetParams struct {
-	EnvironmentID    uuid.UUID
 	TargetRevisionID *uuid.UUID
+	Restart          bool
+	EnvironmentID    uuid.UUID
 }
 
 // The single writer of the target pointer; runs only inside the deploy
 // promotion or rollback transaction. Promoting resurrects an environment
 // that was taken down, but never one that is releasing: purge is one-way,
-// so a promote racing a purge fails on the 0-row result.
+// so a promote racing a purge fails on the 0-row result. With restart set,
+// the same write stamps a workload restart (a forced deployment).
 func (q *Queries) SetEnvironmentTarget(ctx context.Context, arg SetEnvironmentTargetParams) (int64, error) {
-	result, err := q.db.Exec(ctx, setEnvironmentTarget, arg.EnvironmentID, arg.TargetRevisionID)
+	result, err := q.db.Exec(ctx, setEnvironmentTarget, arg.TargetRevisionID, arg.Restart, arg.EnvironmentID)
 	if err != nil {
 		return 0, err
 	}

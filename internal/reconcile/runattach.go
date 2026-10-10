@@ -78,7 +78,7 @@ func adoptableRun(state store.GetEnvironmentPassRow) (*attachedRun, bool) {
 		// restore run is driven by the backup controller; adopting it would
 		// let a converged pass's activate() or the teardown path finish it
 		// mid-flight. The pass still reconciles, and its lazy run loses the
-		// StartRun race in attachRun, journaling nothing.
+		// environment's running-run race in ensure, journaling nothing.
 		return nil, false
 	}
 	if state.DeploymentStatus != nil && *state.DeploymentStatus == string(deploy.DeploymentPreparing) {
@@ -158,26 +158,18 @@ func (a *runAttachment) ensure(ctx context.Context) {
 	if kind == "" {
 		kind = "reconcile"
 	}
-	run, err := a.journal.CreateRun(ctx, journal.RunInput{
+	run, err := a.journal.BeginRun(ctx, journal.RunInput{
 		Kind:          kind,
 		ProjectID:     a.projectID,
 		EnvironmentID: a.environmentID,
 		Actor:         actorReconcile,
 	})
 	if err != nil {
-		warn("create reconcile run", err, "environment", a.environmentID)
-		return
-	}
-	if err := a.journal.StartRun(ctx, run.ID); err != nil {
-		// The environment already has a running run this pass did not adopt
-		// (a deployment still inside its artifact window, or one that started
-		// after attachRun read). The created row can never start and nothing
-		// would ever finish it, so it goes away and the pass journals
-		// nothing; the next pass adopts the run that won.
-		warn("start reconcile run", err, "environment", a.environmentID)
-		if discardErr := a.journal.DiscardRun(ctx, run.ID); discardErr != nil {
-			warn("discard unstarted reconcile run", discardErr, "run", run.ID)
-		}
+		// With ErrRunConflict the environment already has a running run
+		// this pass did not adopt (a deployment still inside its artifact
+		// window, or one that started after attachRun read). The pass
+		// journals nothing; the next pass adopts the run that won.
+		warn("begin reconcile run", err, "environment", a.environmentID)
 		return
 	}
 	a.run = &attachedRun{ID: run.ID, Kind: run.Kind}

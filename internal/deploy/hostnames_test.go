@@ -8,6 +8,7 @@ import (
 	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/project"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
 	"strings"
 	"sync"
@@ -58,6 +59,19 @@ func TestHostnameAdmissionAndRelease(t *testing.T) {
 	target, err = f.st.GetEnvironmentTarget(ctx, f.environmentID)
 	require.NoError(t, err)
 	require.NotEqual(t, first.RevisionID, *target.TargetRevisionID)
+}
+
+// A revision without routes retires every claim the environment held, so
+// the hostname is released once its router is gone.
+func TestPromoteWithoutRoutesRetiresClaims(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	require.NoError(t, f.deploy.Promote(ctx, routePrepared(t, f, f.environmentID, f.submit(t, routedManifest, 0))))
+	unrouted := f.submit(t, strings.Replace(routedManifest, "    routes:\n      public: {domain: example.com, port: 80}\n", "", 1), 1)
+	require.NoError(t, f.deploy.Promote(ctx, routePrepared(t, f, f.environmentID, unrouted)))
+	require.NoError(t, f.deploy.ReleaseAbsentHostnames(ctx, f.environmentID, map[string]bool{}))
+	_, err := f.st.GetHostnameClaim(ctx, "example.com")
+	require.ErrorIs(t, err, pgx.ErrNoRows)
 }
 
 func TestConcurrentHostnameClaimsHaveOneWinner(t *testing.T) {

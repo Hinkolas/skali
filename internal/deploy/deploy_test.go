@@ -662,34 +662,34 @@ func TestLoadPromotionSource(t *testing.T) {
 	staging, err := f.projects.CreateEnvironment(ctx, f.projectID, "staging", project.EnvironmentOptions{})
 	require.NoError(t, err)
 
-	source, err := f.deploy.loadPromotionSource(ctx, staging.ID, f.environmentID)
+	source, err := f.deploy.loadPromotionSource(ctx, *staging, f.environmentID)
 	require.NoError(t, err)
 	require.Equal(t, prepared.DefinitionVersionID, source.DefinitionVersionID)
 	require.Len(t, source.Actions, 1)
 	require.Equal(t, "reuse", source.Actions[0].Action)
 
-	leases, err := f.st.ListArtifactLeasesByRevision(ctx, prepared.RevisionID)
+	leased, err := f.st.ListLeasedArtifacts(ctx, prepared.RevisionID)
 	require.NoError(t, err)
-	require.Len(t, leases, 1)
-	require.Equal(t, leases[0].ArtifactID, source.Actions[0].ArtifactID,
+	require.Len(t, leased, 1)
+	require.Equal(t, leased[0].ID, source.Actions[0].ArtifactID,
 		"the promotion pins the leased artifact row")
 	require.Equal(t, prepared.Revision.Artifacts, source.Artifacts)
 
 	// Guards: same environment, unknown source, no active revision, and a
 	// source in another project.
-	_, err = f.deploy.loadPromotionSource(ctx, staging.ID, staging.ID)
+	_, err = f.deploy.loadPromotionSource(ctx, *staging, staging.ID)
 	require.ErrorIs(t, err, ErrSameEnvironment)
-	_, err = f.deploy.loadPromotionSource(ctx, staging.ID, uuid.New())
+	_, err = f.deploy.loadPromotionSource(ctx, *staging, uuid.New())
 	require.ErrorIs(t, err, ErrSourceEnvironmentNotFound)
 	empty, err := f.projects.CreateEnvironment(ctx, f.projectID, "empty", project.EnvironmentOptions{})
 	require.NoError(t, err)
-	_, err = f.deploy.loadPromotionSource(ctx, staging.ID, empty.ID)
+	_, err = f.deploy.loadPromotionSource(ctx, *staging, empty.ID)
 	require.ErrorIs(t, err, ErrNoActiveRevision)
 	otherProject, err := f.projects.Create(ctx, "other", "", uuid.Nil)
 	require.NoError(t, err)
 	otherEnv, err := f.projects.CreateEnvironment(ctx, otherProject.ID, "production", project.EnvironmentOptions{})
 	require.NoError(t, err)
-	_, err = f.deploy.loadPromotionSource(ctx, otherEnv.ID, f.environmentID)
+	_, err = f.deploy.loadPromotionSource(ctx, *otherEnv, f.environmentID)
 	require.ErrorIs(t, err, ErrSourceProjectMismatch)
 }
 

@@ -74,6 +74,37 @@ func (s *Service) CreateRun(ctx context.Context, in RunInput) (*store.Run, error
 	if err != nil {
 		return nil, fmt.Errorf("journal: generate id: %w", err)
 	}
+	params := store.CreateRunParams(runParams(id, in))
+	run, err := s.st.CreateRun(ctx, params)
+	if err != nil {
+		return nil, fmt.Errorf("journal: create run: %w", err)
+	}
+	s.notifyEnvironment(params.EnvironmentID)
+	return &run, nil
+}
+
+// BeginRun creates a run already running, in one statement. An environment
+// that already has a running run refuses it with ErrRunConflict, and then
+// no row exists.
+func (s *Service) BeginRun(ctx context.Context, in RunInput) (*store.Run, error) {
+	id, err := uuid.NewV7()
+	if err != nil {
+		return nil, fmt.Errorf("journal: generate id: %w", err)
+	}
+	params := store.BeginRunParams(runParams(id, in))
+	run, err := s.st.BeginRun(ctx, params)
+	if store.IsUniqueViolation(err) {
+		return nil, ErrRunConflict
+	}
+	if err != nil {
+		return nil, fmt.Errorf("journal: begin run: %w", err)
+	}
+	s.notifyRun(run.ID)
+	s.notifyEnvironment(params.EnvironmentID)
+	return &run, nil
+}
+
+func runParams(id uuid.UUID, in RunInput) store.CreateRunParams {
 	params := store.CreateRunParams{ID: id, Kind: in.Kind, Actor: in.Actor, BypassProtection: in.BypassProtection}
 	if in.ProjectID != uuid.Nil {
 		params.ProjectID = &in.ProjectID
@@ -81,12 +112,7 @@ func (s *Service) CreateRun(ctx context.Context, in RunInput) (*store.Run, error
 	if in.EnvironmentID != uuid.Nil {
 		params.EnvironmentID = &in.EnvironmentID
 	}
-	run, err := s.st.CreateRun(ctx, params)
-	if err != nil {
-		return nil, fmt.Errorf("journal: create run: %w", err)
-	}
-	s.notifyEnvironment(params.EnvironmentID)
-	return &run, nil
+	return params
 }
 
 // StartRun moves pending -> running. The partial unique index turns a
@@ -112,28 +138,6 @@ func (s *Service) StartRun(ctx context.Context, id uuid.UUID) error {
 	}
 	s.notifyRun(id)
 	s.notifyEnvironment(environmentID)
-	return nil
-}
-
-// DiscardRun removes a run that never started. A CreateRun whose StartRun
-// lost the environment's running-run race would otherwise strand a pending
-// row: nothing finishes it, the retention caps only reclaim terminal runs,
-// and every reader counts it as in flight. The delete is guarded on the
-// pending status, so a run that did start is never removed.
-func (s *Service) DiscardRun(ctx context.Context, id uuid.UUID) error {
-	run, err := s.st.GetRunByID(ctx, id)
-	if err != nil {
-		return notFoundOr(err, "get run")
-	}
-	rows, err := s.st.DeletePendingRun(ctx, id)
-	if err != nil {
-		return fmt.Errorf("journal: discard run: %w", err)
-	}
-	if rows == 0 {
-		return nil // it started after all; its own writer owns it
-	}
-	s.notifyRun(id)
-	s.notifyEnvironment(run.EnvironmentID)
 	return nil
 }
 
@@ -251,59 +255,11 @@ func (s *Service) SetStepStatus(ctx context.Context, stepID uuid.UUID, to StepSt
 	return nil
 }
 
-// LogEntry is one log line of a step journaled by CompleteStep.
+// LogEntry is one log line of a step journaled by RecordStep.
 type LogEntry struct {
 	Level   string
 	Message string
 	Fields  map[string]any
-}
-
-// CompleteStep journals work that already happened: the step moves as if
-// through running to succeeded or failed, with one finished attempt carrying
-// entries, redacted and bounded like Append's. It is one guarded statement
-// where opening the attempt, appending each line, and closing the attempt
-// and step took a transaction each. A step whose status does not allow the
-// change is refused with ErrInvalidTransition, and one with a running
-// attempt with ErrAttemptConflict; neither writes anything.
-func (s *Service) CompleteStep(ctx context.Context, step *store.Step, redactor *redact.Redactor, to StepStatus, entries []LogEntry) error {
-	attemptStatus := AttemptSucceeded
-	switch to {
-	case StepSucceeded:
-	case StepFailed:
-		attemptStatus = AttemptFailed
-	default:
-		return fmt.Errorf("%w: a completed step succeeds or fails, got %s", ErrInvalidTransition, to)
-	}
-	attemptID, err := uuid.NewV7()
-	if err != nil {
-		return fmt.Errorf("journal: generate id: %w", err)
-	}
-	lines, encoded, err := encodeEntries(redactor, entries)
-	if err != nil {
-		return err
-	}
-	from := recordSources(to)
-	row, err := s.st.CompleteStep(ctx, store.CompleteStepParams{
-		ID: step.ID, Status: string(to), FromStatuses: statuses(from),
-		AttemptID: attemptID, AttemptStatus: string(attemptStatus), ExecutorID: s.executorID,
-		Entries: encoded,
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		current, err := s.st.GetStepByID(ctx, step.ID)
-		if err != nil {
-			return notFoundOr(err, "get step")
-		}
-		if slices.Contains(from, StepStatus(current.Status)) {
-			return ErrAttemptConflict
-		}
-		return fmt.Errorf("%w: %v -> %v", ErrInvalidTransition, current.Status, to)
-	}
-	if err != nil {
-		return fmt.Errorf("journal: complete step: %w", err)
-	}
-	s.publishLines(step.ID, row.Number, row.LoggedAt, lines)
-	s.notifyRun(step.RunID)
-	return nil
 }
 
 // StepRecord is one observation of a step, addressed by its key.
@@ -315,7 +271,8 @@ type StepRecord struct {
 	// To is the status the step moves to.
 	To StepStatus
 	// Entries are the lines of the finished attempt the record writes; it
-	// fails when To is failed and succeeds otherwise.
+	// fails when To is failed and succeeds otherwise. A record to running
+	// writes no attempt and carries no entries.
 	Entries []LogEntry
 	// Dedupe writes the attempt only when the last entry differs from the
 	// step's latest line, so an observation repeated across passes adds
@@ -348,11 +305,15 @@ func (s *Service) StepStates(ctx context.Context, runID uuid.UUID) (map[string]S
 // creates the step when the run has none under the key, moves it to To the
 // way the step machine allows, through running when the machine goes that
 // way, and writes one finished attempt carrying the entries, redacted and
-// bounded like Append's. A step whose status does not allow the change is
-// refused with ErrInvalidTransition, and one with a running attempt with
-// ErrAttemptConflict; neither writes anything. The returned state is the
-// step's after the record, or as found when it was refused.
+// bounded like Append's, unless To is running. A step whose status does not
+// allow the change is refused with ErrInvalidTransition, and one with a
+// running attempt with ErrAttemptConflict; neither writes anything. The
+// returned state is the step's after the record, or as found when it was
+// refused.
 func (s *Service) RecordStep(ctx context.Context, record StepRecord, redactor *redact.Redactor) (StepState, error) {
+	if record.To == StepRunning && len(record.Entries) > 0 {
+		return StepState{}, fmt.Errorf("journal: record step: a step that starts writes no lines")
+	}
 	attemptStatus := AttemptSucceeded
 	if record.To == StepFailed {
 		attemptStatus = AttemptFailed

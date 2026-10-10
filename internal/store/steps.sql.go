@@ -12,70 +12,6 @@ import (
 	"github.com/google/uuid"
 )
 
-const completeStep = `-- name: CompleteStep :one
-WITH step AS (
-    UPDATE steps SET
-        status = $1::text,
-        started_at = COALESCE(started_at, now()),
-        finished_at = now()
-    WHERE steps.id = $2
-      AND steps.status = ANY($3::text[])
-      AND NOT EXISTS (
-          SELECT 1 FROM attempts WHERE attempts.step_id = steps.id AND attempts.status = 'running')
-    RETURNING steps.id
-), attempt AS (
-    INSERT INTO attempts (id, step_id, number, status, executor_id, finished_at)
-    SELECT $4::uuid, step.id,
-           (SELECT COALESCE(MAX(number), 0) + 1 FROM attempts WHERE attempts.step_id = step.id),
-           $5::text, $6::text, now()
-    FROM step
-    RETURNING attempts.id, attempts.number
-), entries AS (
-    -- entries is a JSON array of {id, level, message, fields}; its order
-    -- is the sequence.
-    INSERT INTO run_logs (id, attempt_id, seq, level, message, fields)
-    SELECT (entry.value->>'id')::uuid, attempt.id, entry.seq,
-           entry.value->>'level', entry.value->>'message', entry.value->'fields'
-    FROM attempt, jsonb_array_elements($7::jsonb) WITH ORDINALITY AS entry(value, seq)
-)
-SELECT attempt.number, now()::timestamptz AS logged_at FROM attempt
-`
-
-type CompleteStepParams struct {
-	Status        string
-	ID            uuid.UUID
-	FromStatuses  []string
-	AttemptID     uuid.UUID
-	AttemptStatus string
-	ExecutorID    string
-	Entries       []byte
-}
-
-type CompleteStepRow struct {
-	Number   int64
-	LoggedAt time.Time
-}
-
-// CompleteStep journals work that already happened in one statement: the
-// step moves as if through running to status, with one finished attempt
-// carrying the log entries. It writes only while the step's status is one
-// of from_statuses and no attempt of the step is running; otherwise
-// nothing is written and no row returns.
-func (q *Queries) CompleteStep(ctx context.Context, arg CompleteStepParams) (CompleteStepRow, error) {
-	row := q.db.QueryRow(ctx, completeStep,
-		arg.Status,
-		arg.ID,
-		arg.FromStatuses,
-		arg.AttemptID,
-		arg.AttemptStatus,
-		arg.ExecutorID,
-		arg.Entries,
-	)
-	var i CompleteStepRow
-	err := row.Scan(&i.Number, &i.LoggedAt)
-	return i, err
-}
-
 const countDeferredRoutesByRun = `-- name: CountDeferredRoutesByRun :many
 SELECT steps.run_id, count(*)::bigint AS deferred
 FROM steps
@@ -366,7 +302,7 @@ WITH existing AS (
            (SELECT COALESCE(MAX(number), 0) + 1 FROM attempts WHERE attempts.step_id = step.id),
            $11::text, $12::text, now()
     FROM step, fresh
-    WHERE fresh.lines
+    WHERE fresh.lines AND $8::text <> 'running'
     RETURNING attempts.id, attempts.number
 ), entries AS (
     INSERT INTO run_logs (id, attempt_id, seq, level, message, fields)
@@ -412,7 +348,8 @@ type RecordStepRow struct {
 // one statement. It creates the step at status when the run has none under
 // the key; otherwise it moves the step to status, provided its status is
 // one of from_statuses and none of its attempts is running. Either way it
-// writes one finished attempt carrying the entries. With dedupe set, the
+// writes one finished attempt carrying the entries, unless status is
+// running: a step that starts has no finished work yet. With dedupe set, the
 // attempt is written only when the last entry differs from the step's
 // latest line, and a step already at status with an unchanged line is not
 // written at all. The row reports the status the step had (empty: none),

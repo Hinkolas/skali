@@ -140,41 +140,11 @@ func (q *Queries) GetDeploymentByRunID(ctx context.Context, runID *uuid.UUID) (D
 	return i, err
 }
 
-const getDeploymentForUpdate = `-- name: GetDeploymentForUpdate :one
-SELECT id, project_id, environment_id, definition_version_id, candidate_id, status, revision_id, run_id, actor, build_executor, actions, created_at, updated_at, restart, local_applications, prune_values, bypass_protection, from_environment_id FROM deployments WHERE id = $1 FOR UPDATE
-`
-
-// Row lock so status transitions are guarded under the lifecycle machine.
-func (q *Queries) GetDeploymentForUpdate(ctx context.Context, id uuid.UUID) (Deployment, error) {
-	row := q.db.QueryRow(ctx, getDeploymentForUpdate, id)
-	var i Deployment
-	err := row.Scan(
-		&i.ID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.DefinitionVersionID,
-		&i.CandidateID,
-		&i.Status,
-		&i.RevisionID,
-		&i.RunID,
-		&i.Actor,
-		&i.BuildExecutor,
-		&i.Actions,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.Restart,
-		&i.LocalApplications,
-		&i.PruneValues,
-		&i.BypassProtection,
-		&i.FromEnvironmentID,
-	)
-	return i, err
-}
-
 const getPreparingDeploymentForEnvironment = `-- name: GetPreparingDeploymentForEnvironment :one
 SELECT id, project_id, environment_id, definition_version_id, candidate_id, status, revision_id, run_id, actor, build_executor, actions, created_at, updated_at, restart, local_applications, prune_values, bypass_protection, from_environment_id FROM deployments WHERE environment_id = $1 AND status = 'preparing'
 `
 
+// Row lock so status transitions are guarded under the lifecycle machine.
 func (q *Queries) GetPreparingDeploymentForEnvironment(ctx context.Context, environmentID uuid.UUID) (Deployment, error) {
 	row := q.db.QueryRow(ctx, getPreparingDeploymentForEnvironment, environmentID)
 	var i Deployment
@@ -382,6 +352,39 @@ func (q *Queries) ListStalePreparingDeployments(ctx context.Context, updatedAt t
 	return items, nil
 }
 
+const moveDeployment = `-- name: MoveDeployment :one
+UPDATE deployments
+SET status = $1::text,
+    revision_id = COALESCE($2::uuid, revision_id),
+    updated_at = now()
+WHERE id = $3::uuid AND status = ANY($4::text[])
+RETURNING id
+`
+
+type MoveDeploymentParams struct {
+	Status       string
+	RevisionID   *uuid.UUID
+	ID           uuid.UUID
+	FromStatuses []string
+}
+
+// MoveDeployment applies one status change of a deployment in one
+// statement, only from one of from_statuses, which the deploy service
+// derives from its lifecycle machine, and records the revision the
+// deployment produced when one is given. No row returns when the deployment
+// is missing or its status refuses the change.
+func (q *Queries) MoveDeployment(ctx context.Context, arg MoveDeploymentParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, moveDeployment,
+		arg.Status,
+		arg.RevisionID,
+		arg.ID,
+		arg.FromStatuses,
+	)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const setDeploymentActions = `-- name: SetDeploymentActions :exec
 UPDATE deployments SET actions = $2, updated_at = now() WHERE id = $1
 `
@@ -393,34 +396,6 @@ type SetDeploymentActionsParams struct {
 
 func (q *Queries) SetDeploymentActions(ctx context.Context, arg SetDeploymentActionsParams) error {
 	_, err := q.db.Exec(ctx, setDeploymentActions, arg.ID, arg.Actions)
-	return err
-}
-
-const setDeploymentRevision = `-- name: SetDeploymentRevision :exec
-UPDATE deployments SET revision_id = $2, updated_at = now() WHERE id = $1
-`
-
-type SetDeploymentRevisionParams struct {
-	ID         uuid.UUID
-	RevisionID *uuid.UUID
-}
-
-func (q *Queries) SetDeploymentRevision(ctx context.Context, arg SetDeploymentRevisionParams) error {
-	_, err := q.db.Exec(ctx, setDeploymentRevision, arg.ID, arg.RevisionID)
-	return err
-}
-
-const setDeploymentStatus = `-- name: SetDeploymentStatus :exec
-UPDATE deployments SET status = $2, updated_at = now() WHERE id = $1
-`
-
-type SetDeploymentStatusParams struct {
-	ID     uuid.UUID
-	Status string
-}
-
-func (q *Queries) SetDeploymentStatus(ctx context.Context, arg SetDeploymentStatusParams) error {
-	_, err := q.db.Exec(ctx, setDeploymentStatus, arg.ID, arg.Status)
 	return err
 }
 

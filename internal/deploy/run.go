@@ -17,18 +17,6 @@ import (
 // ErrDeploymentInFlight: the environment already has a running deployment.
 var ErrDeploymentInFlight = errors.New("deploy: another deployment is already running for this environment")
 
-// discardUnstartedRun removes a run whose start lost the environment's
-// running-run race. The row explains nothing, nothing will ever finish it,
-// and the journal's retention only reclaims terminal runs, so abandoning it
-// would leave a pending run in every reader's view forever.
-func discardUnstartedRun(ctx context.Context, jr *journal.Service, id uuid.UUID) {
-	ctx, cancel := detached(ctx)
-	defer cancel()
-	if err := jr.DiscardRun(ctx, id); err != nil {
-		slog.WarnContext(ctx, "discard unstarted run", "run", id, "error", err)
-	}
-}
-
 // ExecuteInput describes one deployment execution. The journal is passed in
 // rather than owned so the run tree and the deployment stay decoupled:
 // deleting the journal never affects deployment behavior.
@@ -59,6 +47,9 @@ type ExecuteInput struct {
 	// set onto the stored revision that the plan preview stamped onto the
 	// candidate.
 	ActionPlatforms map[string]string
+	// redactor is the one a deployment's completion already built; without
+	// it the stages build their own.
+	redactor *redact.Redactor
 }
 
 type ExecuteResult struct {
@@ -74,20 +65,16 @@ type ExecuteResult struct {
 // it with the fake resolver; the API wires the real build and import
 // resolvers.
 func (s *Service) Execute(ctx context.Context, in ExecuteInput) (*ExecuteResult, error) {
-	run, err := in.Journal.CreateRun(ctx, journal.RunInput{
+	run, err := in.Journal.BeginRun(ctx, journal.RunInput{
 		Kind:          "deployment",
 		ProjectID:     in.ProjectID,
 		EnvironmentID: in.EnvironmentID,
 		Actor:         in.Actor,
 	})
-	if err != nil {
-		return nil, err
+	if errors.Is(err, journal.ErrRunConflict) {
+		return nil, ErrDeploymentInFlight
 	}
-	if err := in.Journal.StartRun(ctx, run.ID); err != nil {
-		discardUnstartedRun(ctx, in.Journal, run.ID)
-		if errors.Is(err, journal.ErrRunConflict) {
-			return nil, ErrDeploymentInFlight
-		}
+	if err != nil {
 		return nil, err
 	}
 	return s.runStages(ctx, run.ID, in)
@@ -102,22 +89,27 @@ func (s *Service) runStages(ctx context.Context, runID uuid.UUID, in ExecuteInpu
 
 	// The redactor covers the environment's current secrets plus the
 	// candidate's staged ones; every log line passes through it.
-	redactor, err := s.values.Redactor(ctx, in.EnvironmentID, in.CandidateID)
-	if err != nil {
-		return result, s.fail(ctx, in, runID, nil, err)
+	redactor := in.redactor
+	if redactor == nil {
+		var err error
+		if redactor, err = s.values.Redactor(ctx, in.EnvironmentID, in.CandidateID); err != nil {
+			return result, s.fail(ctx, in, runID, nil, err)
+		}
 	}
 
 	// Each step shows running while its work runs; its log lines are
-	// journaled with its outcome in one write (journal.CompleteStep).
+	// journaled with its outcome in one write.
 	info := func(message string) journal.LogEntry { return journal.LogEntry{Level: "info", Message: message} }
 	warn := func(message string) journal.LogEntry { return journal.LogEntry{Level: "warn", Message: message} }
+	step := func(ctx context.Context, key, title string, to journal.StepStatus, entries []journal.LogEntry) error {
+		_, err := in.Journal.RecordStep(ctx, journal.StepRecord{RunID: runID, Key: key, Title: title,
+			To: to, Entries: entries}, redactor)
+		return err
+	}
 
 	// Step 1: create the immutable revision.
-	prepareStep, err := in.Journal.EnsureStep(ctx, runID, nil, "revision", "Create revision")
-	if err != nil {
-		return result, s.fail(ctx, in, runID, redactor, err)
-	}
-	if err := in.Journal.SetStepStatus(ctx, prepareStep.ID, journal.StepRunning); err != nil {
+	const prepareKey, prepareTitle = "revision", "Create revision"
+	if err := step(ctx, prepareKey, prepareTitle, journal.StepRunning, nil); err != nil {
 		return result, s.fail(ctx, in, runID, redactor, err)
 	}
 	prepareLog := []journal.LogEntry{info("resolving artifacts and building the revision")}
@@ -134,7 +126,7 @@ func (s *Service) runStages(ctx context.Context, runID uuid.UUID, in ExecuteInpu
 		// The diagnostic must land even when ctx is what failed.
 		cctx, cancel := detached(ctx)
 		defer cancel()
-		_ = in.Journal.CompleteStep(cctx, prepareStep, redactor, journal.StepFailed,
+		_ = step(cctx, prepareKey, prepareTitle, journal.StepFailed,
 			append(prepareLog, journal.LogEntry{Level: "error", Message: "preparation failed: " + err.Error()}))
 		return result, s.fail(cctx, in, runID, redactor, err)
 	}
@@ -146,16 +138,13 @@ func (s *Service) runStages(ctx context.Context, runID uuid.UUID, in ExecuteInpu
 		prepareLog = append(prepareLog, warn("ignoring stored values not referenced by this definition: "+strings.Join(prepared.Orphaned, ", ")))
 	}
 	prepareLog = append(prepareLog, info("revision "+prepared.Revision.Checksum+" stored"))
-	if err := in.Journal.CompleteStep(ctx, prepareStep, redactor, journal.StepSucceeded, prepareLog); err != nil {
+	if err := step(ctx, prepareKey, prepareTitle, journal.StepSucceeded, prepareLog); err != nil {
 		return result, s.fail(ctx, in, runID, redactor, err)
 	}
 
 	// Step 2: promote atomically.
-	promoteStep, err := in.Journal.EnsureStep(ctx, runID, nil, "promote", "Promote revision")
-	if err != nil {
-		return result, s.fail(ctx, in, runID, redactor, err)
-	}
-	if err := in.Journal.SetStepStatus(ctx, promoteStep.ID, journal.StepRunning); err != nil {
+	const promoteKey, promoteTitle = "promote", "Promote revision"
+	if err := step(ctx, promoteKey, promoteTitle, journal.StepRunning, nil); err != nil {
 		return result, s.fail(ctx, in, runID, redactor, err)
 	}
 	prepared.Restart = in.Restart
@@ -170,12 +159,12 @@ func (s *Service) runStages(ctx context.Context, runID uuid.UUID, in ExecuteInpu
 	if err := s.Promote(ctx, prepared); err != nil {
 		cctx, cancel := detached(ctx)
 		defer cancel()
-		_ = in.Journal.CompleteStep(cctx, promoteStep, redactor, journal.StepFailed,
+		_ = step(cctx, promoteKey, promoteTitle, journal.StepFailed,
 			append(promoteLog, journal.LogEntry{Level: "error", Message: "promotion failed: " + err.Error()}))
 		return result, s.fail(cctx, in, runID, redactor, err)
 	}
 	promoteLog = append(promoteLog, info("target set to revision "+prepared.Revision.Checksum))
-	if err := in.Journal.CompleteStep(ctx, promoteStep, redactor, journal.StepSucceeded, promoteLog); err != nil {
+	if err := step(ctx, promoteKey, promoteTitle, journal.StepSucceeded, promoteLog); err != nil {
 		return result, s.fail(ctx, in, runID, redactor, err)
 	}
 

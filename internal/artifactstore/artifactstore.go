@@ -144,19 +144,6 @@ func (s *Service) Evict(ctx context.Context, id uuid.UUID) error {
 	})
 }
 
-// LeaseTx records the revision's leases inside the caller's transaction.
-func (s *Service) LeaseTx(ctx context.Context, q *store.Queries, revisionID uuid.UUID, artifactIDs []uuid.UUID) error {
-	for _, artifactID := range artifactIDs {
-		if err := q.CreateArtifactLease(ctx, store.CreateArtifactLeaseParams{
-			RevisionID: revisionID,
-			ArtifactID: artifactID,
-		}); err != nil {
-			return fmt.Errorf("artifactstore: lease %s: %w", artifactID, err)
-		}
-	}
-	return nil
-}
-
 // SweepPending abandons pending records older than age; the safety net for
 // executors that died without closing their record.
 func (s *Service) SweepPending(ctx context.Context, age time.Duration) (int64, error) {

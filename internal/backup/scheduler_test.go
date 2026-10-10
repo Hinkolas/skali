@@ -41,7 +41,7 @@ func (f *serviceFixture) activate(t *testing.T, definition compiler.ProjectDefin
 		Definition: encoded, Source: []byte("{}"), Format: "json", CompilerVersion: "test",
 	})
 	require.NoError(t, err)
-	_, err = f.st.InsertRevision(ctx, store.InsertRevisionParams{
+	_, err = f.st.StoreRevision(ctx, store.StoreRevisionParams{
 		ID: revisionID, ProjectID: f.projectID, EnvironmentID: f.environmentID, DefinitionVersionID: versionID,
 		SchemaVersion: "1", Checksum: revisionID.String(), DefinitionHash: revisionID.String(),
 		ValuesHash: "values", CompilerVersion: "test", Document: []byte("{}"),

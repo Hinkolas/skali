@@ -12,34 +12,6 @@ import (
 	"github.com/google/uuid"
 )
 
-const getRevisionByChecksum = `-- name: GetRevisionByChecksum :one
-SELECT id, project_id, environment_id, definition_version_id, schema_version, checksum, definition_hash, values_hash, compiler_version, document, created_at FROM revisions WHERE environment_id = $1 AND checksum = $2
-`
-
-type GetRevisionByChecksumParams struct {
-	EnvironmentID uuid.UUID
-	Checksum      string
-}
-
-func (q *Queries) GetRevisionByChecksum(ctx context.Context, arg GetRevisionByChecksumParams) (Revision, error) {
-	row := q.db.QueryRow(ctx, getRevisionByChecksum, arg.EnvironmentID, arg.Checksum)
-	var i Revision
-	err := row.Scan(
-		&i.ID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.DefinitionVersionID,
-		&i.SchemaVersion,
-		&i.Checksum,
-		&i.DefinitionHash,
-		&i.ValuesHash,
-		&i.CompilerVersion,
-		&i.Document,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
 const getRevisionByID = `-- name: GetRevisionByID :one
 SELECT id, project_id, environment_id, definition_version_id, schema_version, checksum, definition_hash, values_hash, compiler_version, document, created_at FROM revisions WHERE id = $1
 `
@@ -61,49 +33,6 @@ func (q *Queries) GetRevisionByID(ctx context.Context, id uuid.UUID) (Revision, 
 		&i.CreatedAt,
 	)
 	return i, err
-}
-
-const insertRevision = `-- name: InsertRevision :execrows
-
-INSERT INTO revisions
-    (id, project_id, environment_id, definition_version_id, schema_version,
-     checksum, definition_hash, values_hash, compiler_version, document)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-ON CONFLICT (environment_id, checksum) DO NOTHING
-`
-
-type InsertRevisionParams struct {
-	ID                  uuid.UUID
-	ProjectID           uuid.UUID
-	EnvironmentID       uuid.UUID
-	DefinitionVersionID uuid.UUID
-	SchemaVersion       string
-	Checksum            string
-	DefinitionHash      string
-	ValuesHash          string
-	CompilerVersion     string
-	Document            []byte
-}
-
-// Revisions are immutable: insert and read, never update. Re-preparing
-// identical inputs reuses the row via the (environment, checksum) unique.
-func (q *Queries) InsertRevision(ctx context.Context, arg InsertRevisionParams) (int64, error) {
-	result, err := q.db.Exec(ctx, insertRevision,
-		arg.ID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.DefinitionVersionID,
-		arg.SchemaVersion,
-		arg.Checksum,
-		arg.DefinitionHash,
-		arg.ValuesHash,
-		arg.CompilerVersion,
-		arg.Document,
-	)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
 }
 
 const listRevisions = `-- name: ListRevisions :many
@@ -156,4 +85,66 @@ func (q *Queries) ListRevisions(ctx context.Context, environmentID uuid.UUID) ([
 		return nil, err
 	}
 	return items, nil
+}
+
+const storeRevision = `-- name: StoreRevision :one
+WITH inserted AS (
+    INSERT INTO revisions
+        (id, project_id, environment_id, definition_version_id, schema_version,
+         checksum, definition_hash, values_hash, compiler_version, document)
+    VALUES ($1, $2, $3, $4,
+            $5, $6, $7, $8,
+            $9, $10)
+    ON CONFLICT (environment_id, checksum) DO NOTHING
+    RETURNING revisions.id
+), revision AS (
+    SELECT inserted.id FROM inserted
+    UNION ALL
+    SELECT revisions.id FROM revisions
+    WHERE revisions.environment_id = $3 AND revisions.checksum = $6
+), leases AS (
+    INSERT INTO artifact_leases (revision_id, artifact_id)
+    SELECT revision.id, artifact_id FROM revision, unnest($11::uuid[]) AS artifact_id
+    ON CONFLICT DO NOTHING
+)
+SELECT revision.id FROM revision
+`
+
+type StoreRevisionParams struct {
+	ID                  uuid.UUID
+	ProjectID           uuid.UUID
+	EnvironmentID       uuid.UUID
+	DefinitionVersionID uuid.UUID
+	SchemaVersion       string
+	Checksum            string
+	DefinitionHash      string
+	ValuesHash          string
+	CompilerVersion     string
+	Document            []byte
+	ArtifactIds         []uuid.UUID
+}
+
+// Revisions are immutable: insert and read, never update. StoreRevision
+// stores one and leases its artifacts in one statement, returning the
+// canonical row's id: re-preparing identical inputs reuses the row via the
+// (environment, checksum) unique, and the row gains any lease it lacks. A
+// row another transaction stored after this statement's snapshot is neither
+// inserted nor found, and no row returns.
+func (q *Queries) StoreRevision(ctx context.Context, arg StoreRevisionParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, storeRevision,
+		arg.ID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.DefinitionVersionID,
+		arg.SchemaVersion,
+		arg.Checksum,
+		arg.DefinitionHash,
+		arg.ValuesHash,
+		arg.CompilerVersion,
+		arg.Document,
+		arg.ArtifactIds,
+	)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
 }

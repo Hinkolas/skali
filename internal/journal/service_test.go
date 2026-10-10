@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/errgroup"
 
@@ -91,32 +90,30 @@ func TestRunLifecycleGuards(t *testing.T) {
 	require.NotNil(t, row.FinishedAt)
 }
 
-// A run whose start lost the environment's running-run race is removed
-// rather than left pending: nothing would ever finish it and the retention
-// caps only reclaim terminal runs.
-func TestDiscardRun(t *testing.T) {
+// A run begins running in one statement, and one that loses the
+// environment's running-run race leaves no row behind: nothing would ever
+// finish it and the retention caps only reclaim terminal runs.
+func TestBeginRun(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	ctx := context.Background()
+	input := RunInput{Kind: "reconcile", ProjectID: f.projectID, EnvironmentID: f.environmentID, Actor: "system:reconcile"}
 
-	running := f.startRun(t)
-	loser, err := f.svc.CreateRun(ctx, RunInput{
-		Kind: "reconcile", ProjectID: f.projectID, EnvironmentID: f.environmentID, Actor: "system:reconcile",
-	})
+	running, err := f.svc.BeginRun(ctx, input)
 	require.NoError(t, err)
-	require.ErrorIs(t, f.svc.StartRun(ctx, loser.ID), ErrRunConflict)
+	require.Equal(t, string(RunRunning), running.Status)
+	require.NotNil(t, running.StartedAt)
 
-	require.NoError(t, f.svc.DiscardRun(ctx, loser.ID))
-	_, err = f.st.GetRunByID(ctx, loser.ID)
-	require.ErrorIs(t, err, pgx.ErrNoRows)
-
-	// A run that did start is never removed underneath its writer.
-	require.NoError(t, f.svc.DiscardRun(ctx, running.ID))
-	kept, err := f.st.GetRunByID(ctx, running.ID)
+	_, err = f.svc.BeginRun(ctx, input)
+	require.ErrorIs(t, err, ErrRunConflict)
+	runs, err := f.st.ListRunsByEnvironment(ctx, &f.environmentID)
 	require.NoError(t, err)
-	require.Equal(t, string(RunRunning), kept.Status)
+	require.Len(t, runs, 1)
 
-	require.ErrorIs(t, f.svc.DiscardRun(ctx, uuid.New()), ErrNotFound)
+	require.NoError(t, f.svc.FinishRun(ctx, running.ID, RunSucceeded))
+	next, err := f.svc.BeginRun(ctx, input)
+	require.NoError(t, err)
+	require.NotEqual(t, running.ID, next.ID)
 }
 
 func TestStepAndAttemptGuards(t *testing.T) {
@@ -183,74 +180,6 @@ func TestEnsureStepConcurrently(t *testing.T) {
 	for _, id := range ids {
 		require.Equal(t, ids[0], id)
 	}
-}
-
-// CompleteStep writes a step, its one finished attempt, and the attempt's
-// redacted entries at once, or nothing at all.
-func TestCompleteStep(t *testing.T) {
-	t.Parallel()
-	f := newFixture(t)
-	ctx := context.Background()
-	run := f.startRun(t)
-	redactor := redact.New(map[string]string{"s3cr3t": "DB_PASSWORD"})
-
-	step, err := f.svc.EnsureStep(ctx, run.ID, nil, "apply:web", "Apply web")
-	require.NoError(t, err)
-	subscription, err := f.svc.Subscribe(ctx, step.ID, Cursor{})
-	require.NoError(t, err)
-	defer subscription.Cancel()
-	require.NoError(t, f.svc.CompleteStep(ctx, step, redactor, StepSucceeded, []LogEntry{
-		{Level: "info", Message: "applied with s3cr3t"},
-		{Level: "warn", Message: "slow", Fields: map[string]any{"detail": "s3cr3t", "count": 2}},
-	}))
-
-	tree, err := f.svc.RunTree(ctx, run.ID)
-	require.NoError(t, err)
-	done := tree.Steps[0].Step
-	require.Equal(t, "succeeded", done.Status)
-	require.NotNil(t, done.StartedAt)
-	require.NotNil(t, done.FinishedAt)
-	events, err := f.svc.StepLogs(ctx, step.ID, Cursor{}, 10)
-	require.NoError(t, err)
-	require.Len(t, events, 2)
-	require.Equal(t, int64(1), events[0].AttemptNumber)
-	require.Equal(t, []int64{1, 2}, []int64{events[0].Seq, events[1].Seq})
-	require.Equal(t, "applied with [redacted:DB_PASSWORD]", events[0].Message)
-	require.Equal(t, "warn", events[1].Level)
-	require.JSONEq(t, `{"count": 2, "detail": "[redacted:DB_PASSWORD]"}`, string(events[1].Fields))
-	live := <-subscription.Events
-	require.Equal(t, events[0].Message, live.Message)
-	require.Equal(t, int64(1), live.Seq)
-	var status string
-	require.NoError(t, f.st.Pool.QueryRow(ctx,
-		"SELECT status FROM attempts WHERE step_id = $1", step.ID).Scan(&status))
-	require.Equal(t, "succeeded", status)
-
-	// A terminal step is refused, and so is a step with a running attempt;
-	// neither gains an attempt.
-	require.ErrorIs(t, f.svc.CompleteStep(ctx, step, nil, StepFailed, nil), ErrInvalidTransition)
-	busy, err := f.svc.EnsureStep(ctx, run.ID, nil, "apply:worker", "Apply worker")
-	require.NoError(t, err)
-	require.NoError(t, f.svc.SetStepStatus(ctx, busy.ID, StepRunning))
-	_, err = f.svc.StartAttempt(ctx, busy.ID)
-	require.NoError(t, err)
-	require.ErrorIs(t, f.svc.CompleteStep(ctx, busy, nil, StepSucceeded, nil), ErrAttemptConflict)
-	var attempts int
-	require.NoError(t, f.st.Pool.QueryRow(ctx, `SELECT count(*) FROM attempts
-		JOIN steps ON steps.id = attempts.step_id WHERE steps.run_id = $1`, run.ID).Scan(&attempts))
-	require.Equal(t, 2, attempts)
-
-	// A waiting step completes too, failed here, and only succeeded or
-	// failed are completions.
-	waiting, err := f.svc.EnsureStep(ctx, run.ID, nil, "verify", "Verify health")
-	require.NoError(t, err)
-	require.NoError(t, f.svc.SetStepStatus(ctx, waiting.ID, StepWaiting))
-	require.ErrorIs(t, f.svc.CompleteStep(ctx, waiting, nil, StepSkipped, nil), ErrInvalidTransition)
-	require.NoError(t, f.svc.CompleteStep(ctx, waiting, nil, StepFailed,
-		[]LogEntry{{Level: "error", Message: "unhealthy"}}))
-	failed, err := f.svc.EnsureStep(ctx, run.ID, nil, "verify", "Verify health")
-	require.NoError(t, err)
-	require.Equal(t, "failed", failed.Status)
 }
 
 // RecordStep creates a step by key or moves the existing one as the step
@@ -332,6 +261,40 @@ func TestRecordStep(t *testing.T) {
 		"SELECT status FROM attempts WHERE step_id = $1", failed.ID).Scan(&status))
 	require.Equal(t, "failed", status)
 	require.Equal(t, []string{"boom"}, lines(failed.ID))
+
+	// A step that starts is created running without an attempt, and its
+	// outcome lands as the one finished attempt, published live with
+	// redacted fields.
+	started, err := f.svc.RecordStep(ctx, StepRecord{RunID: run.ID, Key: "revision", Title: "Create revision",
+		To: StepRunning}, nil)
+	require.NoError(t, err)
+	require.Equal(t, StepRunning, started.Status)
+	var attempts int
+	require.NoError(t, f.st.Pool.QueryRow(ctx,
+		"SELECT count(*) FROM attempts WHERE step_id = $1", started.ID).Scan(&attempts))
+	require.Zero(t, attempts)
+	_, err = f.svc.RecordStep(ctx, StepRecord{RunID: run.ID, Key: "revision", To: StepRunning,
+		Entries: []LogEntry{{Level: "info", Message: "early"}}}, nil)
+	require.Error(t, err, "a step that starts writes no lines")
+	subscription, err := f.svc.Subscribe(ctx, started.ID, Cursor{})
+	require.NoError(t, err)
+	defer subscription.Cancel()
+	_, err = f.svc.RecordStep(ctx, StepRecord{RunID: run.ID, Key: "revision", To: StepSucceeded, Entries: []LogEntry{
+		{Level: "info", Message: "stored with s3cr3t"},
+		{Level: "warn", Message: "slow", Fields: map[string]any{"detail": "s3cr3t", "count": 2}},
+	}}, redactor)
+	require.NoError(t, err)
+	events, err := f.svc.StepLogs(ctx, started.ID, Cursor{}, 10)
+	require.NoError(t, err)
+	require.Len(t, events, 2)
+	require.Equal(t, int64(1), events[0].AttemptNumber)
+	require.Equal(t, []int64{1, 2}, []int64{events[0].Seq, events[1].Seq})
+	require.Equal(t, "stored with [redacted:DB_PASSWORD]", events[0].Message)
+	require.Equal(t, "warn", events[1].Level)
+	require.JSONEq(t, `{"count": 2, "detail": "[redacted:DB_PASSWORD]"}`, string(events[1].Fields))
+	live := <-subscription.Events
+	require.Equal(t, events[0].Message, live.Message)
+	require.Equal(t, int64(1), live.Seq)
 }
 
 // A record whose statement snapshot predates another writer's insert of

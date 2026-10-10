@@ -6,6 +6,7 @@ import (
 	"errors"
 	"github.com/Hinkolas/skali/internal/diagnostic"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -99,9 +100,14 @@ type deploymentPayload struct {
 }
 
 func (h *deploymentsHandlers) actionPayloads(ctx context.Context, projectID uuid.UUID, actions []deploy.ArtifactAction) []artifactActionPayload {
+	// Only a build pushes into the project's release repository.
 	projectName := ""
-	if project, err := h.st.GetProjectByID(ctx, projectID); err == nil {
-		projectName = project.Name
+	if !h.registry.Disabled() && slices.ContainsFunc(actions, func(action deploy.ArtifactAction) bool {
+		return action.Action == "build"
+	}) {
+		if project, err := h.st.GetProjectByID(ctx, projectID); err == nil {
+			projectName = project.Name
+		}
 	}
 	payloads := make([]artifactActionPayload, len(actions))
 	for index, action := range actions {

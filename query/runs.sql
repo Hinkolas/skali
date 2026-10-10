@@ -3,6 +3,14 @@ INSERT INTO runs (id, kind, project_id, environment_id, actor, bypass_protection
 VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING *;
 
+-- BeginRun creates a run already running. The partial unique index turns
+-- a second running run for the same environment into a unique violation,
+-- and then no row exists.
+-- name: BeginRun :one
+INSERT INTO runs (id, kind, project_id, environment_id, actor, bypass_protection, status, started_at)
+VALUES ($1, $2, $3, $4, $5, $6, 'running', now())
+RETURNING *;
+
 -- name: GetRunByID :one
 SELECT * FROM runs WHERE id = $1;
 
@@ -42,9 +50,6 @@ SELECT run.environment_id FROM run;
 -- it: the creator removes the row instead of stranding it pending, which
 -- the terminal-only retention below would never reclaim. Guarded on the
 -- status so a run that did start is never deleted underneath its writer.
--- name: DeletePendingRun :execrows
-DELETE FROM runs WHERE id = $1 AND status = 'pending';
-
 -- name: ListRunsByEnvironment :many
 SELECT * FROM runs WHERE environment_id = $1 ORDER BY created_at DESC;
 

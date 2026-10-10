@@ -11,20 +11,24 @@ RETURNING *;
 SELECT * FROM deployments WHERE id = $1;
 
 -- Row lock so status transitions are guarded under the lifecycle machine.
--- name: GetDeploymentForUpdate :one
-SELECT * FROM deployments WHERE id = $1 FOR UPDATE;
-
 -- name: GetPreparingDeploymentForEnvironment :one
 SELECT * FROM deployments WHERE environment_id = $1 AND status = 'preparing';
 
--- name: SetDeploymentStatus :exec
-UPDATE deployments SET status = $2, updated_at = now() WHERE id = $1;
+-- MoveDeployment applies one status change of a deployment in one
+-- statement, only from one of from_statuses, which the deploy service
+-- derives from its lifecycle machine, and records the revision the
+-- deployment produced when one is given. No row returns when the deployment
+-- is missing or its status refuses the change.
+-- name: MoveDeployment :one
+UPDATE deployments
+SET status = sqlc.arg(status)::text,
+    revision_id = COALESCE(sqlc.narg(revision_id)::uuid, revision_id),
+    updated_at = now()
+WHERE id = sqlc.arg(id)::uuid AND status = ANY(sqlc.arg(from_statuses)::text[])
+RETURNING id;
 
 -- name: SetDeploymentActions :exec
 UPDATE deployments SET actions = $2, updated_at = now() WHERE id = $1;
-
--- name: SetDeploymentRevision :exec
-UPDATE deployments SET revision_id = $2, updated_at = now() WHERE id = $1;
 
 -- name: ListDeploymentsForEnvironment :many
 SELECT * FROM deployments

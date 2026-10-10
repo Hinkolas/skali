@@ -11,25 +11,52 @@ import (
 	"github.com/google/uuid"
 )
 
-const acquireHostname = `-- name: AcquireHostname :execrows
-INSERT INTO hostname_claims (hostname, environment_id, target_revision_id)
-VALUES ($1, $2, $3)
-ON CONFLICT (hostname) DO UPDATE SET target_revision_id = EXCLUDED.target_revision_id
-WHERE hostname_claims.environment_id = EXCLUDED.environment_id AND NOT hostname_claims.reserved
+const claimEnvironmentHostnames = `-- name: ClaimEnvironmentHostnames :many
+WITH retired AS (
+    UPDATE hostname_claims SET target_revision_id = NULL
+    WHERE hostname_claims.environment_id = $2::uuid
+      AND NOT (hostname_claims.hostname = ANY($1::text[]))
+), claimed AS (
+    INSERT INTO hostname_claims (hostname, environment_id, target_revision_id)
+    SELECT hostname, $2::uuid, $3::uuid
+    FROM unnest($1::text[]) AS hostname
+    ON CONFLICT (hostname) DO UPDATE SET target_revision_id = EXCLUDED.target_revision_id
+    WHERE hostname_claims.environment_id = EXCLUDED.environment_id AND NOT hostname_claims.reserved
+    RETURNING hostname_claims.hostname
+)
+SELECT hostname::text FROM unnest($1::text[]) AS hostname
+WHERE hostname NOT IN (SELECT claimed.hostname FROM claimed)
 `
 
-type AcquireHostnameParams struct {
-	Hostname         string
-	EnvironmentID    *uuid.UUID
-	TargetRevisionID *uuid.UUID
+type ClaimEnvironmentHostnamesParams struct {
+	Hostnames        []string
+	EnvironmentID    uuid.UUID
+	TargetRevisionID uuid.UUID
 }
 
-func (q *Queries) AcquireHostname(ctx context.Context, arg AcquireHostnameParams) (int64, error) {
-	result, err := q.db.Exec(ctx, acquireHostname, arg.Hostname, arg.EnvironmentID, arg.TargetRevisionID)
+// ClaimEnvironmentHostnames points the environment's hostname claims at
+// a revision in one statement: its claims on hostnames the revision does
+// not route retire, and each hostname it routes is claimed for it unless
+// another environment holds it or the installation reserves it. hostnames
+// must be distinct; the ones that could not be claimed return.
+func (q *Queries) ClaimEnvironmentHostnames(ctx context.Context, arg ClaimEnvironmentHostnamesParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, claimEnvironmentHostnames, arg.Hostnames, arg.EnvironmentID, arg.TargetRevisionID)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	return result.RowsAffected(), nil
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var hostname string
+		if err := rows.Scan(&hostname); err != nil {
+			return nil, err
+		}
+		items = append(items, hostname)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const deleteRetiredHostname = `-- name: DeleteRetiredHostname :exec

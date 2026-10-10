@@ -12,6 +12,50 @@ import (
 	"github.com/google/uuid"
 )
 
+const beginRun = `-- name: BeginRun :one
+INSERT INTO runs (id, kind, project_id, environment_id, actor, bypass_protection, status, started_at)
+VALUES ($1, $2, $3, $4, $5, $6, 'running', now())
+RETURNING id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection, failure
+`
+
+type BeginRunParams struct {
+	ID               uuid.UUID
+	Kind             string
+	ProjectID        *uuid.UUID
+	EnvironmentID    *uuid.UUID
+	Actor            string
+	BypassProtection bool
+}
+
+// BeginRun creates a run already running. The partial unique index turns
+// a second running run for the same environment into a unique violation,
+// and then no row exists.
+func (q *Queries) BeginRun(ctx context.Context, arg BeginRunParams) (Run, error) {
+	row := q.db.QueryRow(ctx, beginRun,
+		arg.ID,
+		arg.Kind,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.Actor,
+		arg.BypassProtection,
+	)
+	var i Run
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.Actor,
+		&i.Status,
+		&i.CreatedAt,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.BypassProtection,
+		&i.Failure,
+	)
+	return i, err
+}
+
 const countRunningRuns = `-- name: CountRunningRuns :one
 SELECT count(*) FROM runs WHERE status = 'running'
 `
@@ -64,22 +108,6 @@ func (q *Queries) CreateRun(ctx context.Context, arg CreateRunParams) (Run, erro
 		&i.Failure,
 	)
 	return i, err
-}
-
-const deletePendingRun = `-- name: DeletePendingRun :execrows
-DELETE FROM runs WHERE id = $1 AND status = 'pending'
-`
-
-// A run that never started explains nothing and nothing will ever finish
-// it: the creator removes the row instead of stranding it pending, which
-// the terminal-only retention below would never reclaim. Guarded on the
-// status so a run that did start is never deleted underneath its writer.
-func (q *Queries) DeletePendingRun(ctx context.Context, id uuid.UUID) (int64, error) {
-	result, err := q.db.Exec(ctx, deletePendingRun, id)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
 }
 
 const finishRun = `-- name: FinishRun :one
@@ -246,6 +274,10 @@ const listRunsByEnvironment = `-- name: ListRunsByEnvironment :many
 SELECT id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection, failure FROM runs WHERE environment_id = $1 ORDER BY created_at DESC
 `
 
+// A run that never started explains nothing and nothing will ever finish
+// it: the creator removes the row instead of stranding it pending, which
+// the terminal-only retention below would never reclaim. Guarded on the
+// status so a run that did start is never deleted underneath its writer.
 func (q *Queries) ListRunsByEnvironment(ctx context.Context, environmentID *uuid.UUID) ([]Run, error) {
 	rows, err := q.db.Query(ctx, listRunsByEnvironment, environmentID)
 	if err != nil {

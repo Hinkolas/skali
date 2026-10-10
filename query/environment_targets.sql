@@ -22,11 +22,13 @@ WHERE environments.id = $1;
 -- The single writer of the target pointer; runs only inside the deploy
 -- promotion or rollback transaction. Promoting resurrects an environment
 -- that was taken down, but never one that is releasing: purge is one-way,
--- so a promote racing a purge fails on the 0-row result.
+-- so a promote racing a purge fails on the 0-row result. With restart set,
+-- the same write stamps a workload restart (a forced deployment).
 -- name: SetEnvironmentTarget :execrows
 UPDATE environment_targets
-SET target_revision_id = $2, state = 'active', updated_at = now()
-WHERE environment_id = $1 AND state <> 'releasing';
+SET target_revision_id = sqlc.narg(target_revision_id), state = 'active', updated_at = now(),
+    restarted_at = CASE WHEN sqlc.arg(restart)::boolean THEN now() ELSE restarted_at END
+WHERE environment_id = sqlc.arg(environment_id) AND state <> 'releasing';
 
 -- The single writer of the active pointer; only reconciliation calls it, and
 -- only after the revision's required health conditions pass. The target guard

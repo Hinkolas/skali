@@ -4,11 +4,11 @@ import (
 	"context"
 	"testing"
 
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	"github.com/Hinkolas/skali/internal/compiler"
 	"github.com/Hinkolas/skali/internal/revision"
+	"github.com/Hinkolas/skali/internal/store"
 )
 
 func TestRecordResolver(t *testing.T) {
@@ -22,14 +22,17 @@ func TestRecordResolver(t *testing.T) {
 		ContextHash: "input-hash",
 	})
 	require.NoError(t, err)
-	resolver := &RecordResolver{Store: svc, IDs: map[string]uuid.UUID{"web": record.ID}}
 	source := compiler.ApplicationSource{Kind: "build"}
 
 	// Only verified records resolve.
+	resolver := &RecordResolver{Records: map[string]*store.Artifact{"web": record}}
 	_, err = resolver.Resolve(ctx, "web", source)
 	require.ErrorContains(t, err, "not verified")
 
 	require.NoError(t, svc.Verify(ctx, record.ID, "localhost:5510/skali/demo/web", testDigest, nil))
+	verified, err := svc.Get(ctx, record.ID)
+	require.NoError(t, err)
+	resolver.Records["web"] = verified
 	resolved, err := resolver.Resolve(ctx, "web", source)
 	require.NoError(t, err)
 	require.Equal(t, record.ID, resolved.ArtifactID)

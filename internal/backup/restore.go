@@ -85,23 +85,17 @@ func (c *Controller) CreateRestore(ctx context.Context, in RestoreInput) (*Creat
 		}
 	}
 
-	run, err := c.deps.Journal.CreateRun(ctx, journal.RunInput{
+	run, err := c.deps.Journal.BeginRun(ctx, journal.RunInput{
 		Kind:          KindRestore,
 		ProjectID:     names.projectID,
 		EnvironmentID: environmentID,
 		Actor:         actor,
 	})
-	if err != nil {
-		return nil, fmt.Errorf("backup: create run: %w", err)
+	if errors.Is(err, journal.ErrRunConflict) {
+		return nil, ErrBackupInFlight
 	}
-	if err := c.deps.Journal.StartRun(ctx, run.ID); err != nil {
-		if discardErr := c.deps.Journal.DiscardRun(ctx, run.ID); discardErr != nil {
-			_ = discardErr
-		}
-		if errors.Is(err, journal.ErrRunConflict) {
-			return nil, ErrBackupInFlight
-		}
-		return nil, fmt.Errorf("backup: start run: %w", err)
+	if err != nil {
+		return nil, fmt.Errorf("backup: begin run: %w", err)
 	}
 
 	id, err := uuid.NewV7()

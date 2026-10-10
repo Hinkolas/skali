@@ -105,9 +105,11 @@ func TestPreparingDeploymentRunNotAdopted(t *testing.T) {
 
 	// Promote flips the boundary: the same run is adopted and the stale
 	// unhealthy target now fails it under the deadline.
-	require.NoError(t, f.st.SetDeploymentStatus(ctx, store.SetDeploymentStatusParams{
+	_, err = f.st.MoveDeployment(ctx, store.MoveDeploymentParams{
 		ID: deployment.ID, Status: string(deploy.DeploymentPromoted),
-	}))
+		FromStatuses: []string{string(deploy.DeploymentPreparing)},
+	})
+	require.NoError(t, err)
 	_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
 	require.NoError(t, err)
 	run, err = f.st.GetRunByID(ctx, clientRun.ID)

@@ -95,20 +95,16 @@ func (s *Service) Teardown(ctx context.Context, environmentID uuid.UUID, purge b
 		}
 	}
 
-	run, err := jr.CreateRun(ctx, journal.RunInput{
+	run, err := jr.BeginRun(ctx, journal.RunInput{
 		Kind:          "teardown",
 		ProjectID:     env.ProjectID,
 		EnvironmentID: env.ID,
 		Actor:         actor,
 	})
-	if err != nil {
-		return nil, err
+	if errors.Is(err, journal.ErrRunConflict) {
+		return nil, ErrDeploymentInFlight
 	}
-	if err := jr.StartRun(ctx, run.ID); err != nil {
-		discardUnstartedRun(ctx, jr, run.ID)
-		if errors.Is(err, journal.ErrRunConflict) {
-			return nil, ErrDeploymentInFlight
-		}
+	if err != nil {
 		return nil, err
 	}
 	if s.enqueuer != nil {
