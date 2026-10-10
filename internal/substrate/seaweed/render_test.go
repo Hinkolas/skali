@@ -8,6 +8,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
 func TestRenderProductionShape(t *testing.T) {
@@ -68,6 +69,27 @@ func TestRenderProductionShape(t *testing.T) {
 		}
 	}
 	require.Equal(t, map[string]string{"app": FilerService}, services[S3Service].Spec.Selector)
+}
+
+// Every object store Service targets each port's own number, as the server
+// defaults an unset target, so an unchanged Service applies nothing.
+func TestRenderServicesTargetTheirPorts(t *testing.T) {
+	t.Parallel()
+	spec := StoreSpec{Namespace: "skali-platform", Masters: 3, Filers: 2, Replication: "001", Managed: true}
+	objects := append(RenderProduction(spec), RenderDev(spec)...)
+	objects = append(objects, RenderDevS3NodePort("skali-platform"))
+	services := 0
+	for _, object := range objects {
+		service, ok := object.(*corev1.Service)
+		if !ok {
+			continue
+		}
+		services++
+		for _, port := range service.Spec.Ports {
+			require.Equal(t, intstr.FromInt32(port.Port), port.TargetPort, "%s/%s", service.Name, port.Name)
+		}
+	}
+	require.Equal(t, 7, services)
 }
 
 func TestRenderDevServicesSelectAllInOne(t *testing.T) {
