@@ -852,10 +852,10 @@ func writeCancelError(ctx context.Context, w http.ResponseWriter, err error) {
 	case errors.Is(err, deploy.ErrRevisionActive):
 		writeError(w, http.StatusConflict, codeConflict,
 			"the rollout already activated its revision; roll back to undo it")
-	case errors.Is(err, deploy.ErrEnvironmentBusy):
-		writeEnvironmentBusy(w)
 	default:
-		writeInternalError(ctx, w, "cancel run", err)
+		// A busy environment, and an active revision whose hostname went to
+		// another environment meanwhile, answer like any other change.
+		writeDeployError(ctx, w, err)
 	}
 }
 
