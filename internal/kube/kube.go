@@ -89,11 +89,23 @@ type Client struct {
 
 // RequestBudget is the client-side limit on requests to the API server:
 // QPS sustained, Burst momentarily. With QPS set, the typed clientset shares
-// one budget and the dynamic and metadata clients get one each; zero keeps
-// client-go's default of 5 per second with a burst of 10 for every client.
+// one budget and the dynamic and metadata clients get one each; zero QPS
+// keeps client-go's default of 5 per second with a burst of 10 for every
+// client, and then Burst is ignored.
 type RequestBudget struct {
 	QPS   float32
 	Burst int
+}
+
+// apply sets the budget on config. Zero QPS clears the burst as well:
+// client-go defaults each of the two separately, so a burst left set would
+// keep it above the default.
+func (b RequestBudget) apply(config *rest.Config) {
+	if b.QPS <= 0 {
+		config.QPS, config.Burst = 0, 0
+		return
+	}
+	config.QPS, config.Burst = b.QPS, b.Burst
 }
 
 // Effective resolves the zero budget to client-go's default.
@@ -120,14 +132,14 @@ func NewWithBudget(kubeconfigPath string, budget RequestBudget) (*Client, error)
 		if err != nil {
 			return nil, fmt.Errorf("kube: load kubeconfig %s: %w", kubeconfigPath, err)
 		}
-		config.QPS, config.Burst = budget.QPS, budget.Burst
+		budget.apply(config)
 		return NewFromConfig(config)
 	}
 	config, err := rest.InClusterConfig()
 	if err != nil {
 		return nil, ErrNoCluster
 	}
-	config.QPS, config.Burst = budget.QPS, budget.Burst
+	budget.apply(config)
 	client, err := NewFromConfig(config)
 	if err != nil {
 		return nil, err

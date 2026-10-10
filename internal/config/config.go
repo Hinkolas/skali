@@ -86,7 +86,7 @@ type API struct {
 	// KubeQPS and KubeBurst are the Kubernetes client's request budget,
 	// shared by the kernel, the substrate, and observation: requests per
 	// second sustained, and momentarily. Zero QPS keeps client-go's default
-	// of 5 per second with a burst of 10.
+	// of 5 per second with a burst of 10, whatever KubeBurst says.
 	KubeQPS   float32 `env:"SKALI_KUBE_QPS,default=50"`
 	KubeBurst int     `env:"SKALI_KUBE_BURST,default=100"`
 
