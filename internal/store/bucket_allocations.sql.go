@@ -182,6 +182,63 @@ func (q *Queries) GetLiveBucketAllocationByClaim(ctx context.Context, claimID uu
 	return i, err
 }
 
+const listLiveBucketAllocationsByEnvironment = `-- name: ListLiveBucketAllocationsByEnvironment :many
+SELECT bucket_claims.service_key, bucket_claims.phase, bucket_allocations.id, bucket_allocations.claim_id, bucket_allocations.store_id, bucket_allocations.bucket_name, bucket_allocations.access_key_id, bucket_allocations.credential_secret, bucket_allocations.credential_version, bucket_allocations.endpoint, bucket_allocations.region, bucket_allocations.created_at, bucket_allocations.released_at, bucket_allocations.fenced_at, bucket_allocations.credential_retire_at, bucket_allocations.output_version, bucket_allocations.outputs_published_at
+FROM bucket_claims
+JOIN bucket_allocations ON bucket_allocations.claim_id = bucket_claims.id
+    AND bucket_allocations.released_at IS NULL
+WHERE bucket_claims.environment_id = $1 AND bucket_claims.owner_kind = 'service'
+    AND bucket_claims.phase <> 'released'
+ORDER BY bucket_claims.service_key
+`
+
+type ListLiveBucketAllocationsByEnvironmentRow struct {
+	ServiceKey       string
+	Phase            string
+	BucketAllocation BucketAllocation
+}
+
+// The live allocation of every live service claim of an environment, with
+// the claim's phase: the bucket names and output facts the kernel renders,
+// in one read.
+func (q *Queries) ListLiveBucketAllocationsByEnvironment(ctx context.Context, environmentID *uuid.UUID) ([]ListLiveBucketAllocationsByEnvironmentRow, error) {
+	rows, err := q.db.Query(ctx, listLiveBucketAllocationsByEnvironment, environmentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListLiveBucketAllocationsByEnvironmentRow
+	for rows.Next() {
+		var i ListLiveBucketAllocationsByEnvironmentRow
+		if err := rows.Scan(
+			&i.ServiceKey,
+			&i.Phase,
+			&i.BucketAllocation.ID,
+			&i.BucketAllocation.ClaimID,
+			&i.BucketAllocation.StoreID,
+			&i.BucketAllocation.BucketName,
+			&i.BucketAllocation.AccessKeyID,
+			&i.BucketAllocation.CredentialSecret,
+			&i.BucketAllocation.CredentialVersion,
+			&i.BucketAllocation.Endpoint,
+			&i.BucketAllocation.Region,
+			&i.BucketAllocation.CreatedAt,
+			&i.BucketAllocation.ReleasedAt,
+			&i.BucketAllocation.FencedAt,
+			&i.BucketAllocation.CredentialRetireAt,
+			&i.BucketAllocation.OutputVersion,
+			&i.BucketAllocation.OutputsPublishedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listLiveBucketAllocationsByStore = `-- name: ListLiveBucketAllocationsByStore :many
 SELECT id, claim_id, store_id, bucket_name, access_key_id, credential_secret, credential_version, endpoint, region, created_at, released_at, fenced_at, credential_retire_at, output_version, outputs_published_at FROM bucket_allocations
 WHERE store_id = $1 AND released_at IS NULL

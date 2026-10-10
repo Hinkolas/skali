@@ -149,6 +149,39 @@ func TestEnsureBucketClaimIdempotentAndDrift(t *testing.T) {
 	require.ErrorIs(t, err, ErrSpecConflict)
 }
 
+// A caller holding the live claim gets it back untouched when nothing
+// changed; a change, a conflict, or a missing claim takes the stored path.
+func TestEnsureBucketClaimFromLive(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	ctx := context.Background()
+
+	created, err := f.svc.EnsureBucketClaim(ctx, f.owner("files"), bucketSpec())
+	require.NoError(t, err)
+	same, changed, err := f.svc.EnsureBucketClaimFrom(ctx, f.owner("files"), bucketSpec(), created)
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.Same(t, created, same)
+
+	routed := bucketSpec()
+	routed.Route = []byte(`{"domain":"files.example.com","tls":"automatic"}`)
+	updated, changed, err := f.svc.EnsureBucketClaimFrom(ctx, f.owner("files"), routed, created)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, created.ID, updated.ID)
+	require.JSONEq(t, `{"domain":"files.example.com","tls":"automatic"}`, string(updated.Route))
+
+	conflicting := routed
+	conflicting.Visibility = "public-read"
+	_, _, err = f.svc.EnsureBucketClaimFrom(ctx, f.owner("files"), conflicting, updated)
+	require.ErrorIs(t, err, ErrSpecConflict)
+
+	fresh, changed, err := f.svc.EnsureBucketClaimFrom(ctx, f.owner("media"), bucketSpec(), nil)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.NotEqual(t, created.ID, fresh.ID)
+}
+
 func TestReleaseUnallocatedBucketClaimReleasesDirectly(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)

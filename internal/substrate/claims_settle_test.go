@@ -358,6 +358,24 @@ func TestClaimSettlesInOnePass(t *testing.T) {
 	require.Empty(t, fx.control.WaitingReason(fx.claim.ID))
 }
 
+// A database claim has an output generation once provisioned, not before.
+func TestOutputsGenerateProvisionedDatabases(t *testing.T) {
+	fx := newSettleFixture(t)
+	ctx := context.Background()
+	outputs, err := fx.control.Outputs(ctx, fx.envID)
+	require.NoError(t, err)
+	require.Empty(t, outputs.Generations)
+
+	fx.fake.set(clusterHealthyPhase, 1, true)
+	_, phase := fx.pass(t)
+	require.Equal(t, claim.PhaseProvisioned, phase)
+	outputs, err = fx.control.Outputs(ctx, fx.envID)
+	require.NoError(t, err)
+	require.Len(t, outputs.Generations, 1)
+	require.NotEmpty(t, outputs.Generations["databases.data"])
+	require.Empty(t, outputs.BucketNames)
+}
+
 // TestClaimWaitingKeepsRequeueAndPokes pins two queue behaviors: a waiting
 // claim never leaves the queue, and any phase movement pokes the environment
 // so its wait text refreshes even without a completed transition.

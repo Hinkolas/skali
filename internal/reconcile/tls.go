@@ -457,7 +457,7 @@ func (a *runAttachment) tlsStep(ctx context.Context, key, title string, state jo
 			lines = append(lines, strings.ReplaceAll(key, "_", " ")+": "+fmt.Sprint(fields[key]))
 		}
 	}
-	message := a.redactor.Redact(strings.Join(lines, "\n"))
+	message := a.redactorFor(ctx).Redact(strings.Join(lines, "\n"))
 	// Match the journal bound before deduplicating long controller errors.
 	const suffix = "... [truncated]"
 	if len(message) > journal.MaxEntryBytes {
@@ -480,7 +480,7 @@ func (a *runAttachment) tlsStep(ctx context.Context, key, title string, state jo
 			warn("start TLS observation", err)
 			return
 		}
-		if err := a.journal.Writer(attempt.ID, a.redactor).Log(ctx, level, message, fields); err != nil {
+		if err := a.journal.Writer(attempt.ID, a.redactorFor(ctx)).Log(ctx, level, message, fields); err != nil {
 			warn("write TLS observation", err)
 		}
 		result := journal.AttemptSucceeded

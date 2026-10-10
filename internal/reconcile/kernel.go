@@ -72,15 +72,22 @@ type ClaimManager interface {
 	// purging environment, reporting completion and, while unfinished, what
 	// is still going.
 	Release(ctx context.Context, environmentID uuid.UUID) (released bool, detail []string, err error)
-	// Generations reports, per provisioned claim (dotted service name), a
+	// Outputs reports what rendering needs from the environment's live
+	// claims.
+	Outputs(ctx context.Context, environmentID uuid.UUID) (ClaimOutputs, error)
+}
+
+// ClaimOutputs is what rendering needs from an environment's live claims.
+type ClaimOutputs struct {
+	// Generations holds, per provisioned claim (dotted service name), a
 	// short non-secret identity of its connection outputs (endpoints and
 	// credential version). Applications referencing the service fold it
 	// into their pod-template identity, so a changed output rolls them.
-	Generations(ctx context.Context, environmentID uuid.UUID) (map[string]string, error)
-	// BucketNames reports, per bucket key, the store bucket name its live
+	Generations map[string]string
+	// BucketNames holds, per bucket key, the store bucket name its live
 	// claim allocated. Bucket routes key the edge on it, so the renderer
 	// needs it before the claim is provisioned.
-	BucketNames(ctx context.Context, environmentID uuid.UUID) (map[string]string, error)
+	BucketNames map[string]string
 }
 
 // ClaimEnsureInput carries the environment identity the portable revision

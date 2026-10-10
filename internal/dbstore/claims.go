@@ -64,22 +64,16 @@ func (s *Service) EnsureClaimChanged(ctx context.Context, owner Owner, spec Clai
 			return fmt.Errorf("dbstore: lookup claim: %w", err)
 		}
 
-		if existing.Engine != spec.Engine || existing.Major != int32(spec.Major) ||
-			existing.Isolation != spec.Isolation {
-			return fmt.Errorf("%w: %s/%d/%s -> %s/%d/%s", ErrSpecConflict,
-				existing.Engine, existing.Major, existing.Isolation,
-				spec.Engine, spec.Major, spec.Isolation)
+		differs, err := claimSpecDiffers(existing, spec)
+		if err != nil {
+			return err
 		}
-		extensions := MarshalExtensions(spec.Extensions)
-		if existing.Availability != spec.Availability ||
-			existing.StorageBytes != spec.StorageBytes ||
-			existing.PitrSeconds != spec.PITRSeconds ||
-			!bytes.Equal(existing.Extensions, extensions) {
+		if differs {
 			if _, err := q.SetDatabaseClaimSpec(ctx, store.SetDatabaseClaimSpecParams{
 				ID:           existing.ID,
 				Availability: spec.Availability,
 				StorageBytes: spec.StorageBytes,
-				Extensions:   extensions,
+				Extensions:   MarshalExtensions(spec.Extensions),
 				PitrSeconds:  spec.PITRSeconds,
 			}); err != nil {
 				return fmt.Errorf("dbstore: update claim spec: %w", err)
@@ -97,6 +91,35 @@ func (s *Service) EnsureClaimChanged(ctx context.Context, owner Owner, spec Clai
 		return nil, false, err
 	}
 	return &row, changed, nil
+}
+
+// EnsureClaimFrom is EnsureClaimChanged for a caller that already read the
+// owner's live claim (nil when there was none): when live already carries
+// spec, it is returned as is without a transaction. Anything else takes
+// EnsureClaimChanged, which reads the claim again.
+func (s *Service) EnsureClaimFrom(ctx context.Context, owner Owner, spec ClaimSpec, live *store.DatabaseClaim) (*store.DatabaseClaim, bool, error) {
+	if live != nil {
+		if differs, err := claimSpecDiffers(*live, spec); err == nil && !differs {
+			return live, false, nil
+		}
+	}
+	return s.EnsureClaimChanged(ctx, owner, spec)
+}
+
+// claimSpecDiffers reports whether spec changes a mutable field of the
+// existing claim, or ErrSpecConflict when it changes one that selects the
+// claim's physical home.
+func claimSpecDiffers(existing store.DatabaseClaim, spec ClaimSpec) (bool, error) {
+	if existing.Engine != spec.Engine || existing.Major != int32(spec.Major) ||
+		existing.Isolation != spec.Isolation {
+		return false, fmt.Errorf("%w: %s/%d/%s -> %s/%d/%s", ErrSpecConflict,
+			existing.Engine, existing.Major, existing.Isolation,
+			spec.Engine, spec.Major, spec.Isolation)
+	}
+	return existing.Availability != spec.Availability ||
+		existing.StorageBytes != spec.StorageBytes ||
+		existing.PitrSeconds != spec.PITRSeconds ||
+		!bytes.Equal(existing.Extensions, MarshalExtensions(spec.Extensions)), nil
 }
 
 func (s *Service) liveClaim(ctx context.Context, q *store.Queries, owner Owner) (store.DatabaseClaim, error) {

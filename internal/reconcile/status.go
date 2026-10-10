@@ -193,11 +193,11 @@ func (k *Kernel) desiredColors(ctx context.Context, environmentID uuid.UUID, tar
 	if err != nil {
 		return nil, err
 	}
-	generations, err := k.claimGenerations(ctx, environmentID)
+	outputs, err := k.claimOutputs(ctx, environmentID)
 	if err != nil {
 		return nil, err
 	}
-	options, err := k.renderInputs(environmentID, rev, target.RestartedAt, appRestarts, generations, intercepts, env.Priority)
+	options, err := k.renderInputs(environmentID, rev, target.RestartedAt, appRestarts, outputs.Generations, intercepts, env.Priority)
 	if err != nil {
 		return nil, err
 	}

@@ -282,6 +282,64 @@ func (q *Queries) ListLiveDatabaseTenantsByCluster(ctx context.Context, clusterI
 	return items, nil
 }
 
+const listLiveDatabaseTenantsByEnvironment = `-- name: ListLiveDatabaseTenantsByEnvironment :many
+SELECT database_claims.service_key, database_claims.phase, database_tenants.id, database_tenants.claim_id, database_tenants.cluster_id, database_tenants.database_name, database_tenants.role_name, database_tenants.credential_secret, database_tenants.credential_version, database_tenants.host, database_tenants.port, database_tenants.created_at, database_tenants.released_at, database_tenants.login_role, database_tenants.pending_login_role, database_tenants.pending_credential_secret, database_tenants.previous_login_role, database_tenants.previous_credential_secret, database_tenants.credential_retire_at
+FROM database_claims
+JOIN database_tenants ON database_tenants.claim_id = database_claims.id
+    AND database_tenants.released_at IS NULL
+WHERE database_claims.environment_id = $1 AND database_claims.owner_kind = 'service'
+    AND database_claims.phase <> 'released'
+ORDER BY database_claims.service_key
+`
+
+type ListLiveDatabaseTenantsByEnvironmentRow struct {
+	ServiceKey     string
+	Phase          string
+	DatabaseTenant DatabaseTenant
+}
+
+// The live tenant of every live service claim of an environment, with the
+// claim's phase: the connection facts the kernel renders, in one read.
+func (q *Queries) ListLiveDatabaseTenantsByEnvironment(ctx context.Context, environmentID *uuid.UUID) ([]ListLiveDatabaseTenantsByEnvironmentRow, error) {
+	rows, err := q.db.Query(ctx, listLiveDatabaseTenantsByEnvironment, environmentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListLiveDatabaseTenantsByEnvironmentRow
+	for rows.Next() {
+		var i ListLiveDatabaseTenantsByEnvironmentRow
+		if err := rows.Scan(
+			&i.ServiceKey,
+			&i.Phase,
+			&i.DatabaseTenant.ID,
+			&i.DatabaseTenant.ClaimID,
+			&i.DatabaseTenant.ClusterID,
+			&i.DatabaseTenant.DatabaseName,
+			&i.DatabaseTenant.RoleName,
+			&i.DatabaseTenant.CredentialSecret,
+			&i.DatabaseTenant.CredentialVersion,
+			&i.DatabaseTenant.Host,
+			&i.DatabaseTenant.Port,
+			&i.DatabaseTenant.CreatedAt,
+			&i.DatabaseTenant.ReleasedAt,
+			&i.DatabaseTenant.LoginRole,
+			&i.DatabaseTenant.PendingLoginRole,
+			&i.DatabaseTenant.PendingCredentialSecret,
+			&i.DatabaseTenant.PreviousLoginRole,
+			&i.DatabaseTenant.PreviousCredentialSecret,
+			&i.DatabaseTenant.CredentialRetireAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listManagedDatabaseTenantsByCluster = `-- name: ListManagedDatabaseTenantsByCluster :many
 SELECT t.id, t.claim_id, t.cluster_id, t.database_name, t.role_name, t.credential_secret, t.credential_version, t.host, t.port, t.created_at, t.released_at, t.login_role, t.pending_login_role, t.pending_credential_secret, t.previous_login_role, t.previous_credential_secret, t.credential_retire_at FROM database_tenants t
 JOIN database_claims c ON c.id = t.claim_id

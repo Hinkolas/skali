@@ -37,8 +37,12 @@ func rolloutRun(kind string) bool {
 // write is best-effort: a journal failure is logged and never blocks
 // reconciliation, because runs explain and never drive.
 type runAttachment struct {
-	journal  *journal.Service
-	redactor *redact.Redactor
+	journal *journal.Service
+	// newRedactor builds the redactor on the first journal write, so a pass
+	// that journals nothing never reads the values behind it; redactor
+	// holds it once built.
+	newRedactor func(context.Context) *redact.Redactor
+	redactor    *redact.Redactor
 
 	environmentID uuid.UUID
 	projectID     uuid.UUID
@@ -89,10 +93,12 @@ func (k *Kernel) adoptableRun(ctx context.Context, environmentID uuid.UUID) (*st
 }
 
 // attachRun adopts the environment's running run when one exists.
-func (k *Kernel) attachRun(ctx context.Context, environmentID, projectID uuid.UUID, redactor *redact.Redactor) *runAttachment {
+// newRedactor builds the redactor for its journal writes, on first use.
+func (k *Kernel) attachRun(ctx context.Context, environmentID, projectID uuid.UUID,
+	newRedactor func(context.Context) *redact.Redactor) *runAttachment {
 	attachment := &runAttachment{
 		journal:       k.deps.Journal,
-		redactor:      redactor,
+		newRedactor:   newRedactor,
 		environmentID: environmentID,
 		projectID:     projectID,
 	}
@@ -119,6 +125,14 @@ func (k *Kernel) attachRun(ctx context.Context, environmentID, projectID uuid.UU
 
 func (a *runAttachment) active() bool  { return a.run != nil }
 func (a *runAttachment) adopted() bool { return a.run != nil && !a.created }
+
+// redactorFor returns the redactor for a journal write, building it first.
+func (a *runAttachment) redactorFor(ctx context.Context) *redact.Redactor {
+	if a.redactor == nil && a.newRedactor != nil {
+		a.redactor = a.newRedactor(ctx)
+	}
+	return a.redactor
+}
 
 // ensure creates the reconcile-kind run on first material work. A teardown
 // pass overrides ensureKind so drift healing after the adopted run finished
@@ -186,7 +200,7 @@ func (a *runAttachment) completeStepFields(ctx context.Context, key, title strin
 	for _, line := range logs {
 		entries = append(entries, journal.LogEntry{Level: level, Message: line, Fields: fields})
 	}
-	if err := a.journal.CompleteStep(ctx, step, a.redactor, status, entries); err != nil {
+	if err := a.journal.CompleteStep(ctx, step, a.redactorFor(ctx), status, entries); err != nil {
 		warn("complete step", err, "key", key)
 	}
 }
@@ -229,7 +243,7 @@ func (a *runAttachment) waitStepFields(ctx context.Context, key, title, reason s
 	if err != nil {
 		return
 	}
-	writer := a.journal.Writer(attempt.ID, a.redactor)
+	writer := a.journal.Writer(attempt.ID, a.redactorFor(ctx))
 	_ = writer.Log(ctx, "info", reason, fields)
 	_ = a.journal.FinishAttempt(ctx, attempt.ID, journal.AttemptSucceeded)
 }
@@ -267,7 +281,7 @@ func (a *runAttachment) finish(ctx context.Context, status journal.RunStatus, re
 	}
 	var err error
 	if status == journal.RunFailed {
-		err = a.journal.FailRun(ctx, a.run.ID, a.redactor, reason)
+		err = a.journal.FailRun(ctx, a.run.ID, a.redactorFor(ctx), reason)
 	} else {
 		err = a.journal.FinishRun(ctx, a.run.ID, status)
 	}

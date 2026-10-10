@@ -52,7 +52,11 @@ func (k *Kernel) ProbeRoutes(ctx context.Context, environmentID uuid.UUID) ([]Ro
 	if rev == nil {
 		return nil, nil
 	}
-	probes, err := k.routeDomains(ctx, environmentID, rev)
+	variables, err := k.routeVariables(ctx, environmentID, rev)
+	if err != nil {
+		return nil, err
+	}
+	probes, err := routeDomains(rev, variables)
 	if err != nil {
 		return nil, err
 	}
@@ -106,11 +110,8 @@ func (k *Kernel) targetRevision(ctx context.Context, environmentID uuid.UUID) (s
 // routeDomains resolves every TLS route of rev to its canonical domain and
 // Certificate name, the same way rendering fills the Certificate's
 // dnsNames, so the strings match what a pass judges under the lock.
-func (k *Kernel) routeDomains(ctx context.Context, environmentID uuid.UUID, rev *revision.Revision) ([]RouteProbe, error) {
-	variables, err := k.routeVariables(ctx, environmentID, rev)
-	if err != nil {
-		return nil, err
-	}
+// variables holds at least the values the route domains reference.
+func routeDomains(rev *revision.Revision, variables map[string]string) ([]RouteProbe, error) {
 	var probes []RouteProbe
 	for _, appKey := range utils.SortedKeys(rev.Definition.Applications) {
 		application := rev.Definition.Applications[appKey]

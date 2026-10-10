@@ -405,9 +405,35 @@ func (fx *rotationFixture) publishPass(t *testing.T, endpoint string) {
 
 func (fx *rotationFixture) generation(t *testing.T) string {
 	t.Helper()
-	generations, err := fx.control.Generations(context.Background(), fx.envID)
+	outputs, err := fx.control.Outputs(context.Background(), fx.envID)
 	require.NoError(t, err)
-	return generations["buckets.files"]
+	return outputs.Generations["buckets.files"]
+}
+
+// Every allocated bucket claim names its bucket whatever its phase, so a
+// route renders before the bucket settles; only a provisioned claim has an
+// output generation.
+func TestOutputsNameAllocatedBuckets(t *testing.T) {
+	t.Parallel()
+	fx := newRotationFixture(t)
+	ctx := context.Background()
+	owner := dbstore.ServiceOwner(*fx.claim.ProjectID, fx.envID, "demo", "production", "media")
+	media, err := fx.db.EnsureBucketClaim(ctx, owner, dbstore.BucketSpec{
+		Visibility: "private", StorageQuotaBytes: 1 << 30, Versioning: "disabled",
+	})
+	require.NoError(t, err)
+	_, err = fx.db.RecordAllocation(ctx, dbstore.AllocationInput{
+		ClaimID: media.ID, StoreID: fx.allocation.StoreID, BucketName: "b-media-01",
+		AccessKeyID: "AKMEDIA", CredentialSecret: "s3cred-media",
+		Endpoint: InternalBucketEndpoint(), Region: seaweed.Region,
+	})
+	require.NoError(t, err)
+
+	outputs, err := fx.control.Outputs(ctx, fx.envID)
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"files": "b-files-01", "media": "b-media-01"}, outputs.BucketNames)
+	require.Contains(t, outputs.Generations, "buckets.files")
+	require.NotContains(t, outputs.Generations, "buckets.media", "a bound claim has no outputs yet")
 }
 
 // The rc.11 incident: the row already carried the in-cluster endpoint

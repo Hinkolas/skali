@@ -29,11 +29,15 @@ SELECT name, ciphertext FROM environment_secrets
 WHERE environment_id = $1 AND candidate_id = $2 AND state = 'staged'
 ORDER BY name;
 
--- Resolution path only: decrypting the exact version a revision pinned.
--- Superseded rows are retained precisely so this keeps resolving.
--- name: GetEnvironmentSecretCiphertext :one
-SELECT ciphertext FROM environment_secrets
-WHERE environment_id = $1 AND name = $2 AND version = $3;
+-- Resolution path only: decrypting the exact versions a revision pinned,
+-- names[i] at versions[i]. Superseded rows are retained precisely so this
+-- keeps resolving.
+-- name: ListPinnedEnvironmentSecretCiphertexts :many
+SELECT name, version, ciphertext FROM environment_secrets
+WHERE environment_id = sqlc.arg(environment_id) AND (name, version) IN (
+    SELECT unnest(sqlc.arg(names)::text[]), unnest(sqlc.arg(versions)::bigint[])
+)
+ORDER BY name;
 
 -- name: SupersedeCurrentEnvironmentSecrets :exec
 UPDATE environment_secrets AS live SET state = 'superseded'

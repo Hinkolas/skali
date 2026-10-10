@@ -19,6 +19,7 @@ import (
 	rendering "github.com/Hinkolas/skali/internal/kubernetes"
 	"github.com/Hinkolas/skali/internal/module"
 	"github.com/Hinkolas/skali/internal/observe"
+	"github.com/Hinkolas/skali/internal/redact"
 	"github.com/Hinkolas/skali/internal/store"
 )
 
@@ -49,7 +50,9 @@ func (k *Kernel) teardownEnvironment(ctx context.Context, environmentID uuid.UUI
 		return 0, fmt.Errorf("reconcile: get environment: %w", err)
 	}
 	releasing := target.State == deploy.EnvironmentStateReleasing
-	attachment := k.attachRun(ctx, environmentID, env.ProjectID, k.redactor(ctx, environmentID, nil))
+	attachment := k.attachRun(ctx, environmentID, env.ProjectID, func(ctx context.Context) *redact.Redactor {
+		return k.redactor(ctx, environmentID, nil, nil)
+	})
 	attachment.ensureKind = "teardown"
 
 	snapshot := k.deps.Observed.Snapshot(environmentID)

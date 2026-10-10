@@ -66,18 +66,11 @@ func (s *Service) EnsureBucketClaimChanged(ctx context.Context, owner Owner, spe
 			return fmt.Errorf("dbstore: lookup bucket claim: %w", err)
 		}
 
-		if existing.Visibility != spec.Visibility || existing.Versioning != spec.Versioning {
-			return fmt.Errorf("%w: %s/%s -> %s/%s", ErrSpecConflict,
-				existing.Visibility, existing.Versioning,
-				spec.Visibility, spec.Versioning)
+		differs, err := bucketSpecDiffers(existing, spec)
+		if err != nil {
+			return err
 		}
-		if existing.StorageQuotaBytes != spec.StorageQuotaBytes ||
-			existing.ObjectQuota != spec.ObjectQuota ||
-			existing.MaxObjectBytes != spec.MaxObjectBytes ||
-			existing.AbortUploadsAfterSeconds != spec.AbortUploadsAfterSeconds ||
-			existing.ExpireNoncurrentAfterSeconds != spec.ExpireNoncurrentAfterSeconds ||
-			!bytes.Equal(existing.Cors, spec.CORS) ||
-			!bytes.Equal(existing.Route, spec.Route) {
+		if differs {
 			if _, err := q.SetBucketClaimSpec(ctx, store.SetBucketClaimSpecParams{
 				ID:                           existing.ID,
 				StorageQuotaBytes:            spec.StorageQuotaBytes,
@@ -103,6 +96,37 @@ func (s *Service) EnsureBucketClaimChanged(ctx context.Context, owner Owner, spe
 		return nil, false, err
 	}
 	return &row, changed, nil
+}
+
+// EnsureBucketClaimFrom is EnsureBucketClaimChanged for a caller that
+// already read the owner's live claim (nil when there was none): when live
+// already carries spec, it is returned as is without a transaction.
+// Anything else takes EnsureBucketClaimChanged, which reads the claim again.
+func (s *Service) EnsureBucketClaimFrom(ctx context.Context, owner Owner, spec BucketSpec, live *store.BucketClaim) (*store.BucketClaim, bool, error) {
+	if live != nil {
+		if differs, err := bucketSpecDiffers(*live, spec); err == nil && !differs {
+			return live, false, nil
+		}
+	}
+	return s.EnsureBucketClaimChanged(ctx, owner, spec)
+}
+
+// bucketSpecDiffers reports whether spec changes a mutable field of the
+// existing claim, or ErrSpecConflict when it changes the bucket's
+// externally observable contract.
+func bucketSpecDiffers(existing store.BucketClaim, spec BucketSpec) (bool, error) {
+	if existing.Visibility != spec.Visibility || existing.Versioning != spec.Versioning {
+		return false, fmt.Errorf("%w: %s/%s -> %s/%s", ErrSpecConflict,
+			existing.Visibility, existing.Versioning,
+			spec.Visibility, spec.Versioning)
+	}
+	return existing.StorageQuotaBytes != spec.StorageQuotaBytes ||
+		existing.ObjectQuota != spec.ObjectQuota ||
+		existing.MaxObjectBytes != spec.MaxObjectBytes ||
+		existing.AbortUploadsAfterSeconds != spec.AbortUploadsAfterSeconds ||
+		existing.ExpireNoncurrentAfterSeconds != spec.ExpireNoncurrentAfterSeconds ||
+		!bytes.Equal(existing.Cors, spec.CORS) ||
+		!bytes.Equal(existing.Route, spec.Route), nil
 }
 
 func (s *Service) liveBucketClaim(ctx context.Context, q *store.Queries, owner Owner) (store.BucketClaim, error) {
