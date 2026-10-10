@@ -18,6 +18,7 @@ import (
 // here can reach Kubernetes because none holds a cluster client.
 type statusHandlers struct {
 	reconcile *reconcile.Kernel
+	feeds     *statusFeeds
 }
 
 type revisionRefPayload struct {
@@ -247,8 +248,9 @@ func (h *statusHandlers) get(w http.ResponseWriter, r *http.Request) {
 }
 
 // stream is the projection invalidation stream made client-visible: the
-// full status document is re-sent, coalesced, on every invalidation that
-// touches the environment. Mounted outside the request timeout.
+// full status document is re-sent on every burst of invalidations that
+// touches the environment, computed once for all of its streams (see
+// statusFeeds). Mounted outside the request timeout.
 func (h *statusHandlers) stream(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
 	if !ok {
@@ -264,8 +266,8 @@ func (h *statusHandlers) stream(w http.ResponseWriter, r *http.Request) {
 		writeStatusError(r, w, err)
 		return
 	}
-	invalidations, cancel := h.reconcile.SubscribeStatus(id)
-	defer cancel()
+	updates, leave := h.feeds.subscribe(id)
+	defer leave()
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -294,28 +296,8 @@ func (h *statusHandlers) stream(w http.ResponseWriter, r *http.Request) {
 		case <-heartbeat.C:
 			fmt.Fprint(w, ": ping\n\n")
 			flusher.Flush()
-		case _, open := <-invalidations:
-			if !open {
-				// Fell behind; the client reconnects and re-reads.
-				return
-			}
-			// Coalesce whatever queued up; the payload is a full document.
-			for {
-				select {
-				case _, more := <-invalidations:
-					if !more {
-						return
-					}
-					continue
-				default:
-				}
-				break
-			}
-			status, err := h.reconcile.Status(r.Context(), id)
-			if err != nil {
-				return
-			}
-			if !send(status) {
+		case update := <-updates:
+			if update.err != nil || !send(update.status) {
 				return
 			}
 		}

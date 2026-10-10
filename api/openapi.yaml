@@ -1796,10 +1796,13 @@ paths:
       summary: Stream an environment's status projection (SSE)
       description: |
         Server-sent events carrying the full `EnvironmentStatus` document,
-        re-sent (coalesced) whenever observation invalidates the
-        environment's projection. A comment ping is sent every 15 seconds.
-        The stream closes when the subscriber falls behind; clients simply
-        reconnect. This route is exempt from the request timeout.
+        re-sent whenever observation invalidates the environment's
+        projection; the invalidations of one burst (250 ms) produce one
+        document, the same one for every stream of the environment. A
+        stream that falls behind skips to the newest document. A comment
+        ping is sent every 15 seconds. The stream closes when the status
+        cannot be computed; clients simply reconnect. This route is exempt
+        from the request timeout.
       tags: [status]
       responses:
         "200":
