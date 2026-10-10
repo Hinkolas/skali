@@ -261,13 +261,15 @@ func (h *statusHandlers) stream(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, codeInternal, "streaming unsupported")
 		return
 	}
+	// Joined before the first document is computed, so a change after
+	// that computation always reaches the stream.
+	updates, leave := h.feeds.subscribe(id)
+	defer leave()
 	status, err := h.reconcile.Status(r.Context(), id)
 	if err != nil {
 		writeStatusError(r, w, err)
 		return
 	}
-	updates, leave := h.feeds.subscribe(id)
-	defer leave()
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")

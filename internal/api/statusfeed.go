@@ -53,9 +53,10 @@ type statusUpdate struct {
 }
 
 // subscribe joins environmentID's feed, starting it for the first stream.
-// The channel holds the latest update only: a stream that falls behind
-// skips to the newest document. The returned func leaves the feed, which
-// stops with its last stream.
+// Every invalidation after it returns reaches the stream as an update. The
+// channel holds the latest update only: a stream that falls behind skips
+// to the newest document. The returned func leaves the feed, which stops
+// with its last stream.
 func (f *statusFeeds) subscribe(environmentID uuid.UUID) (<-chan statusUpdate, func()) {
 	updates := make(chan statusUpdate, 1)
 	f.mu.Lock()
@@ -64,7 +65,8 @@ func (f *statusFeeds) subscribe(environmentID uuid.UUID) (<-chan statusUpdate, f
 	if !ok {
 		feed = &statusFeed{subscribers: map[chan statusUpdate]struct{}{}, done: make(chan struct{})}
 		f.feeds[environmentID] = feed
-		go f.run(environmentID, feed)
+		invalidations, cancel := f.source.SubscribeStatus(environmentID)
+		go f.run(environmentID, feed, invalidations, cancel)
 	}
 	feed.subscribers[updates] = struct{}{}
 	return updates, func() {
@@ -80,8 +82,8 @@ func (f *statusFeeds) subscribe(environmentID uuid.UUID) (<-chan statusUpdate, f
 
 // run computes the status once per burst of invalidations and hands it
 // to every stream of the feed, until the feed's last stream leaves.
-func (f *statusFeeds) run(environmentID uuid.UUID, feed *statusFeed) {
-	invalidations, cancel := f.source.SubscribeStatus(environmentID)
+func (f *statusFeeds) run(environmentID uuid.UUID, feed *statusFeed,
+	invalidations <-chan observe.Invalidation, cancel func()) {
 	defer func() { cancel() }()
 	// next takes one invalidation. A closed channel means the feed fell
 	// behind its invalidations: it subscribes again and counts that as

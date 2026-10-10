@@ -80,8 +80,8 @@ func TestStatusFeedComputesOncePerBurstForAllStreams(t *testing.T) {
 		streams = append(streams, updates)
 		leaves = append(leaves, leave)
 	}
-	require.Eventually(t, func() bool { _, subscribed, _ := source.counts(); return subscribed == 1 },
-		5*time.Second, 5*time.Millisecond, "one invalidation subscription for all streams")
+	_, subscribed, _ := source.counts()
+	require.Equal(t, 1, subscribed, "one invalidation subscription for all streams, taken on joining")
 
 	for range 5 {
 		source.channel(0) <- observe.Invalidation{EnvironmentID: id}
@@ -98,7 +98,7 @@ func TestStatusFeedComputesOncePerBurstForAllStreams(t *testing.T) {
 	for _, updates := range streams {
 		receive(t, updates)
 	}
-	computed, subscribed, _ := source.counts()
+	computed, subscribed, _ = source.counts()
 	require.Equal(t, 2, computed)
 	require.Equal(t, 2, subscribed, "subscribed again after falling behind")
 
