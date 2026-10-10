@@ -11,25 +11,6 @@ import (
 	"github.com/google/uuid"
 )
 
-const closeRunningAttemptsForRun = `-- name: CloseRunningAttemptsForRun :execrows
-UPDATE attempts SET status = $2, finished_at = now()
-WHERE status = 'running' AND step_id IN (SELECT id FROM steps WHERE run_id = $1)
-`
-
-type CloseRunningAttemptsForRunParams struct {
-	RunID  uuid.UUID
-	Status string
-}
-
-// Terminality sweep on run finish.
-func (q *Queries) CloseRunningAttemptsForRun(ctx context.Context, arg CloseRunningAttemptsForRunParams) (int64, error) {
-	result, err := q.db.Exec(ctx, closeRunningAttemptsForRun, arg.RunID, arg.Status)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const createAttempt = `-- name: CreateAttempt :one
 INSERT INTO attempts (id, step_id, number, executor_id)
 SELECT $1, $2, COALESCE(MAX(number), 0) + 1, $3

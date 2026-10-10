@@ -6,7 +6,6 @@ import (
 	"log/slog"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/Hinkolas/skali/internal/deploy"
 	"github.com/Hinkolas/skali/internal/journal"
@@ -47,24 +46,32 @@ type runAttachment struct {
 	environmentID uuid.UUID
 	projectID     uuid.UUID
 
-	run        *store.Run
+	run        *attachedRun
 	created    bool
 	parent     *uuid.UUID // rollout parent step of an adopted deployment run
 	ensureKind string     // kind of a lazily created run; "reconcile" if empty
+
+	// steps is the run's steps as the pass knows them: read when it adopts
+	// the run, empty for a run it created, and kept current by its own
+	// records. A step known terminal is never written again, and a waiting
+	// step known to hold the same line is not written at all.
+	steps map[string]journal.StepState
+}
+
+// attachedRun is the run a pass journals under.
+type attachedRun struct {
+	ID   uuid.UUID
+	Kind string
 }
 
 // adoptableRun is the environment's running run that attachRun would
-// adopt, when there is one. Read-only, so the pre-lock probe phase can ask
-// it for the probe cadence without touching the journal.
-func (k *Kernel) adoptableRun(ctx context.Context, environmentID uuid.UUID) (*store.Run, bool) {
-	run, err := k.deps.Store.GetRunningRunByEnvironment(ctx, &environmentID)
-	if err != nil {
-		if !errors.Is(err, pgx.ErrNoRows) {
-			warn("adopt run", err, "environment", environmentID)
-		}
+// adopt, when there is one. It reads nothing, so the pre-lock probe phase
+// can ask it for the probe cadence without touching the journal.
+func adoptableRun(state store.GetEnvironmentPassRow) (*attachedRun, bool) {
+	if state.RunID == nil || state.RunKind == nil {
 		return nil, false
 	}
-	switch run.Kind {
+	switch *state.RunKind {
 	case "deployment", "rollback", "restart", "teardown", "reconcile":
 	default:
 		// The kernel adopts only runs whose lifecycle it owns. A backup or
@@ -74,51 +81,57 @@ func (k *Kernel) adoptableRun(ctx context.Context, environmentID uuid.UUID) (*st
 		// StartRun race in attachRun, journaling nothing.
 		return nil, false
 	}
-	if run.Kind == "deployment" {
+	if state.DeploymentStatus != nil && *state.DeploymentStatus == string(deploy.DeploymentPreparing) {
 		// A deployment run in its artifact window still belongs to the build
 		// client: rollout journaling and the rollout deadline begin at
 		// promote. Adopting earlier lets a stale unhealthy target fail a run
 		// whose deployment is still preparing.
-		deployment, err := k.deps.Store.GetDeploymentByRunID(ctx, &run.ID)
-		if err != nil {
-			if !errors.Is(err, pgx.ErrNoRows) {
-				warn("look up adopted run deployment", err, "run", run.ID)
-				return nil, false
-			}
-		} else if deployment.Status == string(deploy.DeploymentPreparing) {
-			return nil, false
-		}
+		return nil, false
 	}
-	return &run, true
+	return &attachedRun{ID: *state.RunID, Kind: *state.RunKind}, true
 }
 
 // attachRun adopts the environment's running run when one exists.
 // newRedactor builds the redactor for its journal writes, on first use.
-func (k *Kernel) attachRun(ctx context.Context, environmentID, projectID uuid.UUID,
+func (k *Kernel) attachRun(ctx context.Context, state store.GetEnvironmentPassRow,
 	newRedactor func(context.Context) *redact.Redactor) *runAttachment {
 	attachment := &runAttachment{
 		journal:       k.deps.Journal,
 		newRedactor:   newRedactor,
-		environmentID: environmentID,
-		projectID:     projectID,
+		environmentID: state.Environment.ID,
+		projectID:     state.Environment.ProjectID,
 	}
-	run, ok := k.adoptableRun(ctx, environmentID)
+	run, ok := adoptableRun(state)
 	if !ok {
 		return attachment
 	}
 	attachment.run = run
+	steps, err := attachment.journal.StepStates(ctx, run.ID)
+	if err != nil {
+		// Without the view every record goes to the journal, which
+		// decides; only a wait an earlier pass left open stays open.
+		warn("read run steps", err, "run", run.ID)
+		steps = map[string]journal.StepState{}
+	}
+	attachment.steps = steps
 	if rolloutRun(run.Kind) {
-		step, err := attachment.journal.EnsureStep(ctx, run.ID, nil, "rollout", "Roll out revision")
-		if err != nil {
-			warn("ensure rollout step", err, "run", run.ID)
-			return attachment
+		parent, ok := steps["rollout"]
+		if !ok {
+			step, err := attachment.journal.EnsureStep(ctx, run.ID, nil, "rollout", "Roll out revision")
+			if err != nil {
+				warn("ensure rollout step", err, "run", run.ID)
+				return attachment
+			}
+			parent = journal.StepState{ID: step.ID, Status: journal.StepStatus(step.Status)}
 		}
-		if journal.StepStatus(step.Status) == journal.StepPending {
-			if err := attachment.journal.SetStepStatus(ctx, step.ID, journal.StepRunning); err != nil {
+		if parent.Status == journal.StepPending {
+			if err := attachment.journal.SetStepStatus(ctx, parent.ID, journal.StepRunning); err != nil {
 				warn("start rollout step", err, "run", run.ID)
 			}
+			parent.Status = journal.StepRunning
 		}
-		attachment.parent = &step.ID
+		steps["rollout"] = parent
+		attachment.parent = &parent.ID
 	}
 	return attachment
 }
@@ -167,8 +180,9 @@ func (a *runAttachment) ensure(ctx context.Context) {
 		}
 		return
 	}
-	a.run = run
+	a.run = &attachedRun{ID: run.ID, Kind: run.Kind}
 	a.created = true
+	a.steps = map[string]journal.StepState{}
 }
 
 // completeStep journals one already-performed piece of work as a step with
@@ -184,12 +198,7 @@ func (a *runAttachment) completeStepFields(ctx context.Context, key, title strin
 	if a.run == nil {
 		return
 	}
-	step, err := a.journal.EnsureStep(ctx, a.run.ID, a.parent, key, title)
-	if err != nil {
-		warn("ensure step", err, "key", key)
-		return
-	}
-	if journal.Steps.Terminal(journal.StepStatus(step.Status)) {
+	if journal.Steps.Terminal(a.steps[key].Status) {
 		return
 	}
 	level := "info"
@@ -200,8 +209,23 @@ func (a *runAttachment) completeStepFields(ctx context.Context, key, title strin
 	for _, line := range logs {
 		entries = append(entries, journal.LogEntry{Level: level, Message: line, Fields: fields})
 	}
-	if err := a.journal.CompleteStep(ctx, step, a.redactorFor(ctx), status, entries); err != nil {
-		warn("complete step", err, "key", key)
+	a.record(ctx, "complete step", journal.StepRecord{Key: key, Title: title, To: status, Entries: entries})
+}
+
+// record writes one step record of the attached run and keeps the view
+// current. A step whose status refuses the record (terminal, or moved on by
+// another writer) is left alone.
+func (a *runAttachment) record(ctx context.Context, what string, record journal.StepRecord) {
+	record.RunID, record.ParentID = a.run.ID, a.parent
+	state, err := a.journal.RecordStep(ctx, record, a.redactorFor(ctx))
+	if state.ID != uuid.Nil {
+		if a.steps == nil {
+			a.steps = map[string]journal.StepState{}
+		}
+		a.steps[record.Key] = state
+	}
+	if err != nil && !errors.Is(err, journal.ErrInvalidTransition) {
+		warn(what, err, "key", record.Key)
 	}
 }
 
@@ -220,47 +244,26 @@ func (a *runAttachment) waitStepFields(ctx context.Context, key, title, reason s
 	if a.run == nil {
 		return
 	}
-	step, err := a.journal.EnsureStep(ctx, a.run.ID, a.parent, key, title)
-	if err != nil {
-		warn("ensure waiting step", err, "key", key)
-		return
-	}
-	switch journal.StepStatus(step.Status) {
-	case journal.StepPending:
-		if err := a.journal.SetStepStatus(ctx, step.ID, journal.StepWaiting); err != nil {
-			warn("mark step waiting", err, "key", key)
-			return
+	if step, known := a.steps[key]; known {
+		switch step.Status {
+		case journal.StepPending:
+		case journal.StepWaiting:
+			if step.Latest == reason {
+				return // still waiting for the same reason
+			}
+		default:
+			return // running or terminal: no repeat journaling
 		}
-	case journal.StepWaiting:
-		// Still waiting; only a changed reason journals below.
-	default:
-		return // running or terminal: no repeat journaling
 	}
-	if last, err := a.journal.LatestStepMessage(ctx, step.ID); err != nil || last == reason {
-		return
-	}
-	attempt, err := a.journal.StartAttempt(ctx, step.ID)
-	if err != nil {
-		return
-	}
-	writer := a.journal.Writer(attempt.ID, a.redactorFor(ctx))
-	_ = writer.Log(ctx, "info", reason, fields)
-	_ = a.journal.FinishAttempt(ctx, attempt.ID, journal.AttemptSucceeded)
+	a.record(ctx, "journal waiting step", journal.StepRecord{Key: key, Title: title, To: journal.StepWaiting,
+		Entries: []journal.LogEntry{{Level: "info", Message: reason, Fields: fields}}, Dedupe: true})
 }
 
 // resolveWait closes a step an earlier pass left waiting, once the wait is
 // over; a run that never waited on this key journals nothing, so the step
 // only ever appears when there was something to wait for.
 func (a *runAttachment) resolveWait(ctx context.Context, key, title string, logs []string) {
-	if a.run == nil {
-		return
-	}
-	step, found, err := a.journal.FindStep(ctx, a.run.ID, key)
-	if err != nil {
-		warn("find waiting step", err, "key", key)
-		return
-	}
-	if !found || journal.StepStatus(step.Status) != journal.StepWaiting {
+	if a.run == nil || a.steps[key].Status != journal.StepWaiting {
 		return
 	}
 	a.completeStep(ctx, key, title, journal.StepSucceeded, logs)
@@ -291,4 +294,5 @@ func (a *runAttachment) finish(ctx context.Context, status journal.RunStatus, re
 	a.run = nil
 	a.created = false
 	a.parent = nil
+	a.steps = nil
 }

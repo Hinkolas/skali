@@ -29,11 +29,6 @@ JOIN steps ON steps.id = attempts.step_id
 WHERE steps.run_id = $1
 ORDER BY attempts.started_at;
 
--- Terminality sweep on run finish.
--- name: CloseRunningAttemptsForRun :execrows
-UPDATE attempts SET status = $2, finished_at = now()
-WHERE status = 'running' AND step_id IN (SELECT id FROM steps WHERE run_id = $1);
-
 -- Recovery: every running attempt owned by a dead executor.
 -- name: ListForeignRunningAttempts :many
 SELECT * FROM attempts WHERE status = 'running' AND executor_id <> $1;

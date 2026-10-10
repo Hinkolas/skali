@@ -72,8 +72,7 @@ ORDER BY attempts.number DESC, run_logs.seq DESC
 LIMIT 1
 `
 
-// The most recent line of a step across attempts; waiting steps append a
-// fresh reason only when it changed, so this is the dedupe read.
+// The most recent line of a step across attempts.
 func (q *Queries) LatestStepLog(ctx context.Context, stepID uuid.UUID) (string, error) {
 	row := q.db.QueryRow(ctx, latestStepLog, stepID)
 	var message string

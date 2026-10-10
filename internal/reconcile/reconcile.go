@@ -54,38 +54,31 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 	defer unlock()
 	pass.Mark("lock")
 
-	target, err := k.deps.Store.GetEnvironmentTarget(ctx, environmentID)
+	state, err := k.deps.Store.GetEnvironmentPass(ctx, environmentID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			k.forgetHealth(environmentID)
 			return 0, nil // environment deleted; the audit reports orphans
 		}
-		return 0, fmt.Errorf("reconcile: get target: %w", err)
+		return 0, fmt.Errorf("reconcile: get environment: %w", err)
 	}
+	env, target := state.Environment, state.EnvironmentTarget
 	if target.State != deploy.EnvironmentStateActive {
 		// A persisted destructive decision replaces convergence entirely:
 		// desired state is absence, so no health verdict stands either.
 		k.forgetHealth(environmentID)
-		return k.teardownEnvironment(ctx, environmentID, target)
+		return k.teardownEnvironment(ctx, state)
 	}
 	if target.TargetRevisionID == nil {
 		k.forgetHealth(environmentID) // created, never deployed
 		return 0, nil
-	}
-	env, err := k.deps.Store.GetEnvironmentByID(ctx, environmentID)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			k.forgetHealth(environmentID)
-			return 0, nil
-		}
-		return 0, fmt.Errorf("reconcile: get environment: %w", err)
 	}
 	rev, err := inputs.revision(ctx, *target.TargetRevisionID)
 	if err != nil {
 		return 0, fmt.Errorf("reconcile: load target revision: %w", err)
 	}
 
-	attachment := k.attachRun(ctx, environmentID, env.ProjectID, func(ctx context.Context) *redact.Redactor {
+	attachment := k.attachRun(ctx, state, func(ctx context.Context) *redact.Redactor {
 		return k.redactor(ctx, environmentID, rev, inputs)
 	})
 
@@ -533,7 +526,8 @@ func (k *Kernel) prepareEdgeVerdicts(ctx context.Context, environmentID uuid.UUI
 	if !k.cfg.Certificates || k.deps.ProbeDomain == nil {
 		return interval
 	}
-	target, err := k.deps.Store.GetEnvironmentTarget(ctx, environmentID)
+	state, err := k.deps.Store.GetEnvironmentPass(ctx, environmentID)
+	target := state.EnvironmentTarget
 	if err != nil || target.TargetRevisionID == nil || target.State != deploy.EnvironmentStateActive {
 		return interval
 	}
@@ -541,7 +535,7 @@ func (k *Kernel) prepareEdgeVerdicts(ctx context.Context, environmentID uuid.UUI
 	if err != nil {
 		return interval
 	}
-	if run, ok := k.adoptableRun(ctx, environmentID); ok && rolloutRun(run.Kind) {
+	if run, ok := adoptableRun(state); ok && rolloutRun(run.Kind) {
 		interval = edgeProbeRolloutInterval
 	}
 	values, err := inputs.values(ctx, rev)

@@ -435,13 +435,8 @@ func retriedCertificate(cert *module.CertificateStatus, message string) *module.
 // message carries the same facts for CLI logs; stable absolute timestamps
 // avoid writing a new row every second of a countdown.
 func (a *runAttachment) tlsStep(ctx context.Context, key, title string, state journal.StepStatus, level, summary string, fields map[string]any) {
-	step, err := a.journal.EnsureStep(ctx, a.run.ID, a.parent, key, title)
-	if err != nil {
-		warn("ensure TLS checkpoint", err)
-		return
-	}
-	current := journal.StepStatus(step.Status)
-	if journal.Steps.Terminal(current) {
+	step, known := a.steps[key]
+	if journal.Steps.Terminal(step.Status) {
 		return
 	}
 	keys := make([]string, 0, len(fields))
@@ -463,50 +458,11 @@ func (a *runAttachment) tlsStep(ctx context.Context, key, title string, state jo
 	if len(message) > journal.MaxEntryBytes {
 		message = message[:journal.MaxEntryBytes-len(suffix)] + suffix
 	}
-	if current == journal.StepPending {
-		if err := a.journal.SetStepStatus(ctx, step.ID, journal.StepWaiting); err != nil {
-			warn("wait TLS checkpoint", err)
-			return
-		}
-	}
-	last, err := a.journal.LatestStepMessage(ctx, step.ID)
-	if err != nil {
-		warn("read TLS checkpoint", err)
+	if known && step.Status == state && step.Latest == message {
 		return
 	}
-	if last != message {
-		attempt, err := a.journal.StartAttempt(ctx, step.ID)
-		if err != nil {
-			warn("start TLS observation", err)
-			return
-		}
-		if err := a.journal.Writer(attempt.ID, a.redactorFor(ctx)).Log(ctx, level, message, fields); err != nil {
-			warn("write TLS observation", err)
-		}
-		result := journal.AttemptSucceeded
-		if state == journal.StepFailed {
-			result = journal.AttemptFailed
-		}
-		if err := a.journal.FinishAttempt(ctx, attempt.ID, result); err != nil {
-			warn("finish TLS observation", err)
-		}
-	}
-	switch state {
-	case journal.StepWaiting:
-	case journal.StepSkipped:
-		// A deferred route: the step machine allows waiting -> skipped
-		// directly, and a skipped checkpoint reads as "set aside", which is
-		// exactly what happened.
-		if err := a.journal.SetStepStatus(ctx, step.ID, journal.StepSkipped); err != nil {
-			warn("skip TLS checkpoint", err)
-		}
-	default:
-		if err := a.journal.SetStepStatus(ctx, step.ID, journal.StepRunning); err != nil {
-			warn("start TLS checkpoint", err)
-			return
-		}
-		if err := a.journal.SetStepStatus(ctx, step.ID, state); err != nil {
-			warn("finish TLS checkpoint", err)
-		}
-	}
+	// A deferred route ends skipped straight from waiting, which reads as
+	// "set aside", exactly what happened; a decided one goes through running.
+	a.record(ctx, "journal TLS checkpoint", journal.StepRecord{Key: key, Title: title, To: state,
+		Entries: []journal.LogEntry{{Level: level, Message: message, Fields: fields}}, Dedupe: true})
 }

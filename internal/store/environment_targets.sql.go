@@ -46,6 +46,60 @@ func (q *Queries) FallbackEnvironmentTarget(ctx context.Context, arg FallbackEnv
 	return result.RowsAffected(), nil
 }
 
+const getEnvironmentPass = `-- name: GetEnvironmentPass :one
+SELECT environments.id, environments.project_id, environments.name, environments.created_at, environments.updated_at, environments.max_role, environments.deploy_policy, environments.promote_from, environments.priority, environments.backup_schedule, environments.backup_retention_seconds, environments.backup_strategy, environments.previous_names, environments.backup_namespace, environment_targets.environment_id, environment_targets.target_revision_id, environment_targets.active_revision_id, environment_targets.updated_at, environment_targets.state, environment_targets.restarted_at,
+       runs.id AS run_id, runs.kind AS run_kind, deployments.status AS deployment_status
+FROM environments
+JOIN environment_targets ON environment_targets.environment_id = environments.id
+LEFT JOIN runs ON runs.environment_id = environments.id AND runs.status = 'running'
+LEFT JOIN deployments ON runs.kind = 'deployment'
+    AND deployments.environment_id = environments.id AND deployments.run_id = runs.id
+WHERE environments.id = $1
+`
+
+type GetEnvironmentPassRow struct {
+	Environment       Environment
+	EnvironmentTarget EnvironmentTarget
+	RunID             *uuid.UUID
+	RunKind           *string
+	DeploymentStatus  *string
+}
+
+// GetEnvironmentPass reads what a reconcile pass starts from in one round
+// trip: the environment, its target pointers, and its running run with,
+// for a deployment run, the status of its deployment. The run columns are
+// NULL when nothing runs.
+func (q *Queries) GetEnvironmentPass(ctx context.Context, id uuid.UUID) (GetEnvironmentPassRow, error) {
+	row := q.db.QueryRow(ctx, getEnvironmentPass, id)
+	var i GetEnvironmentPassRow
+	err := row.Scan(
+		&i.Environment.ID,
+		&i.Environment.ProjectID,
+		&i.Environment.Name,
+		&i.Environment.CreatedAt,
+		&i.Environment.UpdatedAt,
+		&i.Environment.MaxRole,
+		&i.Environment.DeployPolicy,
+		&i.Environment.PromoteFrom,
+		&i.Environment.Priority,
+		&i.Environment.BackupSchedule,
+		&i.Environment.BackupRetentionSeconds,
+		&i.Environment.BackupStrategy,
+		&i.Environment.PreviousNames,
+		&i.Environment.BackupNamespace,
+		&i.EnvironmentTarget.EnvironmentID,
+		&i.EnvironmentTarget.TargetRevisionID,
+		&i.EnvironmentTarget.ActiveRevisionID,
+		&i.EnvironmentTarget.UpdatedAt,
+		&i.EnvironmentTarget.State,
+		&i.EnvironmentTarget.RestartedAt,
+		&i.RunID,
+		&i.RunKind,
+		&i.DeploymentStatus,
+	)
+	return i, err
+}
+
 const getEnvironmentTarget = `-- name: GetEnvironmentTarget :one
 SELECT environment_id, target_revision_id, active_revision_id, updated_at, state, restarted_at FROM environment_targets WHERE environment_id = $1
 `

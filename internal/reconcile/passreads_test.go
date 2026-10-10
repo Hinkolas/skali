@@ -77,9 +77,9 @@ func (f *kernelFixture) recordStatements(t *testing.T) *statementRecorder {
 
 // A pass reads each input once: the pre-lock probe phase, the render, and
 // the redactor share the decoded revision and its pinned values, and a pass
-// that journals nothing never builds the redactor. Only the target and the
-// running run are read again under the lock, since either may have moved
-// while the pass waited for it.
+// that journals nothing never builds the redactor. Only the environment,
+// its target and its running run are read again under the lock, in one
+// statement, since any of them may have moved while the pass waited for it.
 func TestPassReadsEachInputOnce(t *testing.T) {
 	t.Parallel()
 	f := certFixture(t, Config{RolloutDeadline: time.Hour})
@@ -96,7 +96,7 @@ func TestPassReadsEachInputOnce(t *testing.T) {
 		return recorder.take()
 	}
 	once := []string{"GetRevisionByID", "ListPinnedEnvironmentSecretCiphertexts",
-		"ListCurrentEnvironmentSecretCiphertexts", "GetEnvironmentByID"}
+		"ListCurrentEnvironmentSecretCiphertexts", "ListStepStates"}
 
 	rollout := pass()
 	f.markHealthy(t)
@@ -114,11 +114,50 @@ func TestPassReadsEachInputOnce(t *testing.T) {
 	converged := pass()
 	require.Zero(t, converged["ListCurrentEnvironmentSecretCiphertexts"], "an idle pass builds no redactor")
 	for name, n := range converged {
-		switch name {
-		case "GetEnvironmentTarget", "GetRunningRunByEnvironment":
-			require.LessOrEqual(t, n, 2, name)
-		default:
-			require.Equal(t, 1, n, name)
+		if name == "GetEnvironmentPass" {
+			require.Equal(t, 2, n, name)
+			continue
+		}
+		require.Equal(t, 1, n, name)
+	}
+}
+
+// A pass reads its run's steps once and writes each step it touches in one
+// statement: no step is ensured, read back, or appended to line by line, a
+// waiting pass whose reasons did not change writes nothing, and the
+// activation finishes the run in one statement.
+func TestPassJournalsOneStatementPerStep(t *testing.T) {
+	t.Parallel()
+	f := certFixture(t, Config{RolloutDeadline: time.Hour})
+	f.kernel.deps.ProbeDomain = probeResult(nil, edgeprobe.StateReachable, oursAddress)
+	recorder := f.recordStatements(t)
+	ctx := context.Background()
+
+	f.executeDeploymentManifest(t, certManifest)
+	f.fake.SetFresh()
+	f.fake.SetCertificate(f.environmentID, f.namespace, certName, "web",
+		module.CertificateStatus{Ready: true, NotAfter: time.Now().Add(60 * 24 * time.Hour)})
+	pass := func() map[string]int {
+		recorder.take()
+		_, err := f.kernel.reconcileEnvironment(ctx, f.environmentID)
+		require.NoError(t, err)
+		return recorder.take()
+	}
+
+	rollout := pass()
+	waiting := pass()
+	f.markHealthy(t)
+	activation := pass()
+	require.NotNil(t, f.target(t).ActiveRevisionID)
+
+	for _, counts := range []map[string]int{rollout, waiting, activation} {
+		require.Equal(t, 1, counts["ListStepStates"])
+		for _, name := range []string{"EnsureStep", "GetStepByRunAndKey", "LatestStepLog",
+			"CreateAttempt", "AppendRunLog", "FinishAttempt", "begin"} {
+			require.Zero(t, counts[name], name)
 		}
 	}
+	require.Positive(t, rollout["RecordStep"])
+	require.Zero(t, waiting["RecordStep"], "an unchanged wait writes nothing")
+	require.Equal(t, 1, activation["FinishRun"])
 }

@@ -5,6 +5,20 @@ VALUES ($1);
 -- name: GetEnvironmentTarget :one
 SELECT * FROM environment_targets WHERE environment_id = $1;
 
+-- GetEnvironmentPass reads what a reconcile pass starts from in one round
+-- trip: the environment, its target pointers, and its running run with,
+-- for a deployment run, the status of its deployment. The run columns are
+-- NULL when nothing runs.
+-- name: GetEnvironmentPass :one
+SELECT sqlc.embed(environments), sqlc.embed(environment_targets),
+       runs.id AS run_id, runs.kind AS run_kind, deployments.status AS deployment_status
+FROM environments
+JOIN environment_targets ON environment_targets.environment_id = environments.id
+LEFT JOIN runs ON runs.environment_id = environments.id AND runs.status = 'running'
+LEFT JOIN deployments ON runs.kind = 'deployment'
+    AND deployments.environment_id = environments.id AND deployments.run_id = runs.id
+WHERE environments.id = $1;
+
 -- The single writer of the target pointer; runs only inside the deploy
 -- promotion or rollback transaction. Promoting resurrects an environment
 -- that was taken down, but never one that is releasing: purge is one-way,

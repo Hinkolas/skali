@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -141,7 +142,7 @@ func (s *Service) DiscardRun(ctx context.Context, id uuid.UUID) error {
 const MaxFailureBytes = 512
 
 // FinishRun moves the run to a terminal status and forces every non-terminal
-// step and attempt terminal in the same transaction: running work adopts the
+// step and attempt terminal in the same statement: running work adopts the
 // run's outcome (failed or cancelled), unstarted steps are skipped. It then
 // applies the retention caps. A run finished failed through this path
 // records no reason; FailRun is the path that knows one.
@@ -181,33 +182,19 @@ func (s *Service) finish(ctx context.Context, id uuid.UUID, to RunStatus, failur
 	} else {
 		failure = nil // a reason only explains a failure
 	}
-	var environmentID *uuid.UUID
-	err := s.st.WithTx(ctx, func(q *store.Queries) error {
-		run, err := q.GetRunForUpdate(ctx, id)
-		if err != nil {
-			return notFoundOr(err, "lock run")
-		}
-		if err := guard(Runs, RunStatus(run.Status), to); err != nil {
-			return err
-		}
-		environmentID = run.EnvironmentID
-		if _, err := q.CloseRunningAttemptsForRun(ctx, store.CloseRunningAttemptsForRunParams{
-			RunID: id, Status: closeStatus,
-		}); err != nil {
-			return fmt.Errorf("journal: close attempts: %w", err)
-		}
-		if _, err := q.CloseRunningSteps(ctx, store.CloseRunningStepsParams{
-			RunID: id, Status: closeStatus,
-		}); err != nil {
-			return fmt.Errorf("journal: close steps: %w", err)
-		}
-		if _, err := q.SkipUnstartedSteps(ctx, id); err != nil {
-			return fmt.Errorf("journal: skip steps: %w", err)
-		}
-		return q.MarkRunFinished(ctx, store.MarkRunFinishedParams{ID: id, Status: string(to), Failure: failure})
+	environmentID, err := s.st.FinishRun(ctx, store.FinishRunParams{
+		ID: id, Status: string(to), FromStatuses: statuses(Runs.Sources(to)),
+		Failure: failure, CloseStatus: closeStatus,
 	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		run, err := s.st.GetRunByID(ctx, id)
+		if err != nil {
+			return notFoundOr(err, "get run")
+		}
+		return fmt.Errorf("%w: %v -> %v", ErrInvalidTransition, run.Status, to)
+	}
 	if err != nil {
-		return err
+		return fmt.Errorf("journal: finish run: %w", err)
 	}
 	err = s.prune(ctx, environmentID)
 	s.notifyRun(id)
@@ -291,37 +278,11 @@ func (s *Service) CompleteStep(ctx context.Context, step *store.Step, redactor *
 	if err != nil {
 		return fmt.Errorf("journal: generate id: %w", err)
 	}
-	type line struct {
-		ID      uuid.UUID       `json:"id"`
-		Level   string          `json:"level"`
-		Message string          `json:"message"`
-		Fields  json.RawMessage `json:"fields"`
-	}
-	lines := make([]line, 0, len(entries))
-	for _, entry := range entries {
-		if !validLevel(entry.Level) {
-			return fmt.Errorf("journal: invalid log level %q", entry.Level)
-		}
-		fields, err := encodeFields(redactor, entry.Fields)
-		if err != nil {
-			return err
-		}
-		id, err := uuid.NewV7()
-		if err != nil {
-			return fmt.Errorf("journal: generate id: %w", err)
-		}
-		lines = append(lines, line{ID: id, Level: entry.Level, Message: boundEntry(redactor.Redact(entry.Message)), Fields: fields})
-	}
-	if len(lines) > MaxEntriesPerAttempt {
-		lines = lines[:MaxEntriesPerAttempt]
-		lines[MaxEntriesPerAttempt-1] = line{ID: lines[MaxEntriesPerAttempt-1].ID, Level: "warn",
-			Message: "log truncated: entry cap reached", Fields: json.RawMessage("{}")}
-	}
-	encoded, err := json.Marshal(lines)
+	lines, encoded, err := encodeEntries(redactor, entries)
 	if err != nil {
-		return fmt.Errorf("journal: encode entries: %w", err)
+		return err
 	}
-	from := append(Steps.Sources(StepRunning), StepRunning)
+	from := recordSources(to)
 	row, err := s.st.CompleteStep(ctx, store.CompleteStepParams{
 		ID: step.ID, Status: string(to), FromStatuses: statuses(from),
 		AttemptID: attemptID, AttemptStatus: string(attemptStatus), ExecutorID: s.executorID,
@@ -340,19 +301,188 @@ func (s *Service) CompleteStep(ctx context.Context, step *store.Step, redactor *
 	if err != nil {
 		return fmt.Errorf("journal: complete step: %w", err)
 	}
+	s.publishLines(step.ID, row.Number, row.LoggedAt, lines)
+	s.notifyRun(step.RunID)
+	return nil
+}
+
+// StepRecord is one observation of a step, addressed by its key.
+type StepRecord struct {
+	RunID    uuid.UUID
+	ParentID *uuid.UUID
+	Key      string
+	Title    string
+	// To is the status the step moves to.
+	To StepStatus
+	// Entries are the lines of the finished attempt the record writes; it
+	// fails when To is failed and succeeds otherwise.
+	Entries []LogEntry
+	// Dedupe writes the attempt only when the last entry differs from the
+	// step's latest line, so an observation repeated across passes adds
+	// nothing.
+	Dedupe bool
+}
+
+// StepState is a step as the journal last saw it: its status and, while it
+// has not started, its latest line.
+type StepState struct {
+	ID     uuid.UUID
+	Status StepStatus
+	Latest string
+}
+
+// StepStates reads every step of a run, keyed by step key.
+func (s *Service) StepStates(ctx context.Context, runID uuid.UUID) (map[string]StepState, error) {
+	rows, err := s.st.ListStepStates(ctx, runID)
+	if err != nil {
+		return nil, fmt.Errorf("journal: list steps: %w", err)
+	}
+	states := make(map[string]StepState, len(rows))
+	for _, row := range rows {
+		states[row.Key] = StepState{ID: row.ID, Status: StepStatus(row.Status), Latest: row.Latest}
+	}
+	return states, nil
+}
+
+// RecordStep journals one observation of a step in one statement: it
+// creates the step when the run has none under the key, moves it to To the
+// way the step machine allows, through running when the machine goes that
+// way, and writes one finished attempt carrying the entries, redacted and
+// bounded like Append's. A step whose status does not allow the change is
+// refused with ErrInvalidTransition, and one with a running attempt with
+// ErrAttemptConflict; neither writes anything. The returned state is the
+// step's after the record, or as found when it was refused.
+func (s *Service) RecordStep(ctx context.Context, record StepRecord, redactor *redact.Redactor) (StepState, error) {
+	attemptStatus := AttemptSucceeded
+	if record.To == StepFailed {
+		attemptStatus = AttemptFailed
+	}
+	lines, encoded, err := encodeEntries(redactor, record.Entries)
+	if err != nil {
+		return StepState{}, err
+	}
+	from := recordSources(record.To)
+	var row store.RecordStepRow
+	// A step created by another writer after the statement's snapshot is
+	// neither found nor created; the second statement sees it.
+	for range 2 {
+		stepID, err := uuid.NewV7()
+		if err != nil {
+			return StepState{}, fmt.Errorf("journal: generate id: %w", err)
+		}
+		attemptID, err := uuid.NewV7()
+		if err != nil {
+			return StepState{}, fmt.Errorf("journal: generate id: %w", err)
+		}
+		row, err = s.st.RecordStep(ctx, store.RecordStepParams{
+			ID: stepID, RunID: record.RunID, ParentID: record.ParentID, Key: record.Key, Title: record.Title,
+			Status: string(record.To), FromStatuses: statuses(from), Dedupe: record.Dedupe,
+			AttemptID: attemptID, AttemptStatus: string(attemptStatus), ExecutorID: s.executorID,
+			Entries: encoded,
+		})
+		if err != nil {
+			return StepState{}, fmt.Errorf("journal: record step: %w", err)
+		}
+		if row.Written || row.PreviousStatus != "" {
+			break
+		}
+	}
+	previous := StepStatus(row.PreviousStatus)
+	if !row.Written {
+		switch {
+		case previous == "":
+			return StepState{}, fmt.Errorf("journal: record step: %s neither found nor created", record.Key)
+		case !slices.Contains(from, previous):
+			return StepState{ID: row.StepID, Status: previous}, fmt.Errorf("%w: %v -> %v", ErrInvalidTransition, previous, record.To)
+		case row.AttemptRunning:
+			return StepState{ID: row.StepID, Status: previous}, ErrAttemptConflict
+		}
+		// Already at To, and the line unchanged.
+		return StepState{ID: row.StepID, Status: previous, Latest: latestLine(lines)}, nil
+	}
+	if row.AttemptNumber > 0 {
+		s.publishLines(row.StepID, row.AttemptNumber, row.LoggedAt, lines)
+	}
+	s.notifyRun(record.RunID)
+	return StepState{ID: row.StepID, Status: record.To, Latest: latestLine(lines)}, nil
+}
+
+// recordSources are the statuses a step reaches to from in one record: the
+// machine's sources, theirs as well when the machine goes through running,
+// and to itself while it is not terminal, so a waiting step can note a new
+// line.
+func recordSources(to StepStatus) []StepStatus {
+	from := Steps.Sources(to)
+	if slices.Contains(from, StepRunning) {
+		from = append(from, Steps.Sources(StepRunning)...)
+	}
+	if !Steps.Terminal(to) {
+		from = append(from, to)
+	}
+	slices.Sort(from)
+	return slices.Compact(from)
+}
+
+// entryLine is one log line as the journal stores it.
+type entryLine struct {
+	ID      uuid.UUID       `json:"id"`
+	Level   string          `json:"level"`
+	Message string          `json:"message"`
+	Fields  json.RawMessage `json:"fields"`
+}
+
+// encodeEntries redacts and bounds entries like Append and encodes them as
+// the JSON array the single-statement step writes insert.
+func encodeEntries(redactor *redact.Redactor, entries []LogEntry) ([]entryLine, []byte, error) {
+	lines := make([]entryLine, 0, len(entries))
+	for _, entry := range entries {
+		if !validLevel(entry.Level) {
+			return nil, nil, fmt.Errorf("journal: invalid log level %q", entry.Level)
+		}
+		fields, err := encodeFields(redactor, entry.Fields)
+		if err != nil {
+			return nil, nil, err
+		}
+		id, err := uuid.NewV7()
+		if err != nil {
+			return nil, nil, fmt.Errorf("journal: generate id: %w", err)
+		}
+		lines = append(lines, entryLine{ID: id, Level: entry.Level, Message: boundEntry(redactor.Redact(entry.Message)), Fields: fields})
+	}
+	if len(lines) > MaxEntriesPerAttempt {
+		lines = lines[:MaxEntriesPerAttempt]
+		lines[MaxEntriesPerAttempt-1] = entryLine{ID: lines[MaxEntriesPerAttempt-1].ID, Level: "warn",
+			Message: "log truncated: entry cap reached", Fields: json.RawMessage("{}")}
+	}
+	encoded, err := json.Marshal(lines)
+	if err != nil {
+		return nil, nil, fmt.Errorf("journal: encode entries: %w", err)
+	}
+	return lines, encoded, nil
+}
+
+// latestLine is the message the step's latest line holds after lines were
+// written, empty for none.
+func latestLine(lines []entryLine) string {
+	if len(lines) == 0 {
+		return ""
+	}
+	return lines[len(lines)-1].Message
+}
+
+// publishLines streams the lines of an attempt written in one statement.
+func (s *Service) publishLines(stepID uuid.UUID, attempt int64, at time.Time, lines []entryLine) {
 	for i, line := range lines {
-		s.broadcast.Publish(step.ID, LogEvent{
-			StepID:        step.ID,
-			AttemptNumber: row.Number,
+		s.broadcast.Publish(stepID, LogEvent{
+			StepID:        stepID,
+			AttemptNumber: attempt,
 			Seq:           int64(i + 1),
-			TS:            row.LoggedAt,
+			TS:            at,
 			Level:         line.Level,
 			Message:       line.Message,
 			Fields:        line.Fields,
 		})
 	}
-	s.notifyRun(step.RunID)
-	return nil
 }
 
 // refusedStep explains a guarded step update that changed nothing: the
@@ -376,8 +506,7 @@ func (s *Service) SetStepProgress(ctx context.Context, stepID uuid.UUID, current
 }
 
 // LatestStepMessage returns a step's most recent log line across attempts,
-// empty when none exist; waiting steps use it to append a fresh reason only
-// when it changed.
+// empty when none exist.
 func (s *Service) LatestStepMessage(ctx context.Context, stepID uuid.UUID) (string, error) {
 	message, err := s.st.LatestStepLog(ctx, stepID)
 	if err != nil {
@@ -466,17 +595,12 @@ func (s *Service) DeferredRoutes(ctx context.Context, runIDs []uuid.UUID) (map[u
 
 // prune applies the retention caps after a run reached a terminal status.
 func (s *Service) prune(ctx context.Context, environmentID *uuid.UUID) error {
-	if environmentID != nil {
-		if _, err := s.st.DeleteExcessTerminalRuns(ctx, store.DeleteExcessTerminalRunsParams{
-			EnvironmentID: environmentID,
-			Offset:        MaxRunsPerEnvironment,
-		}); err != nil {
-			return fmt.Errorf("journal: prune excess runs: %w", err)
-		}
-	}
-	cutoff := maxRunAgeCutoff()
-	if _, err := s.st.DeleteAgedTerminalRuns(ctx, &cutoff); err != nil {
-		return fmt.Errorf("journal: prune aged runs: %w", err)
+	if err := s.st.PruneRuns(ctx, store.PruneRunsParams{
+		EnvironmentID: environmentID,
+		Keep:          MaxRunsPerEnvironment,
+		Cutoff:        maxRunAgeCutoff(),
+	}); err != nil {
+		return fmt.Errorf("journal: prune runs: %w", err)
 	}
 	return nil
 }

@@ -13,10 +13,30 @@ SELECT * FROM runs WHERE id = $1 FOR UPDATE;
 -- name: MarkRunRunning :exec
 UPDATE runs SET status = 'running', started_at = now() WHERE id = $1;
 
--- The failure text is only meaningful with status 'failed'; the journal
--- passes NULL for every other terminal status.
--- name: MarkRunFinished :exec
-UPDATE runs SET status = $2, finished_at = now(), failure = $3 WHERE id = $1;
+-- FinishRun moves a run to a terminal status in one statement, and every
+-- non-terminal step and attempt of the run with it: running work adopts
+-- close_status, unstarted steps are skipped. It applies only from one of
+-- from_statuses, which the journal derives from its run machine;
+-- otherwise nothing is written and no row returns. The failure text is
+-- only meaningful with status 'failed'; the journal passes NULL for every
+-- other terminal status.
+-- name: FinishRun :one
+WITH run AS (
+    UPDATE runs SET status = sqlc.arg(status)::text, finished_at = now(), failure = sqlc.narg(failure)::text
+    WHERE runs.id = sqlc.arg(id)::uuid AND runs.status = ANY(sqlc.arg(from_statuses)::text[])
+    RETURNING runs.id, runs.environment_id
+), closed_attempts AS (
+    UPDATE attempts SET status = sqlc.arg(close_status)::text, finished_at = now()
+    FROM steps, run
+    WHERE attempts.step_id = steps.id AND steps.run_id = run.id AND attempts.status = 'running'
+), closed_steps AS (
+    UPDATE steps SET
+        status = CASE WHEN steps.status = 'running' THEN sqlc.arg(close_status)::text ELSE 'skipped' END,
+        finished_at = now()
+    FROM run
+    WHERE steps.run_id = run.id AND steps.status IN ('pending', 'waiting', 'running')
+)
+SELECT run.environment_id FROM run;
 
 -- A run that never started explains nothing and nothing will ever finish
 -- it: the creator removes the row instead of stranding it pending, which
@@ -35,19 +55,22 @@ SELECT * FROM runs WHERE environment_id = $1 ORDER BY created_at DESC;
 SELECT * FROM runs WHERE environment_id = $1 AND status = 'running';
 
 -- Retention: drop terminal runs beyond the newest keep-count of one
--- environment, and terminal runs older than the age cutoff anywhere.
--- name: DeleteExcessTerminalRuns :execrows
-DELETE FROM runs WHERE id IN (
-    SELECT terminal.id FROM runs AS terminal
-    WHERE terminal.environment_id = $1
-      AND terminal.status IN ('succeeded', 'failed', 'cancelled')
-    ORDER BY terminal.created_at DESC
-    OFFSET $2
-);
-
--- name: DeleteAgedTerminalRuns :execrows
+-- environment (none when environment_id is NULL), and terminal runs older
+-- than the age cutoff anywhere.
+-- name: PruneRuns :exec
+WITH excess AS (
+    DELETE FROM runs WHERE runs.id IN (
+        SELECT terminal.id FROM runs AS terminal
+        WHERE terminal.environment_id = sqlc.narg(environment_id)::uuid
+          AND terminal.status IN ('succeeded', 'failed', 'cancelled')
+        ORDER BY terminal.created_at DESC
+        OFFSET sqlc.arg(keep)::bigint
+    )
+    RETURNING runs.id
+)
 DELETE FROM runs
-WHERE status IN ('succeeded', 'failed', 'cancelled') AND finished_at < $1;
+WHERE runs.status IN ('succeeded', 'failed', 'cancelled') AND runs.finished_at < sqlc.arg(cutoff)::timestamptz
+  AND runs.id NOT IN (SELECT excess.id FROM excess);
 
 -- Platform updates wait for in-flight work: a running run anywhere means a
 -- deployment, restore, or restart the control-plane roll would interrupt.

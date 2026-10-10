@@ -483,7 +483,7 @@ func TestWaitStepReasonUpdates(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NoError(t, f.journal.StartRun(ctx, run.ID))
-	attachment := &runAttachment{journal: f.journal, run: run}
+	attachment := &runAttachment{journal: f.journal, run: &attachedRun{ID: run.ID, Kind: run.Kind}}
 
 	attachment.waitStep(ctx, "claim:databases.data", "Provision databases.data", "pool starting")
 	attachment.waitStep(ctx, "claim:databases.data", "Provision databases.data", "pool starting")
