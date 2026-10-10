@@ -71,6 +71,7 @@ type Client struct {
 	Mapper   meta.RESTMapper
 
 	ownership atomic.Pointer[ownershipProtection]
+	schemas   applySchemas
 
 	// inCluster records that credentials came from the pod's service
 	// account: Service DNS is dialable directly (forward.go).
@@ -195,7 +196,8 @@ func (c *Client) Apply(ctx context.Context, obj runtime.Object, force bool) (App
 }
 
 // ApplyAs server-side-applies one rendered object under an explicit field
-// manager; the installer bundle applies under FieldManagerInstaller.
+// manager; the installer bundle applies under FieldManagerInstaller. An
+// apply that would change nothing ends at its read (see unchangedBy).
 func (c *Client) ApplyAs(ctx context.Context, obj runtime.Object, manager string, force bool) (ApplyResult, error) {
 	applied, resource, err := c.prepare(obj)
 	if err != nil {
@@ -253,6 +255,14 @@ func (c *Client) applyAttempt(ctx context.Context, applied *unstructured.Unstruc
 				applied.SetUID(live.GetUID())
 			} else {
 				applied.SetResourceVersion(live.GetResourceVersion())
+			}
+		}
+		// An apply that would change nothing is not sent. A forced apply
+		// always is: it exists to take fields from another manager.
+		if !force {
+			if converter := c.converter(ctx, applied.GroupVersionKind().GroupVersion()); converter != nil &&
+				unchangedBy(converter, applied, live, manager) {
+				return ApplyResult{Live: live}, false, nil
 			}
 		}
 		priorVersion = live.GetResourceVersion()
