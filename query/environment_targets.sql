@@ -7,11 +7,22 @@ SELECT * FROM environment_targets WHERE environment_id = $1;
 
 -- GetEnvironmentPass reads what a reconcile pass starts from in one round
 -- trip: the environment, its target pointers, and its running run with,
--- for a deployment run, the status of its deployment. The run columns are
--- NULL when nothing runs.
+-- for a deployment run, the status of its deployment, which are NULL when
+-- nothing runs. intercepts maps each intercepted application to its host
+-- ports and restarts each restarted application to its stamp; both are
+-- NULL when empty. claims_hostnames reports whether the environment holds
+-- any hostname claim.
 -- name: GetEnvironmentPass :one
 SELECT sqlc.embed(environments), sqlc.embed(environment_targets),
-       runs.id AS run_id, runs.kind AS run_kind, deployments.status AS deployment_status
+       runs.id AS run_id, runs.kind AS run_kind, deployments.status AS deployment_status,
+       (SELECT jsonb_object_agg(environment_intercepts.application_key, environment_intercepts.ports)
+        FROM environment_intercepts
+        WHERE environment_intercepts.environment_id = environments.id)::jsonb AS intercepts,
+       (SELECT jsonb_object_agg(environment_restarts.application_key, environment_restarts.restarted_at)
+        FROM environment_restarts
+        WHERE environment_restarts.environment_id = environments.id)::jsonb AS restarts,
+       EXISTS (SELECT 1 FROM hostname_claims
+               WHERE hostname_claims.environment_id = environments.id) AS claims_hostnames
 FROM environments
 JOIN environment_targets ON environment_targets.environment_id = environments.id
 LEFT JOIN runs ON runs.environment_id = environments.id AND runs.status = 'running'

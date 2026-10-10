@@ -97,12 +97,13 @@ func (s *Service) LiveAllocation(ctx context.Context, claimID uuid.UUID) (*store
 	return &row, nil
 }
 
-// EnvironmentAllocations returns the live allocation of every live service
-// claim of the environment, each with its claim's service key and phase.
-func (s *Service) EnvironmentAllocations(ctx context.Context, environmentID uuid.UUID) ([]store.ListLiveBucketAllocationsByEnvironmentRow, error) {
-	rows, err := s.st.ListLiveBucketAllocationsByEnvironment(ctx, utils.NilWhenZero(environmentID))
+// EnvironmentBucketClaimOutputs returns every live service claim of the
+// environment with its live allocation's bucket name and output facts, when
+// it has one.
+func (s *Service) EnvironmentBucketClaimOutputs(ctx context.Context, environmentID uuid.UUID) ([]store.ListLiveBucketClaimOutputsByEnvironmentRow, error) {
+	rows, err := s.st.ListLiveBucketClaimOutputsByEnvironment(ctx, utils.NilWhenZero(environmentID))
 	if err != nil {
-		return nil, fmt.Errorf("dbstore: list environment allocations: %w", err)
+		return nil, fmt.Errorf("dbstore: list environment bucket claims: %w", err)
 	}
 	return rows, nil
 }

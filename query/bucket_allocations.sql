@@ -9,13 +9,16 @@ RETURNING *;
 SELECT * FROM bucket_allocations
 WHERE claim_id = $1 AND released_at IS NULL;
 
--- The live allocation of every live service claim of an environment, with
--- the claim's phase: the bucket names and output facts the kernel renders,
--- in one read.
--- name: ListLiveBucketAllocationsByEnvironment :many
-SELECT bucket_claims.service_key, bucket_claims.phase, sqlc.embed(bucket_allocations)
+-- Every live service claim of an environment with its live allocation's
+-- bucket name and output facts, when it has an allocation: what a reconcile
+-- pass compares the revision with and what it renders, in one read.
+-- name: ListLiveBucketClaimOutputsByEnvironment :many
+SELECT sqlc.embed(bucket_claims), bucket_allocations.bucket_name AS allocation_bucket_name,
+       bucket_allocations.endpoint AS allocation_endpoint,
+       bucket_allocations.credential_version AS allocation_credential_version,
+       bucket_allocations.output_version AS allocation_output_version
 FROM bucket_claims
-JOIN bucket_allocations ON bucket_allocations.claim_id = bucket_claims.id
+LEFT JOIN bucket_allocations ON bucket_allocations.claim_id = bucket_claims.id
     AND bucket_allocations.released_at IS NULL
 WHERE bucket_claims.environment_id = $1 AND bucket_claims.owner_kind = 'service'
     AND bucket_claims.phase <> 'released'

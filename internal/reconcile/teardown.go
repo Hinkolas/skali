@@ -49,7 +49,7 @@ func (k *Kernel) teardownEnvironment(ctx context.Context, state store.GetEnviron
 
 	snapshot := k.deps.Observed.Snapshot(environmentID)
 	if teardownSettled(snapshot, releasing) {
-		if err := k.releaseAbsentHostnames(ctx, environmentID); err != nil {
+		if err := k.releaseAbsentHostnames(ctx, state); err != nil {
 			return 0, err
 		}
 		if !releasing {

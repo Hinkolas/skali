@@ -48,7 +48,15 @@ func (q *Queries) FallbackEnvironmentTarget(ctx context.Context, arg FallbackEnv
 
 const getEnvironmentPass = `-- name: GetEnvironmentPass :one
 SELECT environments.id, environments.project_id, environments.name, environments.created_at, environments.updated_at, environments.max_role, environments.deploy_policy, environments.promote_from, environments.priority, environments.backup_schedule, environments.backup_retention_seconds, environments.backup_strategy, environments.previous_names, environments.backup_namespace, environment_targets.environment_id, environment_targets.target_revision_id, environment_targets.active_revision_id, environment_targets.updated_at, environment_targets.state, environment_targets.restarted_at,
-       runs.id AS run_id, runs.kind AS run_kind, deployments.status AS deployment_status
+       runs.id AS run_id, runs.kind AS run_kind, deployments.status AS deployment_status,
+       (SELECT jsonb_object_agg(environment_intercepts.application_key, environment_intercepts.ports)
+        FROM environment_intercepts
+        WHERE environment_intercepts.environment_id = environments.id)::jsonb AS intercepts,
+       (SELECT jsonb_object_agg(environment_restarts.application_key, environment_restarts.restarted_at)
+        FROM environment_restarts
+        WHERE environment_restarts.environment_id = environments.id)::jsonb AS restarts,
+       EXISTS (SELECT 1 FROM hostname_claims
+               WHERE hostname_claims.environment_id = environments.id) AS claims_hostnames
 FROM environments
 JOIN environment_targets ON environment_targets.environment_id = environments.id
 LEFT JOIN runs ON runs.environment_id = environments.id AND runs.status = 'running'
@@ -63,12 +71,18 @@ type GetEnvironmentPassRow struct {
 	RunID             *uuid.UUID
 	RunKind           *string
 	DeploymentStatus  *string
+	Intercepts        []byte
+	Restarts          []byte
+	ClaimsHostnames   bool
 }
 
 // GetEnvironmentPass reads what a reconcile pass starts from in one round
 // trip: the environment, its target pointers, and its running run with,
-// for a deployment run, the status of its deployment. The run columns are
-// NULL when nothing runs.
+// for a deployment run, the status of its deployment, which are NULL when
+// nothing runs. intercepts maps each intercepted application to its host
+// ports and restarts each restarted application to its stamp; both are
+// NULL when empty. claims_hostnames reports whether the environment holds
+// any hostname claim.
 func (q *Queries) GetEnvironmentPass(ctx context.Context, id uuid.UUID) (GetEnvironmentPassRow, error) {
 	row := q.db.QueryRow(ctx, getEnvironmentPass, id)
 	var i GetEnvironmentPassRow
@@ -96,6 +110,9 @@ func (q *Queries) GetEnvironmentPass(ctx context.Context, id uuid.UUID) (GetEnvi
 		&i.RunID,
 		&i.RunKind,
 		&i.DeploymentStatus,
+		&i.Intercepts,
+		&i.Restarts,
+		&i.ClaimsHostnames,
 	)
 	return i, err
 }

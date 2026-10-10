@@ -85,12 +85,12 @@ func (s *Service) LiveTenant(ctx context.Context, claimID uuid.UUID) (*store.Dat
 	return &row, nil
 }
 
-// EnvironmentTenants returns the live tenant of every live service claim of
-// the environment, each with its claim's service key and phase.
-func (s *Service) EnvironmentTenants(ctx context.Context, environmentID uuid.UUID) ([]store.ListLiveDatabaseTenantsByEnvironmentRow, error) {
-	rows, err := s.st.ListLiveDatabaseTenantsByEnvironment(ctx, utils.NilWhenZero(environmentID))
+// EnvironmentClaimOutputs returns every live service claim of the
+// environment with its live tenant's connection facts, when it has one.
+func (s *Service) EnvironmentClaimOutputs(ctx context.Context, environmentID uuid.UUID) ([]store.ListLiveDatabaseClaimOutputsByEnvironmentRow, error) {
+	rows, err := s.st.ListLiveDatabaseClaimOutputsByEnvironment(ctx, utils.NilWhenZero(environmentID))
 	if err != nil {
-		return nil, fmt.Errorf("dbstore: list environment tenants: %w", err)
+		return nil, fmt.Errorf("dbstore: list environment claims: %w", err)
 	}
 	return rows, nil
 }

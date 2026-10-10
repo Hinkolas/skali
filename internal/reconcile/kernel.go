@@ -88,6 +88,10 @@ type ClaimOutputs struct {
 	// claim allocated. Bucket routes key the edge on it, so the renderer
 	// needs it before the claim is provisioned.
 	BucketNames map[string]string
+	// Live is the claim manager's read behind these outputs, which the
+	// pass hands back to Ensure so the claims are read once. The kernel
+	// never looks inside.
+	Live any
 }
 
 // ClaimEnsureInput carries the environment identity the portable revision
@@ -100,6 +104,9 @@ type ClaimEnsureInput struct {
 	// the environment's values and canonical, keyed by bucket key. The
 	// substrate records it on the claim and publishes it as the endpoint.
 	BucketRoutes map[string]BucketRoute
+	// Live is the pass's ClaimOutputs.Live; without it Ensure reads the
+	// claims itself.
+	Live any
 }
 
 // BucketRoute is one bucket's resolved public hostname and TLS policy; its
@@ -247,6 +254,13 @@ type Kernel struct {
 	// audit's passes read live.
 	liveMu   sync.Mutex
 	liveRead map[uuid.UUID]time.Time
+
+	// revisions holds the target revision row each environment's last pass
+	// read. Revisions are never updated, so a row stays right for its ID,
+	// and every pass decodes its own copy of the document. In-memory by
+	// design: one row per environment, dropped with its health verdict.
+	revisionMu sync.Mutex
+	revisions  map[uuid.UUID]store.Revision
 }
 
 func New(deps Deps, cfg Config) *Kernel {
@@ -269,13 +283,14 @@ func New(deps Deps, cfg Config) *Kernel {
 	// error must never park an in-flight rollout longer than an ordinary
 	// waiting pass.
 	return &Kernel{
-		deps:     deps,
-		cfg:      cfg,
-		retired:  map[retireKey]time.Time{},
-		domains:  map[string]domainProbe{},
-		routes:   map[routeKey]routeRecord{},
-		health:   map[uuid.UUID]EnvironmentHealth{},
-		liveRead: map[uuid.UUID]time.Time{},
+		deps:      deps,
+		cfg:       cfg,
+		retired:   map[retireKey]time.Time{},
+		domains:   map[string]domainProbe{},
+		routes:    map[routeKey]routeRecord{},
+		health:    map[uuid.UUID]EnvironmentHealth{},
+		liveRead:  map[uuid.UUID]time.Time{},
+		revisions: map[uuid.UUID]store.Revision{},
 		queue: workstats.NewQueue(workqueue.NewTypedWithMaxWaitRateLimiter(
 			workqueue.DefaultTypedControllerRateLimiter[uuid.UUID](), requeueHealthCheck),
 			func(uuid.UUID) string { return "environment" }),

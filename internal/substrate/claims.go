@@ -26,18 +26,19 @@ import (
 // unsettled ones, and reports readiness. A settled claim is repaired on the
 // substrate's own cadence (repairEnqueue), not on every environment pass.
 // The kernel never sees claim mechanics; the substrate never sees the
-// deployment state machine. One read of each claim list serves the
-// comparisons and the release of the claims the revision dropped, so a
-// pass that changes no claim writes nothing.
+// deployment state machine. One read of each claim list, the one behind
+// the pass's Outputs when it hands it on, serves the comparisons and the
+// release of the claims the revision dropped, so a pass that changes no
+// claim reads nothing more and writes nothing.
 func (c *Controller) Ensure(ctx context.Context, in reconcile.ClaimEnsureInput) ([]reconcile.ClaimState, error) {
-	live, err := c.deps.DB.ListEnvironmentClaims(ctx, in.EnvironmentID)
-	if err != nil {
-		return nil, err
+	read, ok := in.Live.(*liveClaims)
+	if !ok {
+		var err error
+		if read, err = c.readLiveClaims(ctx, in.EnvironmentID); err != nil {
+			return nil, err
+		}
 	}
-	liveBuckets, err := c.deps.DB.ListEnvironmentBucketClaims(ctx, in.EnvironmentID)
-	if err != nil {
-		return nil, err
-	}
+	live, liveBuckets := read.claims()
 	liveByKey := make(map[string]*store.DatabaseClaim, len(live))
 	for i := range live {
 		liveByKey[live[i].ServiceKey] = &live[i]
@@ -256,8 +257,9 @@ func (c *Controller) publishLiveClaims(ctx context.Context) error {
 	return nil
 }
 
-// Outputs implements reconcile.ClaimManager in two reads: the live tenants
-// and the live allocations of the environment's service claims.
+// Outputs implements reconcile.ClaimManager in two reads: the
+// environment's live service claims with their live tenants, and with their
+// live allocations.
 //
 // Generations get, per provisioned claim ("databases.data",
 // "buckets.files"), a short non-secret identity of its connection outputs:
@@ -270,39 +272,73 @@ func (c *Controller) publishLiveClaims(ctx context.Context) error {
 // allocation, keyed by bucket key. Phase does not matter there: the name is
 // fixed the moment the allocation is recorded, and a route may render
 // before the bucket finishes provisioning.
+//
+// The read behind the outputs travels on as their Live value, so the
+// pass's Ensure compares the revision with the same claims instead of
+// reading them again.
 func (c *Controller) Outputs(ctx context.Context, environmentID uuid.UUID) (reconcile.ClaimOutputs, error) {
-	outputs := reconcile.ClaimOutputs{Generations: map[string]string{}, BucketNames: map[string]string{}}
-	tenants, err := c.deps.DB.EnvironmentTenants(ctx, environmentID)
+	read, err := c.readLiveClaims(ctx, environmentID)
 	if err != nil {
 		return reconcile.ClaimOutputs{}, err
 	}
-	for _, row := range tenants {
-		if claim.Phase(row.Phase) != claim.PhaseProvisioned {
+	outputs := reconcile.ClaimOutputs{Generations: map[string]string{}, BucketNames: map[string]string{}, Live: read}
+	for _, row := range read.databases {
+		if claim.Phase(row.DatabaseClaim.Phase) != claim.PhaseProvisioned || row.TenantHost == nil {
 			continue
 		}
-		tenant := row.DatabaseTenant
-		outputs.Generations["databases."+row.ServiceKey] = outputGeneration(
-			"host="+tenant.Host, fmt.Sprintf("port=%d", tenant.Port), fmt.Sprintf("credential=v%d", tenant.CredentialVersion))
+		outputs.Generations["databases."+row.DatabaseClaim.ServiceKey] = outputGeneration(
+			"host="+*row.TenantHost, fmt.Sprintf("port=%d", *row.TenantPort),
+			fmt.Sprintf("credential=v%d", *row.TenantCredentialVersion))
 	}
-	allocations, err := c.deps.DB.EnvironmentAllocations(ctx, environmentID)
-	if err != nil {
-		return reconcile.ClaimOutputs{}, err
-	}
-	for _, row := range allocations {
-		allocation := row.BucketAllocation
-		outputs.BucketNames[row.ServiceKey] = allocation.BucketName
-		if claim.Phase(row.Phase) != claim.PhaseProvisioned {
+	for _, row := range read.buckets {
+		if row.AllocationBucketName == nil {
+			continue
+		}
+		outputs.BucketNames[row.BucketClaim.ServiceKey] = *row.AllocationBucketName
+		if claim.Phase(row.BucketClaim.Phase) != claim.PhaseProvisioned {
 			continue
 		}
 		// The output version advances only once the mirror Secret holds
 		// new values (publishBucketOutputs), so consumers never roll ahead
 		// of what they read.
-		outputs.Generations["buckets."+row.ServiceKey] = outputGeneration(
-			"endpoint="+allocation.Endpoint, "internal_endpoint="+InternalBucketEndpoint(),
-			fmt.Sprintf("credential=v%d", allocation.CredentialVersion),
-			fmt.Sprintf("outputs=v%d", allocation.OutputVersion))
+		outputs.Generations["buckets."+row.BucketClaim.ServiceKey] = outputGeneration(
+			"endpoint="+*row.AllocationEndpoint, "internal_endpoint="+InternalBucketEndpoint(),
+			fmt.Sprintf("credential=v%d", *row.AllocationCredentialVersion),
+			fmt.Sprintf("outputs=v%d", *row.AllocationOutputVersion))
 	}
 	return outputs, nil
+}
+
+// liveClaims is one read of an environment's live service claims, each
+// with its live tenant or allocation when it has one.
+type liveClaims struct {
+	databases []store.ListLiveDatabaseClaimOutputsByEnvironmentRow
+	buckets   []store.ListLiveBucketClaimOutputsByEnvironmentRow
+}
+
+func (c *Controller) readLiveClaims(ctx context.Context, environmentID uuid.UUID) (*liveClaims, error) {
+	databases, err := c.deps.DB.EnvironmentClaimOutputs(ctx, environmentID)
+	if err != nil {
+		return nil, err
+	}
+	buckets, err := c.deps.DB.EnvironmentBucketClaimOutputs(ctx, environmentID)
+	if err != nil {
+		return nil, err
+	}
+	return &liveClaims{databases: databases, buckets: buckets}, nil
+}
+
+// claims returns the claim rows of the read.
+func (l *liveClaims) claims() ([]store.DatabaseClaim, []store.BucketClaim) {
+	databases := make([]store.DatabaseClaim, len(l.databases))
+	for i, row := range l.databases {
+		databases[i] = row.DatabaseClaim
+	}
+	buckets := make([]store.BucketClaim, len(l.buckets))
+	for i, row := range l.buckets {
+		buckets[i] = row.BucketClaim
+	}
+	return databases, buckets
 }
 
 // outputGeneration hashes the non-secret facts of a service's outputs into

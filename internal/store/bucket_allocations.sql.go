@@ -182,63 +182,6 @@ func (q *Queries) GetLiveBucketAllocationByClaim(ctx context.Context, claimID uu
 	return i, err
 }
 
-const listLiveBucketAllocationsByEnvironment = `-- name: ListLiveBucketAllocationsByEnvironment :many
-SELECT bucket_claims.service_key, bucket_claims.phase, bucket_allocations.id, bucket_allocations.claim_id, bucket_allocations.store_id, bucket_allocations.bucket_name, bucket_allocations.access_key_id, bucket_allocations.credential_secret, bucket_allocations.credential_version, bucket_allocations.endpoint, bucket_allocations.region, bucket_allocations.created_at, bucket_allocations.released_at, bucket_allocations.fenced_at, bucket_allocations.credential_retire_at, bucket_allocations.output_version, bucket_allocations.outputs_published_at
-FROM bucket_claims
-JOIN bucket_allocations ON bucket_allocations.claim_id = bucket_claims.id
-    AND bucket_allocations.released_at IS NULL
-WHERE bucket_claims.environment_id = $1 AND bucket_claims.owner_kind = 'service'
-    AND bucket_claims.phase <> 'released'
-ORDER BY bucket_claims.service_key
-`
-
-type ListLiveBucketAllocationsByEnvironmentRow struct {
-	ServiceKey       string
-	Phase            string
-	BucketAllocation BucketAllocation
-}
-
-// The live allocation of every live service claim of an environment, with
-// the claim's phase: the bucket names and output facts the kernel renders,
-// in one read.
-func (q *Queries) ListLiveBucketAllocationsByEnvironment(ctx context.Context, environmentID *uuid.UUID) ([]ListLiveBucketAllocationsByEnvironmentRow, error) {
-	rows, err := q.db.Query(ctx, listLiveBucketAllocationsByEnvironment, environmentID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListLiveBucketAllocationsByEnvironmentRow
-	for rows.Next() {
-		var i ListLiveBucketAllocationsByEnvironmentRow
-		if err := rows.Scan(
-			&i.ServiceKey,
-			&i.Phase,
-			&i.BucketAllocation.ID,
-			&i.BucketAllocation.ClaimID,
-			&i.BucketAllocation.StoreID,
-			&i.BucketAllocation.BucketName,
-			&i.BucketAllocation.AccessKeyID,
-			&i.BucketAllocation.CredentialSecret,
-			&i.BucketAllocation.CredentialVersion,
-			&i.BucketAllocation.Endpoint,
-			&i.BucketAllocation.Region,
-			&i.BucketAllocation.CreatedAt,
-			&i.BucketAllocation.ReleasedAt,
-			&i.BucketAllocation.FencedAt,
-			&i.BucketAllocation.CredentialRetireAt,
-			&i.BucketAllocation.OutputVersion,
-			&i.BucketAllocation.OutputsPublishedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listLiveBucketAllocationsByStore = `-- name: ListLiveBucketAllocationsByStore :many
 SELECT id, claim_id, store_id, bucket_name, access_key_id, credential_secret, credential_version, endpoint, region, created_at, released_at, fenced_at, credential_retire_at, output_version, outputs_published_at FROM bucket_allocations
 WHERE store_id = $1 AND released_at IS NULL
@@ -270,6 +213,74 @@ func (q *Queries) ListLiveBucketAllocationsByStore(ctx context.Context, storeID 
 			&i.CredentialRetireAt,
 			&i.OutputVersion,
 			&i.OutputsPublishedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLiveBucketClaimOutputsByEnvironment = `-- name: ListLiveBucketClaimOutputsByEnvironment :many
+SELECT bucket_claims.id, bucket_claims.owner_kind, bucket_claims.project_id, bucket_claims.environment_id, bucket_claims.service_key, bucket_claims.system_key, bucket_claims.owner_ref, bucket_claims.visibility, bucket_claims.storage_quota_bytes, bucket_claims.object_quota, bucket_claims.max_object_bytes, bucket_claims.versioning, bucket_claims.abort_uploads_after_seconds, bucket_claims.expire_noncurrent_after_seconds, bucket_claims.phase, bucket_claims.created_at, bucket_claims.updated_at, bucket_claims.cors, bucket_claims.route, bucket_allocations.bucket_name AS allocation_bucket_name,
+       bucket_allocations.endpoint AS allocation_endpoint,
+       bucket_allocations.credential_version AS allocation_credential_version,
+       bucket_allocations.output_version AS allocation_output_version
+FROM bucket_claims
+LEFT JOIN bucket_allocations ON bucket_allocations.claim_id = bucket_claims.id
+    AND bucket_allocations.released_at IS NULL
+WHERE bucket_claims.environment_id = $1 AND bucket_claims.owner_kind = 'service'
+    AND bucket_claims.phase <> 'released'
+ORDER BY bucket_claims.service_key
+`
+
+type ListLiveBucketClaimOutputsByEnvironmentRow struct {
+	BucketClaim                 BucketClaim
+	AllocationBucketName        *string
+	AllocationEndpoint          *string
+	AllocationCredentialVersion *int64
+	AllocationOutputVersion     *int64
+}
+
+// Every live service claim of an environment with its live allocation's
+// bucket name and output facts, when it has an allocation: what a reconcile
+// pass compares the revision with and what it renders, in one read.
+func (q *Queries) ListLiveBucketClaimOutputsByEnvironment(ctx context.Context, environmentID *uuid.UUID) ([]ListLiveBucketClaimOutputsByEnvironmentRow, error) {
+	rows, err := q.db.Query(ctx, listLiveBucketClaimOutputsByEnvironment, environmentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListLiveBucketClaimOutputsByEnvironmentRow
+	for rows.Next() {
+		var i ListLiveBucketClaimOutputsByEnvironmentRow
+		if err := rows.Scan(
+			&i.BucketClaim.ID,
+			&i.BucketClaim.OwnerKind,
+			&i.BucketClaim.ProjectID,
+			&i.BucketClaim.EnvironmentID,
+			&i.BucketClaim.ServiceKey,
+			&i.BucketClaim.SystemKey,
+			&i.BucketClaim.OwnerRef,
+			&i.BucketClaim.Visibility,
+			&i.BucketClaim.StorageQuotaBytes,
+			&i.BucketClaim.ObjectQuota,
+			&i.BucketClaim.MaxObjectBytes,
+			&i.BucketClaim.Versioning,
+			&i.BucketClaim.AbortUploadsAfterSeconds,
+			&i.BucketClaim.ExpireNoncurrentAfterSeconds,
+			&i.BucketClaim.Phase,
+			&i.BucketClaim.CreatedAt,
+			&i.BucketClaim.UpdatedAt,
+			&i.BucketClaim.Cors,
+			&i.BucketClaim.Route,
+			&i.AllocationBucketName,
+			&i.AllocationEndpoint,
+			&i.AllocationCredentialVersion,
+			&i.AllocationOutputVersion,
 		); err != nil {
 			return nil, err
 		}

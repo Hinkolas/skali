@@ -38,11 +38,15 @@ func (k *Kernel) recordHealth(environmentID uuid.UUID, statuses []ServiceStatus,
 
 // forgetHealth drops an environment that has nothing to evaluate: no target
 // revision yet, taken down, releasing, or its row gone. Absence reads as
-// unknown without an evaluation time, which is the truth.
+// unknown without an evaluation time, which is the truth. The revision its
+// passes kept goes with it.
 func (k *Kernel) forgetHealth(environmentID uuid.UUID) {
 	k.healthMu.Lock()
 	delete(k.health, environmentID)
 	k.healthMu.Unlock()
+	k.revisionMu.Lock()
+	delete(k.revisions, environmentID)
+	k.revisionMu.Unlock()
 }
 
 // sweepHealth drops verdicts for environments absent from the audit's

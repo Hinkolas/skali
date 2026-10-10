@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
@@ -78,8 +79,10 @@ func (f *kernelFixture) recordStatements(t *testing.T) *statementRecorder {
 // A pass reads each input once: the pre-lock probe phase, the render, and
 // the redactor share the decoded revision and its pinned values, and a pass
 // that journals nothing never builds the redactor. Only the environment,
-// its target and its running run are read again under the lock, in one
+// its target, its running run, its intercepts, restart stamps, and whether
+// it holds hostname claims are read again under the lock, in one
 // statement, since any of them may have moved while the pass waited for it.
+// The revision row itself is read once per target, not once per pass.
 func TestPassReadsEachInputOnce(t *testing.T) {
 	t.Parallel()
 	f := certFixture(t, Config{RolloutDeadline: time.Hour})
@@ -113,6 +116,7 @@ func TestPassReadsEachInputOnce(t *testing.T) {
 
 	converged := pass()
 	require.Zero(t, converged["ListCurrentEnvironmentSecretCiphertexts"], "an idle pass builds no redactor")
+	require.Zero(t, converged["GetRevisionByID"], "the target's row is kept from an earlier pass")
 	for name, n := range converged {
 		if name == "GetEnvironmentPass" {
 			require.Equal(t, 2, n, name)
@@ -160,4 +164,80 @@ func TestPassJournalsOneStatementPerStep(t *testing.T) {
 	require.Positive(t, rollout["RecordStep"])
 	require.Zero(t, waiting["RecordStep"], "an unchanged wait writes nothing")
 	require.Equal(t, 1, activation["FinishRun"])
+}
+
+// The pass row carries every intercept and restart stamp, and the pass
+// decodes them as the old per-table reads did: host ports per application,
+// and stamps as UTC RFC3339 whatever the session's time zone.
+func TestPassRowCarriesInterceptsAndRestarts(t *testing.T) {
+	t.Parallel()
+	f := newKernelFixture(t, Config{})
+	ctx := context.Background()
+	state, err := f.st.GetEnvironmentPass(ctx, f.environmentID)
+	require.NoError(t, err)
+	intercepts, err := passIntercepts(state)
+	require.NoError(t, err)
+	restarts, err := passRestarts(state)
+	require.NoError(t, err)
+	require.Nil(t, intercepts)
+	require.Nil(t, restarts)
+	require.False(t, state.ClaimsHostnames)
+
+	require.NoError(t, f.st.InsertEnvironmentIntercept(ctx, store.InsertEnvironmentInterceptParams{
+		EnvironmentID: f.environmentID, ApplicationKey: "web", Ports: []byte(`{"http": 3000}`),
+	}))
+	for _, key := range []string{"web", "worker"} {
+		_, err := f.st.StampApplicationRestart(ctx, store.StampApplicationRestartParams{
+			EnvironmentID: f.environmentID, ApplicationKey: key,
+		})
+		require.NoError(t, err)
+	}
+	stamped, err := f.st.ListEnvironmentRestarts(ctx, f.environmentID)
+	require.NoError(t, err)
+	want := map[string]string{}
+	for _, row := range stamped {
+		want[row.ApplicationKey] = row.RestartedAt.UTC().Format(time.RFC3339)
+	}
+
+	tx, err := f.st.Pool.Begin(ctx)
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback(ctx) }()
+	_, err = tx.Exec(ctx, "SET LOCAL TimeZone = 'Asia/Kolkata'")
+	require.NoError(t, err)
+	state, err = store.New(tx).GetEnvironmentPass(ctx, f.environmentID)
+	require.NoError(t, err)
+	intercepts, err = passIntercepts(state)
+	require.NoError(t, err)
+	require.Equal(t, map[string]map[string]int32{"web": {"http": 3000}}, intercepts)
+	restarts, err = passRestarts(state)
+	require.NoError(t, err)
+	require.Equal(t, want, restarts)
+}
+
+// A pass asks the cluster for live route hosts only when the environment
+// holds a hostname claim, and then releases the retired claims whose
+// router is gone.
+func TestPassReleasesRetiredHostnamesOnlyWithClaims(t *testing.T) {
+	t.Parallel()
+	f := newKernelFixture(t, Config{})
+	ctx := context.Background()
+	asked := 0
+	f.kernel.deps.LiveRouteHosts = func(context.Context, uuid.UUID) (map[string]bool, error) {
+		asked++
+		return map[string]bool{}, nil
+	}
+	f.executeDeployment(t)
+	f.fake.SetFresh()
+	_, err := f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	require.Zero(t, asked, "an environment without claims has nothing to release")
+
+	_, err = f.st.Pool.Exec(ctx, `INSERT INTO hostname_claims (hostname, environment_id) VALUES ('gone.example.com', $1)`,
+		f.environmentID)
+	require.NoError(t, err)
+	_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	require.Equal(t, 1, asked)
+	_, err = f.st.GetHostnameClaim(ctx, "gone.example.com")
+	require.ErrorIs(t, err, pgx.ErrNoRows, "the retired claim whose router is gone is released")
 }

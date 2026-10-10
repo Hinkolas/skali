@@ -82,11 +82,11 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 		return k.redactor(ctx, environmentID, rev, inputs)
 	})
 
-	intercepts, err := k.loadIntercepts(ctx, environmentID)
+	intercepts, err := passIntercepts(state)
 	if err != nil {
 		return 0, err
 	}
-	appRestarts, err := k.loadAppRestarts(ctx, environmentID)
+	appRestarts, err := passRestarts(state)
 	if err != nil {
 		return 0, err
 	}
@@ -150,7 +150,7 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 	// the evaluation sees are at least as fresh as this pass's intent. The
 	// substrate provisions asynchronously; states carry readiness and the
 	// visible waiting reasons.
-	claimWaiting, err := k.ensureClaims(ctx, env.ProjectID, environmentID, rev, desired.bucketRoutes)
+	claimWaiting, err := k.ensureClaims(ctx, env.ProjectID, environmentID, rev, desired.bucketRoutes, outputs.Live)
 	if err != nil {
 		k.journalOpFailure(ctx, attachment, "claims", "Record database claims", nil, err)
 		return 0, err
@@ -345,7 +345,7 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 		attachment.completeStep(ctx, "prune", "Prune removed objects", journal.StepSucceeded, pruned)
 	}
 
-	if err := k.releaseAbsentHostnames(ctx, environmentID); err != nil {
+	if err := k.releaseAbsentHostnames(ctx, state); err != nil {
 		return 0, err
 	}
 	pass.Mark("prune")
@@ -640,41 +640,33 @@ func (k *Kernel) executeOps(ctx context.Context, ops []Op) ([]string, error) {
 // plaintexts are decrypted for the values Secret only and never logged.
 // restartedAt is the target's restart stamp; nil means no restart was ever
 // forced for this environment.
-// loadIntercepts decodes the environment's intercept rows into the declared
-// host-port map per application key.
-func (k *Kernel) loadIntercepts(ctx context.Context, environmentID uuid.UUID) (map[string]map[string]int32, error) {
-	rows, err := k.deps.Store.ListEnvironmentIntercepts(ctx, environmentID)
-	if err != nil {
-		return nil, fmt.Errorf("reconcile: list intercepts: %w", err)
-	}
-	if len(rows) == 0 {
+// passIntercepts decodes the environment's intercepts into the declared
+// host-port map per application key; nil when nothing is intercepted.
+func passIntercepts(state store.GetEnvironmentPassRow) (map[string]map[string]int32, error) {
+	if state.Intercepts == nil {
 		return nil, nil
 	}
-	intercepts := make(map[string]map[string]int32, len(rows))
-	for _, row := range rows {
-		var ports map[string]int32
-		if err := json.Unmarshal(row.Ports, &ports); err != nil {
-			return nil, fmt.Errorf("reconcile: decode intercept ports for %s: %w", row.ApplicationKey, err)
-		}
-		intercepts[row.ApplicationKey] = ports
+	var intercepts map[string]map[string]int32
+	if err := json.Unmarshal(state.Intercepts, &intercepts); err != nil {
+		return nil, fmt.Errorf("reconcile: decode intercepts: %w", err)
 	}
 	return intercepts, nil
 }
 
-// loadAppRestarts reads the environment's per-application restart stamps as
+// passRestarts decodes the environment's per-application restart stamps as
 // UTC RFC3339 strings ready for rendering; nil when nothing was ever
 // restarted.
-func (k *Kernel) loadAppRestarts(ctx context.Context, environmentID uuid.UUID) (map[string]string, error) {
-	rows, err := k.deps.Store.ListEnvironmentRestarts(ctx, environmentID)
-	if err != nil {
-		return nil, fmt.Errorf("reconcile: list restarts: %w", err)
-	}
-	if len(rows) == 0 {
+func passRestarts(state store.GetEnvironmentPassRow) (map[string]string, error) {
+	if state.Restarts == nil {
 		return nil, nil
 	}
-	stamps := make(map[string]string, len(rows))
-	for _, row := range rows {
-		stamps[row.ApplicationKey] = row.RestartedAt.UTC().Format(time.RFC3339)
+	var restarted map[string]time.Time
+	if err := json.Unmarshal(state.Restarts, &restarted); err != nil {
+		return nil, fmt.Errorf("reconcile: decode restarts: %w", err)
+	}
+	stamps := make(map[string]string, len(restarted))
+	for key, at := range restarted {
+		stamps[key] = at.UTC().Format(time.RFC3339)
 	}
 	return stamps, nil
 }
@@ -698,12 +690,35 @@ func (in *passInputs) revision(ctx context.Context, id uuid.UUID) (*revision.Rev
 	if in.rev != nil && in.revisionID == id {
 		return in.rev, nil
 	}
-	rev, err := in.kernel.deps.Deploy.GetRevision(ctx, id)
+	row, err := in.kernel.revisionRow(ctx, in.environmentID, id)
+	if err != nil {
+		return nil, err
+	}
+	rev, err := revision.Decode(row.Document)
 	if err != nil {
 		return nil, err
 	}
 	in.revisionID, in.rev, in.pinned = id, rev, nil
 	return rev, nil
+}
+
+// revisionRow reads a revision of the environment, from memory when its
+// last pass read the same one.
+func (k *Kernel) revisionRow(ctx context.Context, environmentID, id uuid.UUID) (store.Revision, error) {
+	k.revisionMu.Lock()
+	row, ok := k.revisions[environmentID]
+	k.revisionMu.Unlock()
+	if ok && row.ID == id {
+		return row, nil
+	}
+	row, err := k.deps.Store.GetRevisionByID(ctx, id)
+	if err != nil {
+		return row, fmt.Errorf("reconcile: get revision: %w", err)
+	}
+	k.revisionMu.Lock()
+	k.revisions[environmentID] = row
+	k.revisionMu.Unlock()
+	return row, nil
 }
 
 // values decrypts the versions rev pinned, once per pass. The map is shared;
@@ -917,7 +932,8 @@ func resolveBucketRoutes(definition compiler.ProjectDefinition, variables map[st
 // buckets) through the claim manager and returns the dotted-name waiting
 // reasons for every claim that is not provisioned. Without a substrate
 // every claim-backed service waits visibly.
-func (k *Kernel) ensureClaims(ctx context.Context, projectID, environmentID uuid.UUID, rev *revision.Revision, bucketRoutes map[string]BucketRoute) (map[string]string, error) {
+func (k *Kernel) ensureClaims(ctx context.Context, projectID, environmentID uuid.UUID, rev *revision.Revision,
+	bucketRoutes map[string]BucketRoute, live any) (map[string]string, error) {
 	total := len(rev.Definition.Databases) + len(rev.Definition.Buckets)
 	if total == 0 {
 		return nil, nil
@@ -937,6 +953,7 @@ func (k *Kernel) ensureClaims(ctx context.Context, projectID, environmentID uuid
 		EnvironmentID: environmentID,
 		Revision:      rev,
 		BucketRoutes:  bucketRoutes,
+		Live:          live,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("reconcile: ensure claims: %w", err)
@@ -1151,18 +1168,17 @@ func describeObject(obj runtime.Object) string {
 	return kind + "/" + accessor.GetNamespace() + "/" + accessor.GetName()
 }
 
-func (k *Kernel) releaseAbsentHostnames(ctx context.Context, env uuid.UUID) error {
-	claims, err := k.deps.Store.ListEnvironmentHostnames(ctx, &env)
-	if err != nil {
-		return err
-	}
-	if len(claims) == 0 {
+// releaseAbsentHostnames releases the environment's retired hostname
+// claims whose routers are gone. Only the lock holder changes the
+// environment's claims, so whether it holds any is as the pass read it.
+func (k *Kernel) releaseAbsentHostnames(ctx context.Context, state store.GetEnvironmentPassRow) error {
+	if !state.ClaimsHostnames {
 		return nil
 	}
-
 	if k.deps.LiveRouteHosts == nil {
 		return nil
 	} // no cluster evidence: retain claims
+	env := state.Environment.ID
 	live, err := k.deps.LiveRouteHosts(ctx, env)
 	if err != nil {
 		return err

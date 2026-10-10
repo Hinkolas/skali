@@ -230,16 +230,7 @@ func (f *kernelFixture) target(t *testing.T) store.EnvironmentTarget {
 // way the kernel does instead of repeating a hash.
 func (f *kernelFixture) webDeploymentName(t *testing.T) string {
 	t.Helper()
-	ctx := context.Background()
-	target := f.target(t)
-	require.NotNil(t, target.TargetRevisionID, "the fixture has no target revision to name a workload for")
-	rev, err := f.deploy.GetRevision(ctx, *target.TargetRevisionID)
-	require.NoError(t, err)
-	intercepts, err := f.kernel.loadIntercepts(ctx, f.environmentID)
-	require.NoError(t, err)
-	colors, err := f.kernel.desiredColors(ctx, f.environmentID, target, rev, intercepts)
-	require.NoError(t, err)
-	if color, ok := colors["web"]; ok {
+	if color, ok := f.colors(t)["web"]; ok {
 		return rendering.ColoredApplicationName("demo", "web", color)
 	}
 	return rendering.ApplicationName("demo", "web")
@@ -249,16 +240,25 @@ func (f *kernelFixture) webDeploymentName(t *testing.T) string {
 // the web application, empty when it renders an uncolored workload.
 func (f *kernelFixture) webColor(t *testing.T) string {
 	t.Helper()
+	return f.colors(t)["web"]
+}
+
+// colors names the blue-green color the current target revision renders
+// per application, the way the kernel does.
+func (f *kernelFixture) colors(t *testing.T) map[string]string {
+	t.Helper()
 	ctx := context.Background()
-	target := f.target(t)
-	require.NotNil(t, target.TargetRevisionID)
+	state, err := f.st.GetEnvironmentPass(ctx, f.environmentID)
+	require.NoError(t, err)
+	target := state.EnvironmentTarget
+	require.NotNil(t, target.TargetRevisionID, "the fixture has no target revision to name a workload for")
 	rev, err := f.deploy.GetRevision(ctx, *target.TargetRevisionID)
 	require.NoError(t, err)
-	intercepts, err := f.kernel.loadIntercepts(ctx, f.environmentID)
+	intercepts, err := passIntercepts(state)
 	require.NoError(t, err)
-	colors, err := f.kernel.desiredColors(ctx, f.environmentID, target, rev, intercepts)
+	colors, err := f.kernel.desiredColors(ctx, state, rev, intercepts)
 	require.NoError(t, err)
-	return colors["web"]
+	return colors
 }
 
 // setWebWorkload records the web application's Deployment for the current

@@ -9,12 +9,14 @@ RETURNING *;
 SELECT * FROM database_tenants
 WHERE claim_id = $1 AND released_at IS NULL;
 
--- The live tenant of every live service claim of an environment, with the
--- claim's phase: the connection facts the kernel renders, in one read.
--- name: ListLiveDatabaseTenantsByEnvironment :many
-SELECT database_claims.service_key, database_claims.phase, sqlc.embed(database_tenants)
+-- Every live service claim of an environment with its live tenant's
+-- connection facts, when it has a tenant: what a reconcile pass compares
+-- the revision with and what it renders, in one read.
+-- name: ListLiveDatabaseClaimOutputsByEnvironment :many
+SELECT sqlc.embed(database_claims), database_tenants.host AS tenant_host,
+       database_tenants.port AS tenant_port, database_tenants.credential_version AS tenant_credential_version
 FROM database_claims
-JOIN database_tenants ON database_tenants.claim_id = database_claims.id
+LEFT JOIN database_tenants ON database_tenants.claim_id = database_claims.id
     AND database_tenants.released_at IS NULL
 WHERE database_claims.environment_id = $1 AND database_claims.owner_kind = 'service'
     AND database_claims.phase <> 'released'

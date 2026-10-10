@@ -274,6 +274,7 @@ func (f *fakeCluster) policy(name string) *networkingv1.NetworkPolicy {
 // settleFixture is the shared scaffolding: a real claims database, a fake
 // cluster, and a controller whose environment pokes are captured.
 type settleFixture struct {
+	st          *store.Store
 	db          *dbstore.Service
 	fake        *fakeCluster
 	control     *Controller
@@ -318,7 +319,7 @@ func newSettleFixture(t *testing.T) *settleFixture {
 	require.NoError(t, err)
 
 	return &settleFixture{
-		db: dbSvc, fake: fake, control: controller,
+		st: st, db: dbSvc, fake: fake, control: controller,
 		projectID: proj.ID, projectName: proj.Name,
 		envID: env.ID, claim: created, poked: &poked,
 	}
@@ -534,6 +535,42 @@ func TestEnsureEnqueuesOnlyClaimsWithWorkDue(t *testing.T) {
 	_, err = fx.control.Ensure(ctx, fx.ensureInput("vector"))
 	require.NoError(t, err)
 	require.Empty(t, fx.drain(), "settled again once the extension applied")
+}
+
+// A pass's Ensure compares the revision with the claims its Outputs read,
+// handed on as ClaimOutputs.Live, instead of reading them again; without
+// that read Ensure reads the claims itself.
+func TestEnsureComparesWithTheOutputsRead(t *testing.T) {
+	fx := newSettleFixture(t)
+	ctx := context.Background()
+	fx.fake.set(clusterHealthyPhase, 1, true)
+	_, phase := fx.pass(t)
+	require.Equal(t, claim.PhaseProvisioned, phase)
+	outputs, err := fx.control.Outputs(ctx, fx.envID)
+	require.NoError(t, err)
+	require.NotEmpty(t, outputs.Generations["databases.data"])
+
+	// The claim leaves the live set after the read.
+	_, err = fx.st.Pool.Exec(ctx, "UPDATE database_claims SET phase = 'released' WHERE id = $1", fx.claim.ID)
+	require.NoError(t, err)
+	claims := func() int {
+		var n int
+		require.NoError(t, fx.st.Pool.QueryRow(ctx,
+			"SELECT count(*) FROM database_claims WHERE environment_id = $1", fx.envID).Scan(&n))
+		return n
+	}
+
+	in := fx.ensureInput()
+	in.Live = outputs.Live
+	states, err := fx.control.Ensure(ctx, in)
+	require.NoError(t, err)
+	require.True(t, states[0].Provisioned, "the read still holds the provisioned claim")
+	require.Equal(t, 1, claims(), "nothing is recorded")
+
+	states, err = fx.control.Ensure(ctx, fx.ensureInput())
+	require.NoError(t, err)
+	require.False(t, states[0].Provisioned)
+	require.Equal(t, 2, claims(), "a fresh read finds no live claim and records one")
 }
 
 // TestRepairSchedulesEveryLiveClaim pins the cadence that replaces per-pass
