@@ -150,10 +150,14 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 	// the evaluation sees are at least as fresh as this pass's intent. The
 	// substrate provisions asynchronously; states carry readiness and the
 	// visible waiting reasons.
-	claimWaiting, err := k.ensureClaims(ctx, env.ProjectID, environmentID, rev, desired.bucketRoutes, outputs.Live)
+	repair := k.claimCheckDue(environmentID, attachment)
+	claimWaiting, err := k.ensureClaims(ctx, env.ProjectID, environmentID, rev, desired.bucketRoutes, outputs.Live, repair)
 	if err != nil {
 		k.journalOpFailure(ctx, attachment, "claims", "Record database claims", nil, err)
 		return 0, err
+	}
+	if repair {
+		k.claimsChecked(environmentID, attachment)
 	}
 	pass.Mark("claims")
 
@@ -933,7 +937,7 @@ func resolveBucketRoutes(definition compiler.ProjectDefinition, variables map[st
 // reasons for every claim that is not provisioned. Without a substrate
 // every claim-backed service waits visibly.
 func (k *Kernel) ensureClaims(ctx context.Context, projectID, environmentID uuid.UUID, rev *revision.Revision,
-	bucketRoutes map[string]BucketRoute, live any) (map[string]string, error) {
+	bucketRoutes map[string]BucketRoute, live any, repair bool) (map[string]string, error) {
 	total := len(rev.Definition.Databases) + len(rev.Definition.Buckets)
 	if total == 0 {
 		return nil, nil
@@ -954,6 +958,7 @@ func (k *Kernel) ensureClaims(ctx context.Context, projectID, environmentID uuid
 		Revision:      rev,
 		BucketRoutes:  bucketRoutes,
 		Live:          live,
+		Repair:        repair,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("reconcile: ensure claims: %w", err)
@@ -969,6 +974,30 @@ func (k *Kernel) ensureClaims(ctx context.Context, projectID, environmentID uuid
 		claimWaiting[state.Service] = reason
 	}
 	return claimWaiting, nil
+}
+
+// claimCheckDue reports whether the pass asks for every claim of the
+// environment to be reconciled, settled ones included: the first pass of
+// each rollout run (a deploy, rollback, or restart), and the first after
+// the environment's health turned bad. Otherwise a settled claim waits for
+// the substrate's repair cadence.
+func (k *Kernel) claimCheckDue(environmentID uuid.UUID, attachment *runAttachment) bool {
+	k.claimMu.Lock()
+	defer k.claimMu.Unlock()
+	if k.claimsOwed[environmentID] {
+		return true
+	}
+	return attachment.adopted() && rolloutRun(attachment.run.Kind) && k.claimChecks[environmentID] != attachment.run.ID
+}
+
+// claimsChecked records that the pass asked for every claim.
+func (k *Kernel) claimsChecked(environmentID uuid.UUID, attachment *runAttachment) {
+	k.claimMu.Lock()
+	defer k.claimMu.Unlock()
+	delete(k.claimsOwed, environmentID)
+	if attachment.adopted() && rolloutRun(attachment.run.Kind) {
+		k.claimChecks[environmentID] = attachment.run.ID
+	}
 }
 
 // redactor covers the environment's current values plus, when a revision is

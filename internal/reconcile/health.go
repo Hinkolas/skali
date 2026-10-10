@@ -24,7 +24,10 @@ type EnvironmentHealth struct {
 	EvaluatedAt time.Time
 }
 
-// recordHealth stores the pass's post-apply verdict for one environment.
+// recordHealth stores the pass's post-apply verdict for one environment. A
+// verdict that turned degraded or unhealthy owes the environment's claims
+// a check on its next pass: a pod that cannot start for a deleted output
+// Secret must not wait for the substrate's repair cadence.
 func (k *Kernel) recordHealth(environmentID uuid.UUID, statuses []ServiceStatus, now time.Time) {
 	healths := make([]module.Health, len(statuses))
 	for i := range statuses {
@@ -32,8 +35,18 @@ func (k *Kernel) recordHealth(environmentID uuid.UUID, statuses []ServiceStatus,
 	}
 	entry := EnvironmentHealth{Health: module.WorstHealth(healths), EvaluatedAt: now}
 	k.healthMu.Lock()
+	previous, known := k.health[environmentID]
 	k.health[environmentID] = entry
 	k.healthMu.Unlock()
+	if troubled(entry.Health) && (!known || !troubled(previous.Health)) {
+		k.claimMu.Lock()
+		k.claimsOwed[environmentID] = true
+		k.claimMu.Unlock()
+	}
+}
+
+func troubled(health module.Health) bool {
+	return health == module.HealthDegraded || health == module.HealthUnhealthy
 }
 
 // forgetHealth drops an environment that has nothing to evaluate: no target
@@ -47,6 +60,10 @@ func (k *Kernel) forgetHealth(environmentID uuid.UUID) {
 	k.revisionMu.Lock()
 	delete(k.revisions, environmentID)
 	k.revisionMu.Unlock()
+	k.claimMu.Lock()
+	delete(k.claimChecks, environmentID)
+	delete(k.claimsOwed, environmentID)
+	k.claimMu.Unlock()
 }
 
 // sweepHealth drops verdicts for environments absent from the audit's

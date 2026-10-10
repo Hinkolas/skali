@@ -24,7 +24,8 @@ import (
 // Ensure implements reconcile.ClaimManager: it records the revision's
 // database claims, enqueues the reconciliation of new, changed, and
 // unsettled ones, and reports readiness. A settled claim is repaired on the
-// substrate's own cadence (repairEnqueue), not on every environment pass.
+// substrate's own cadence (scheduleRepair), not on every environment pass,
+// unless the pass asks for every claim (ClaimEnsureInput.Repair).
 // The kernel never sees claim mechanics; the substrate never sees the
 // deployment state machine. One read of each claim list, the one behind
 // the pass's Outputs when it hands it on, serves the comparisons and the
@@ -91,8 +92,11 @@ func (c *Controller) Ensure(ctx context.Context, in reconcile.ClaimEnsureInput) 
 		if extensionsChanged {
 			c.markExtensionsPending(row.ID, desiredExtensions)
 		}
-		if changed || claim.Phase(row.Phase) != claim.PhaseProvisioned || c.extensionsPending(row.ID) {
+		switch {
+		case changed || claim.Phase(row.Phase) != claim.PhaseProvisioned || c.extensionsPending(row.ID):
 			c.EnqueueClaim(row.ID, reasonEnsure)
+		case in.Repair:
+			c.EnqueueClaim(row.ID, reasonCheck)
 		}
 		c.publishClaim(*row)
 
@@ -198,8 +202,11 @@ func (c *Controller) ensureBucketClaims(ctx context.Context, in reconcile.ClaimE
 		if err != nil {
 			return nil, err
 		}
-		if changed || claim.Phase(row.Phase) != claim.PhaseProvisioned {
+		switch {
+		case changed || claim.Phase(row.Phase) != claim.PhaseProvisioned:
 			c.EnqueueBucketClaim(row.ID, reasonEnsure)
+		case in.Repair:
+			c.EnqueueBucketClaim(row.ID, reasonCheck)
 		}
 		c.publishBucketClaim(*row)
 

@@ -31,6 +31,7 @@ import (
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/substrate/cnpg"
 	"github.com/Hinkolas/skali/internal/testdb"
+	"github.com/Hinkolas/skali/internal/workstats"
 )
 
 // fakeCluster satisfies Cluster with canned CNPG status objects so claim
@@ -524,6 +525,11 @@ func TestEnsureEnqueuesOnlyClaimsWithWorkDue(t *testing.T) {
 	_, err = fx.control.Ensure(ctx, fx.ensureInput())
 	require.NoError(t, err)
 	require.Empty(t, fx.drain(), "a settled, unchanged claim is not enqueued")
+	repair := fx.ensureInput()
+	repair.Repair = true
+	_, err = fx.control.Ensure(ctx, repair)
+	require.NoError(t, err)
+	require.Equal(t, []workKey{claimKey}, fx.drain(), "unless the pass asks for every claim")
 
 	// A spec change is due now, and stays due while the extension is
 	// pending, even once the spec matches.
@@ -540,6 +546,45 @@ func TestEnsureEnqueuesOnlyClaimsWithWorkDue(t *testing.T) {
 	_, err = fx.control.Ensure(ctx, fx.ensureInput("vector"))
 	require.NoError(t, err)
 	require.Empty(t, fx.drain(), "settled again once the extension applied")
+}
+
+// arrivals counts the work of one kind that entered the queue for reason.
+func (fx *settleFixture) arrivals(kind workKind, reason string) uint64 {
+	for _, stats := range fx.control.queue.Stats().Kinds {
+		if stats.Kind == string(kind) {
+			return stats.Arrivals[reason]
+		}
+	}
+	return 0
+}
+
+// A pass that leaves a claim settled books its next drift repair at the
+// claim's slot, so every settled claim, a new one included, is repaired
+// within one interval; a pass that leaves it unsettled books none.
+func TestSettledPassBooksTheNextRepair(t *testing.T) {
+	fx := newSettleFixture(t)
+	fx.fake.set("Setting up primary", 0, false)
+	_, phase := fx.pass(t)
+	require.NotEqual(t, claim.PhaseProvisioned, phase)
+	require.Zero(t, fx.arrivals(workClaim, reasonRepair))
+
+	fx.fake.set(clusterHealthyPhase, 1, true)
+	_, phase = fx.pass(t)
+	require.Equal(t, claim.PhaseProvisioned, phase)
+	require.EqualValues(t, 1, fx.arrivals(workClaim, reasonRepair))
+	require.Empty(t, fx.drain(), "the repair waits for its slot")
+}
+
+// Repair slots sit at a claim's fixed phase of the wall clock's grid: the
+// next one is never more than an interval away, wherever the scheduling
+// pass fell.
+func TestRepairDelayFollowsTheClock(t *testing.T) {
+	id := uuid.New()
+	slot := time.Unix(0, 0).Add(1000*repairInterval + workstats.Phase(id, repairInterval))
+	require.Equal(t, time.Second, repairDelay(id, slot.Add(-time.Second)))
+	require.Equal(t, repairInterval, repairDelay(id, slot))
+	require.Equal(t, repairInterval-time.Second, repairDelay(id, slot.Add(time.Second)))
+	require.Equal(t, repairDelay(id, slot.Add(time.Minute)), repairDelay(id, slot.Add(repairInterval+time.Minute)))
 }
 
 // A pass's Ensure compares the revision with the claims its Outputs read,

@@ -79,6 +79,9 @@ func (c *Controller) reconcileBucketClaim(ctx context.Context, id uuid.UUID) (ti
 			requeue = requeueWait
 		}
 	}
+	if claim.Phase(current.Phase) == claim.PhaseProvisioned {
+		c.scheduleRepair(workKey{kind: workBucket, id: id})
+	}
 	return requeue, nil
 }
 

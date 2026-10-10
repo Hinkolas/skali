@@ -199,7 +199,8 @@ const (
 	reasonTeardown    = "teardown"     // an environment's removal releases its claims
 	reasonBoot        = "boot"         // startup, or the default pool's creation
 	reasonResync      = "resync"       // the periodic sweep of unsettled work
-	reasonRepair      = "repair"       // the periodic drift repair of every live claim
+	reasonRepair      = "repair"       // a settled claim's drift repair, at its slot
+	reasonCheck       = "check"        // an environment pass asked for every claim: a rollout began, or health turned
 	reasonAPI         = "api"          // an API handler's request
 	reasonRequeue     = "requeue"      // a pass asked to run again after a delay
 	reasonRetry       = "retry"        // a failed pass, after its backoff
@@ -442,8 +443,6 @@ func (c *Controller) Run(ctx context.Context) {
 
 	ticker := time.NewTicker(c.cfg.Resync)
 	defer ticker.Stop()
-	repair := time.NewTicker(repairInterval)
-	defer repair.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -452,35 +451,55 @@ func (c *Controller) Run(ctx context.Context) {
 			return
 		case <-ticker.C:
 			c.resyncEnqueue(ctx)
-		case <-repair.C:
-			c.repairEnqueue(ctx)
 		}
 	}
 }
 
 // repairInterval bounds how long drift on a settled claim goes unrepaired
-// (a deleted output Secret, a changed bucket policy): environment passes
-// reconcile only new, changed, and unsettled claims, so every live claim
-// gets a pass once per interval instead.
+// (a deleted output Secret or credential Secret, a removed bucket
+// identity): environment passes reconcile only new, changed, and unsettled
+// claims, unless a rollout begins or the environment's health turns, so
+// every live claim gets a pass once per interval instead. Bucket settings
+// (policy, CORS, lifecycle, versioning) are reset by storage maintenance
+// on its own 15-second cadence.
 const repairInterval = 10 * time.Minute
 
-// repairEnqueue schedules every live claim's drift repair, each at its own
-// fixed phase of the interval so the passes never arrive at once.
+// repairEnqueue schedules every live claim's first drift repair after a
+// start; from then on each settled claim's pass books its next one.
 func (c *Controller) repairEnqueue(ctx context.Context) {
 	claims, err := c.deps.DB.ListLiveClaims(ctx)
 	if err != nil {
 		slog.Warn("substrate: list live claims", "error", err)
 	}
 	for _, row := range claims {
-		c.queue.AddAfter(workKey{kind: workClaim, id: row.ID}, workstats.Phase(row.ID, repairInterval), reasonRepair)
+		c.scheduleRepair(workKey{kind: workClaim, id: row.ID})
 	}
 	buckets, err := c.deps.DB.ListLiveBucketClaims(ctx)
 	if err != nil {
 		slog.Warn("substrate: list live bucket claims", "error", err)
 	}
 	for _, row := range buckets {
-		c.queue.AddAfter(workKey{kind: workBucket, id: row.ID}, workstats.Phase(row.ID, repairInterval), reasonRepair)
+		c.scheduleRepair(workKey{kind: workBucket, id: row.ID})
 	}
+}
+
+// scheduleRepair books a claim's next drift repair at its slot.
+func (c *Controller) scheduleRepair(key workKey) {
+	c.queue.AddAfter(key, repairDelay(key.id, time.Now()), reasonRepair)
+}
+
+// repairDelay is how long from now until id's next repair slot. The slots
+// sit at id's fixed phase of a repairInterval grid on the wall clock, so
+// the claims' repairs spread across the interval, a claim is repaired
+// once per interval however often it is scheduled, and one that settles
+// at any moment waits at most an interval for its first repair.
+func repairDelay(id uuid.UUID, now time.Time) time.Duration {
+	into := time.Duration(now.UnixNano() % int64(repairInterval))
+	delay := (workstats.Phase(id, repairInterval) - into + repairInterval) % repairInterval
+	if delay == 0 {
+		delay = repairInterval
+	}
+	return delay
 }
 
 // defaultPassTimeout leaves room for the slowest item, a bucket's pass:

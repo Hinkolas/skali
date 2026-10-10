@@ -108,6 +108,11 @@ type ClaimEnsureInput struct {
 	// Live is the pass's ClaimOutputs.Live; without it Ensure reads the
 	// claims itself.
 	Live any
+	// Repair asks for every kept claim to be reconciled, settled ones
+	// included: the pass begins a rollout, or the environment's health
+	// turned, and drift on a settled claim (a deleted output Secret) must
+	// not wait for the substrate's repair cadence then.
+	Repair bool
 }
 
 // BucketRoute is one bucket's resolved public hostname and TLS policy; its
@@ -267,6 +272,15 @@ type Kernel struct {
 	// design: one row per environment, dropped with its health verdict.
 	revisionMu sync.Mutex
 	revisions  map[uuid.UUID]store.Revision
+
+	// claimChecks holds, per environment, the rollout run whose pass last
+	// asked for every claim to be reconciled (ClaimEnsureInput.Repair), and
+	// claimsOwed the environments whose health turned bad since their last
+	// such pass. In-memory by design: after a restart a rollout in flight
+	// asks once more.
+	claimMu     sync.Mutex
+	claimChecks map[uuid.UUID]uuid.UUID
+	claimsOwed  map[uuid.UUID]bool
 }
 
 func New(deps Deps, cfg Config) *Kernel {
@@ -300,6 +314,9 @@ func New(deps Deps, cfg Config) *Kernel {
 		health:    map[uuid.UUID]EnvironmentHealth{},
 		liveRead:  map[uuid.UUID]time.Time{},
 		revisions: map[uuid.UUID]store.Revision{},
+
+		claimChecks: map[uuid.UUID]uuid.UUID{},
+		claimsOwed:  map[uuid.UUID]bool{},
 		queue: workstats.NewQueue(workqueue.NewTypedWithMaxWaitRateLimiter(
 			workqueue.DefaultTypedControllerRateLimiter[uuid.UUID](), requeueHealthCheck),
 			func(uuid.UUID) string { return "environment" }),
@@ -482,8 +499,21 @@ func (k *Kernel) audit(ctx context.Context, spread time.Duration) {
 		k.queue.AddAfter(target.EnvironmentID, workstats.Phase(target.EnvironmentID, spread), ReasonAudit)
 	}
 	// The same authoritative set retires health verdicts of environments
-	// whose rows vanished without a pass.
+	// whose rows vanished without a pass, and what their claims were last
+	// checked for.
 	k.sweepHealth(known, listedAt)
+	k.claimMu.Lock()
+	for id := range k.claimChecks {
+		if !known[id] {
+			delete(k.claimChecks, id)
+		}
+	}
+	for id := range k.claimsOwed {
+		if !known[id] {
+			delete(k.claimsOwed, id)
+		}
+	}
+	k.claimMu.Unlock()
 	for _, namespace := range k.deps.Observed.ManagedNamespaces() {
 		if namespace.Environment != uuid.Nil && !known[namespace.Environment] {
 			slog.Warn("orphaned managed namespace retained",
