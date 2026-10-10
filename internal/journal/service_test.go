@@ -379,6 +379,106 @@ func TestFinishRunForcesTerminality(t *testing.T) {
 	require.NotNil(t, closed.FinishedAt)
 }
 
+// waitUntilBlocked waits until a statement whose text holds marker waits
+// on a lock, or until done delivered: a statement that should have waited
+// and did not then fails on what it wrote, not on the wait.
+func waitUntilBlocked[T any](t *testing.T, st *store.Store, marker string, done chan T) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		var waiting int
+		require.NoError(t, st.Pool.QueryRow(context.Background(), `SELECT count(*) FROM pg_stat_activity
+			WHERE datname = current_database() AND wait_event_type = 'Lock' AND query LIKE '%' || $1 || '%'`,
+			marker).Scan(&waiting))
+		return waiting > 0 || len(done) > 0
+	}, 10*time.Second, 10*time.Millisecond)
+}
+
+// A finish waits for a step and an attempt whose inserts have not
+// committed yet, and then closes them with the rest of the run: its
+// snapshot never misses work written under the run before it.
+func TestFinishRunWaitsForUncommittedSteps(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	ctx := context.Background()
+	run := f.startRun(t)
+
+	tx, err := f.st.Pool.Begin(ctx)
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback(ctx) }()
+	pending, running, attempt := uuid.New(), uuid.New(), uuid.New()
+	_, err = tx.Exec(ctx, `INSERT INTO steps (id, run_id, key, title) VALUES ($1, $2, 'pending', 'Pending')`,
+		pending, run.ID)
+	require.NoError(t, err)
+	_, err = tx.Exec(ctx, `INSERT INTO steps (id, run_id, key, title, status, started_at)
+		VALUES ($1, $2, 'running', 'Running', 'running', now())`, running, run.ID)
+	require.NoError(t, err)
+	_, err = tx.Exec(ctx, `INSERT INTO attempts (id, step_id, number, executor_id) VALUES ($1, $2, 1, 'other')`,
+		attempt, running)
+	require.NoError(t, err)
+
+	finished := make(chan error, 1)
+	go func() { finished <- f.svc.FinishRun(ctx, run.ID, RunCancelled) }()
+	waitUntilBlocked(t, f.st, "LockRunForFinish", finished)
+	require.NoError(t, tx.Commit(ctx))
+	require.NoError(t, <-finished)
+
+	for id, want := range map[uuid.UUID]string{pending: "skipped", running: "cancelled"} {
+		step, err := f.st.GetStepByID(ctx, id)
+		require.NoError(t, err)
+		require.Equal(t, want, step.Status)
+	}
+	closed, err := f.st.GetAttemptByID(ctx, attempt)
+	require.NoError(t, err)
+	require.Equal(t, "cancelled", closed.Status)
+}
+
+// Nothing is journaled under a finished run: a step write that arrives
+// while the finish is committing waits for it and then writes nothing, and
+// so does every later one. The refusal is an invalid transition, so
+// callers that tolerate a refused step tolerate it too.
+func TestNothingIsJournaledUnderAFinishedRun(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	ctx := context.Background()
+	run := f.startRun(t)
+	existing, err := f.svc.EnsureStep(ctx, run.ID, nil, "existing", "Existing")
+	require.NoError(t, err)
+	require.NoError(t, f.svc.SetStepStatus(ctx, existing.ID, StepRunning))
+
+	// A finish in flight holds the run row until it commits.
+	tx, err := f.st.Pool.Begin(ctx)
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback(ctx) }()
+	_, err = tx.Exec(ctx, `SELECT 1 FROM runs WHERE id = $1 FOR UPDATE`, run.ID)
+	require.NoError(t, err)
+	_, err = tx.Exec(ctx, `UPDATE runs SET status = 'cancelled', finished_at = now() WHERE id = $1`, run.ID)
+	require.NoError(t, err)
+
+	ensured := make(chan error, 1)
+	go func() {
+		_, err := f.svc.EnsureStep(ctx, run.ID, nil, "late", "Late")
+		ensured <- err
+	}()
+	waitUntilBlocked(t, f.st, "EnsureStep", ensured)
+	require.NoError(t, tx.Commit(ctx))
+	require.ErrorIs(t, <-ensured, ErrRunFinished)
+
+	_, err = f.svc.RecordStep(ctx, StepRecord{RunID: run.ID, Key: "later", Title: "Later", To: StepSucceeded,
+		Entries: []LogEntry{{Level: "info", Message: "done"}}}, nil)
+	require.ErrorIs(t, err, ErrRunFinished)
+	require.ErrorIs(t, err, ErrInvalidTransition)
+	_, err = f.svc.RecordStep(ctx, StepRecord{RunID: run.ID, Key: "existing", Title: "Existing", To: StepSucceeded}, nil)
+	require.ErrorIs(t, err, ErrRunFinished)
+	_, err = f.svc.StartAttempt(ctx, existing.ID)
+	require.ErrorIs(t, err, ErrRunFinished)
+
+	tree, err := f.svc.RunTree(ctx, run.ID)
+	require.NoError(t, err)
+	require.Len(t, tree.Steps, 1)
+	require.Equal(t, "running", tree.Steps[0].Step.Status, "the raw finish above closed nothing")
+	require.Empty(t, tree.Steps[0].Attempts)
+}
+
 // FailRun records the one-line reason lists and closing lines show; other
 // terminal statuses never carry one, and the reason is redacted and bounded
 // like a log line.

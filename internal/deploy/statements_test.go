@@ -23,7 +23,26 @@ type statementRecorder struct {
 }
 
 func (r *statementRecorder) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
-	name := strings.TrimSpace(data.SQL)
+	r.record(data.SQL)
+	return ctx
+}
+
+func (r *statementRecorder) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
+
+// A batch's statements are recorded one by one, like single ones.
+func (r *statementRecorder) TraceBatchStart(ctx context.Context, _ *pgx.Conn, data pgx.TraceBatchStartData) context.Context {
+	for _, query := range data.Batch.QueuedQueries {
+		r.record(query.SQL)
+	}
+	return ctx
+}
+
+func (r *statementRecorder) TraceBatchQuery(context.Context, *pgx.Conn, pgx.TraceBatchQueryData) {}
+
+func (r *statementRecorder) TraceBatchEnd(context.Context, *pgx.Conn, pgx.TraceBatchEndData) {}
+
+func (r *statementRecorder) record(sql string) {
+	name := strings.TrimSpace(sql)
 	if rest, ok := strings.CutPrefix(name, "-- name: "); ok {
 		name, _, _ = strings.Cut(rest, " ")
 	} else {
@@ -32,10 +51,7 @@ func (r *statementRecorder) TraceQueryStart(ctx context.Context, _ *pgx.Conn, da
 	r.mu.Lock()
 	r.names = append(r.names, name)
 	r.mu.Unlock()
-	return ctx
 }
-
-func (r *statementRecorder) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
 
 // take counts the statements recorded since the last call, per name.
 func (r *statementRecorder) take() map[string]int {

@@ -12,9 +12,17 @@ import (
 )
 
 const createAttempt = `-- name: CreateAttempt :one
+WITH open_run AS (
+    SELECT runs.id FROM runs
+    JOIN steps ON steps.run_id = runs.id
+    WHERE steps.id = $2::uuid AND runs.status IN ('pending', 'running')
+    FOR KEY SHARE OF runs
+)
 INSERT INTO attempts (id, step_id, number, executor_id)
-SELECT $1, $2, COALESCE(MAX(number), 0) + 1, $3
-FROM attempts WHERE step_id = $2
+SELECT $1::uuid, $2::uuid, next.number, $3::text
+FROM (SELECT COALESCE(MAX(attempts.number), 0) + 1 AS number
+      FROM attempts WHERE attempts.step_id = $2::uuid) AS next
+WHERE EXISTS (SELECT 1 FROM open_run)
 RETURNING id, step_id, number, status, executor_id, started_at, finished_at
 `
 
@@ -24,6 +32,10 @@ type CreateAttemptParams struct {
 	ExecutorID string
 }
 
+// CreateAttempt opens the next attempt of a step while its run is open,
+// with the run row held KEY SHARE like every journal write that adds a row
+// under a run, so a finish waits for it (see LockRunForFinish). Under a
+// finished run nothing is written and no row returns.
 func (q *Queries) CreateAttempt(ctx context.Context, arg CreateAttemptParams) (Attempt, error) {
 	row := q.db.QueryRow(ctx, createAttempt, arg.ID, arg.StepID, arg.ExecutorID)
 	var i Attempt

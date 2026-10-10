@@ -13,9 +13,10 @@ import (
 	"github.com/Hinkolas/skali/internal/store"
 )
 
-// warn logs a journal failure unless it is plain shutdown noise.
+// warn logs a journal failure unless it is plain shutdown noise, or a
+// write refused because another writer (a cancel) finished the run.
 func warn(message string, err error, args ...any) {
-	if errors.Is(err, context.Canceled) {
+	if errors.Is(err, context.Canceled) || errors.Is(err, journal.ErrRunFinished) {
 		return
 	}
 	slog.Warn(message, append(args, "error", err)...)

@@ -108,6 +108,11 @@ func TestPassChargesRequestsStatementsAndLock(t *testing.T) {
 	throttleHook{}.Observe(ctx, "GET", pods, time.Second)
 	queryCtx := DBTracer{}.TraceQueryStart(ctx, nil, pgx.TraceQueryStartData{})
 	DBTracer{}.TraceQueryEnd(queryCtx, nil, pgx.TraceQueryEndData{})
+	// A batch is one round trip, however many statements it carries.
+	batchCtx := DBTracer{}.TraceBatchStart(ctx, nil, pgx.TraceBatchStartData{})
+	DBTracer{}.TraceBatchQuery(batchCtx, nil, pgx.TraceBatchQueryData{})
+	DBTracer{}.TraceBatchQuery(batchCtx, nil, pgx.TraceBatchQueryData{})
+	DBTracer{}.TraceBatchEnd(batchCtx, nil, pgx.TraceBatchEndData{})
 	p.AddLock(10*time.Millisecond, 20*time.Millisecond)
 
 	_, attrs := p.end()
@@ -117,7 +122,7 @@ func TestPassChargesRequestsStatementsAndLock(t *testing.T) {
 	}
 	require.Contains(t, logged["phases"], "load=")
 	require.Contains(t, logged["phases"], "rest=")
-	require.Equal(t, 1, logged["db_queries"])
+	require.Equal(t, 2, logged["db_queries"])
 	require.Equal(t, 1, logged["kube_requests"])
 	require.Equal(t, time.Second, logged["throttled"])
 	require.Equal(t, 20*time.Millisecond, logged["lock_wait"])

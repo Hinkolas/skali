@@ -5,17 +5,24 @@
 -- the step either way, in one round trip. The select cannot see this
 -- statement's own insert, so the two halves never both return; a step
 -- another transaction created concurrently can be missing from its
--- snapshot too, and then no row returns and the caller reads it.
+-- snapshot too, and then no row returns and the caller reads it. A step is
+-- created only while its run is open, with the run row held KEY SHARE (see
+-- LockRunForFinish); a finished run gets none.
 -- name: EnsureStep :one
-WITH inserted AS (
+WITH open_run AS (
+    SELECT runs.id FROM runs
+    WHERE runs.id = sqlc.arg(run_id)::uuid AND runs.status IN ('pending', 'running')
+    FOR KEY SHARE
+), inserted AS (
     INSERT INTO steps (id, run_id, parent_id, key, title)
-    VALUES ($1, $2, $3, $4, $5)
+    SELECT sqlc.arg(id)::uuid, open_run.id, sqlc.narg(parent_id)::uuid, sqlc.arg(key)::text, sqlc.arg(title)::text
+    FROM open_run
     ON CONFLICT (run_id, key) DO NOTHING
     RETURNING *
 )
 SELECT * FROM inserted
 UNION ALL
-SELECT * FROM steps WHERE run_id = $2 AND key = $4;
+SELECT * FROM steps WHERE steps.run_id = sqlc.arg(run_id)::uuid AND steps.key = sqlc.arg(key)::text;
 
 -- name: GetStepByRunAndKey :one
 SELECT * FROM steps WHERE run_id = $1 AND key = $2;
@@ -47,8 +54,15 @@ RETURNING run_id;
 -- whether anything was written, and the attempt's number (0: none). A step
 -- another transaction created after this statement's snapshot is neither
 -- found nor created: previous_status is empty and nothing is written.
+-- Nothing is written either once the run has finished (run_open is false):
+-- the record holds the run row KEY SHARE while its run is open, so a
+-- finish waits for it (see LockRunForFinish).
 -- name: RecordStep :one
-WITH existing AS (
+WITH open_run AS (
+    SELECT runs.id FROM runs
+    WHERE runs.id = sqlc.arg(run_id)::uuid AND runs.status IN ('pending', 'running')
+    FOR KEY SHARE
+), existing AS (
     SELECT steps.id, steps.status FROM steps
     WHERE steps.run_id = sqlc.arg(run_id)::uuid AND steps.key = sqlc.arg(key)::text
 ), fresh AS (
@@ -67,7 +81,7 @@ WITH existing AS (
            sqlc.arg(key)::text, sqlc.arg(title)::text, sqlc.arg(status)::text,
            CASE WHEN sqlc.arg(status)::text IN ('running', 'succeeded', 'failed') THEN now() END,
            CASE WHEN sqlc.arg(status)::text IN ('succeeded', 'failed', 'skipped', 'cancelled') THEN now() END
-    WHERE NOT EXISTS (SELECT 1 FROM existing)
+    WHERE NOT EXISTS (SELECT 1 FROM existing) AND EXISTS (SELECT 1 FROM open_run)
     ON CONFLICT (run_id, key) DO NOTHING
     RETURNING steps.id
 ), updated AS (
@@ -81,6 +95,7 @@ WITH existing AS (
     WHERE steps.id = existing.id
       AND steps.status = ANY(sqlc.arg(from_statuses)::text[])
       AND (steps.status <> sqlc.arg(status)::text OR fresh.lines)
+      AND EXISTS (SELECT 1 FROM open_run)
       AND NOT EXISTS (
           SELECT 1 FROM attempts WHERE attempts.step_id = steps.id AND attempts.status = 'running')
     RETURNING steps.id
@@ -105,6 +120,7 @@ WITH existing AS (
 SELECT COALESCE((SELECT existing.id FROM existing), sqlc.arg(id)::uuid)::uuid AS step_id,
        COALESCE((SELECT existing.status FROM existing), '')::text AS previous_status,
        EXISTS (SELECT 1 FROM step) AS written,
+       EXISTS (SELECT 1 FROM open_run) AS run_open,
        EXISTS (
            SELECT 1 FROM attempts JOIN existing ON existing.id = attempts.step_id
            WHERE attempts.status = 'running') AS attempt_running,

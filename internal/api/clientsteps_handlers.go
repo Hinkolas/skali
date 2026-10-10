@@ -99,6 +99,10 @@ func (h *clientStepsHandlers) ensureStep(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	step, err := h.journal.EnsureStep(r.Context(), id, &parent.ID, req.Key, req.Title)
+	if errors.Is(err, journal.ErrRunFinished) {
+		writeError(w, http.StatusConflict, codeConflict, "the run has finished")
+		return
+	}
 	if err != nil {
 		writeInternalError(r.Context(), w, "ensure step", err)
 		return
@@ -205,6 +209,10 @@ func (h *clientStepsHandlers) appendLogs(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		started, err := h.journal.StartAttempt(r.Context(), step.ID)
+		if errors.Is(err, journal.ErrRunFinished) {
+			writeError(w, http.StatusConflict, codeConflict, "the run has finished")
+			return
+		}
 		if err != nil {
 			writeInternalError(r.Context(), w, "start attempt", err)
 			return

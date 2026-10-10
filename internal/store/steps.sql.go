@@ -56,20 +56,25 @@ func (q *Queries) CountDeferredRoutesByRun(ctx context.Context, runIds []uuid.UU
 
 const ensureStep = `-- name: EnsureStep :one
 
-WITH inserted AS (
+WITH open_run AS (
+    SELECT runs.id FROM runs
+    WHERE runs.id = $1::uuid AND runs.status IN ('pending', 'running')
+    FOR KEY SHARE
+), inserted AS (
     INSERT INTO steps (id, run_id, parent_id, key, title)
-    VALUES ($1, $2, $3, $4, $5)
+    SELECT $2::uuid, open_run.id, $3::uuid, $4::text, $5::text
+    FROM open_run
     ON CONFLICT (run_id, key) DO NOTHING
     RETURNING id, run_id, parent_id, key, title, status, progress_current, progress_total, created_at, started_at, finished_at
 )
 SELECT id, run_id, parent_id, key, title, status, progress_current, progress_total, created_at, started_at, finished_at FROM inserted
 UNION ALL
-SELECT id, run_id, parent_id, key, title, status, progress_current, progress_total, created_at, started_at, finished_at FROM steps WHERE run_id = $2 AND key = $4
+SELECT id, run_id, parent_id, key, title, status, progress_current, progress_total, created_at, started_at, finished_at FROM steps WHERE steps.run_id = $1::uuid AND steps.key = $4::text
 `
 
 type EnsureStepParams struct {
-	ID       uuid.UUID
 	RunID    uuid.UUID
+	ID       uuid.UUID
 	ParentID *uuid.UUID
 	Key      string
 	Title    string
@@ -95,11 +100,13 @@ type EnsureStepRow struct {
 // the step either way, in one round trip. The select cannot see this
 // statement's own insert, so the two halves never both return; a step
 // another transaction created concurrently can be missing from its
-// snapshot too, and then no row returns and the caller reads it.
+// snapshot too, and then no row returns and the caller reads it. A step is
+// created only while its run is open, with the run row held KEY SHARE (see
+// LockRunForFinish); a finished run gets none.
 func (q *Queries) EnsureStep(ctx context.Context, arg EnsureStepParams) (EnsureStepRow, error) {
 	row := q.db.QueryRow(ctx, ensureStep,
-		arg.ID,
 		arg.RunID,
+		arg.ID,
 		arg.ParentID,
 		arg.Key,
 		arg.Title,
@@ -256,7 +263,11 @@ func (q *Queries) ListStepsByRun(ctx context.Context, runID uuid.UUID) ([]Step, 
 }
 
 const recordStep = `-- name: RecordStep :one
-WITH existing AS (
+WITH open_run AS (
+    SELECT runs.id FROM runs
+    WHERE runs.id = $2::uuid AND runs.status IN ('pending', 'running')
+    FOR KEY SHARE
+), existing AS (
     SELECT steps.id, steps.status FROM steps
     WHERE steps.run_id = $2::uuid AND steps.key = $3::text
 ), fresh AS (
@@ -275,7 +286,7 @@ WITH existing AS (
            $3::text, $7::text, $8::text,
            CASE WHEN $8::text IN ('running', 'succeeded', 'failed') THEN now() END,
            CASE WHEN $8::text IN ('succeeded', 'failed', 'skipped', 'cancelled') THEN now() END
-    WHERE NOT EXISTS (SELECT 1 FROM existing)
+    WHERE NOT EXISTS (SELECT 1 FROM existing) AND EXISTS (SELECT 1 FROM open_run)
     ON CONFLICT (run_id, key) DO NOTHING
     RETURNING steps.id
 ), updated AS (
@@ -289,6 +300,7 @@ WITH existing AS (
     WHERE steps.id = existing.id
       AND steps.status = ANY($9::text[])
       AND (steps.status <> $8::text OR fresh.lines)
+      AND EXISTS (SELECT 1 FROM open_run)
       AND NOT EXISTS (
           SELECT 1 FROM attempts WHERE attempts.step_id = steps.id AND attempts.status = 'running')
     RETURNING steps.id
@@ -313,6 +325,7 @@ WITH existing AS (
 SELECT COALESCE((SELECT existing.id FROM existing), $1::uuid)::uuid AS step_id,
        COALESCE((SELECT existing.status FROM existing), '')::text AS previous_status,
        EXISTS (SELECT 1 FROM step) AS written,
+       EXISTS (SELECT 1 FROM open_run) AS run_open,
        EXISTS (
            SELECT 1 FROM attempts JOIN existing ON existing.id = attempts.step_id
            WHERE attempts.status = 'running') AS attempt_running,
@@ -339,6 +352,7 @@ type RecordStepRow struct {
 	StepID         uuid.UUID
 	PreviousStatus string
 	Written        bool
+	RunOpen        bool
 	AttemptRunning bool
 	AttemptNumber  int64
 	LoggedAt       time.Time
@@ -356,6 +370,9 @@ type RecordStepRow struct {
 // whether anything was written, and the attempt's number (0: none). A step
 // another transaction created after this statement's snapshot is neither
 // found nor created: previous_status is empty and nothing is written.
+// Nothing is written either once the run has finished (run_open is false):
+// the record holds the run row KEY SHARE while its run is open, so a
+// finish waits for it (see LockRunForFinish).
 func (q *Queries) RecordStep(ctx context.Context, arg RecordStepParams) (RecordStepRow, error) {
 	row := q.db.QueryRow(ctx, recordStep,
 		arg.ID,
@@ -376,6 +393,7 @@ func (q *Queries) RecordStep(ctx context.Context, arg RecordStepParams) (RecordS
 		&i.StepID,
 		&i.PreviousStatus,
 		&i.Written,
+		&i.RunOpen,
 		&i.AttemptRunning,
 		&i.AttemptNumber,
 		&i.LoggedAt,

@@ -9,17 +9,31 @@ import (
 )
 
 // DBTracer charges each statement's round trip, and each wait for a pooled
-// connection, to the pass in the statement's context. Install it as the
-// pool's ConnConfig.Tracer; a statement outside a pass costs one context
-// lookup.
+// connection, to the pass in the statement's context; a batch is one round
+// trip. Install it as the pool's ConnConfig.Tracer; a statement outside a
+// pass costs one context lookup.
 type DBTracer struct{}
 
 var (
 	_ pgx.QueryTracer       = DBTracer{}
+	_ pgx.BatchTracer       = DBTracer{}
 	_ pgxpool.AcquireTracer = DBTracer{}
 )
 
 type queryStarted struct{}
+
+func (DBTracer) TraceBatchStart(ctx context.Context, _ *pgx.Conn, _ pgx.TraceBatchStartData) context.Context {
+	if PassFrom(ctx) == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, queryStarted{}, time.Now())
+}
+
+func (DBTracer) TraceBatchQuery(context.Context, *pgx.Conn, pgx.TraceBatchQueryData) {}
+
+func (tracer DBTracer) TraceBatchEnd(ctx context.Context, conn *pgx.Conn, _ pgx.TraceBatchEndData) {
+	tracer.TraceQueryEnd(ctx, conn, pgx.TraceQueryEndData{})
+}
 
 type acquireStarted struct{}
 

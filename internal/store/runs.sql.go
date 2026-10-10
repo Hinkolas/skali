@@ -137,13 +137,14 @@ type FinishRunParams struct {
 	CloseStatus  string
 }
 
-// FinishRun moves a run to a terminal status in one statement, and every
-// non-terminal step and attempt of the run with it: running work adopts
-// close_status, unstarted steps are skipped. It applies only from one of
-// from_statuses, which the journal derives from its run machine;
-// otherwise nothing is written and no row returns. The failure text is
-// only meaningful with status 'failed'; the journal passes NULL for every
-// other terminal status.
+// FinishRun moves a run to a terminal status, and every non-terminal step
+// and attempt of the run with it: running work adopts close_status,
+// unstarted steps are skipped. It applies only from one of from_statuses,
+// which the journal derives from its run machine; otherwise nothing is
+// written and no row returns. The failure text is only meaningful with
+// status 'failed'; the journal passes NULL for every other terminal
+// status. Send it through store.FinishRun, after LockRunForFinish: on its
+// own its snapshot misses a step whose insert has not committed yet.
 func (q *Queries) FinishRun(ctx context.Context, arg FinishRunParams) (*uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, finishRun,
 		arg.Status,
@@ -308,6 +309,20 @@ func (q *Queries) ListRunsByEnvironment(ctx context.Context, environmentID *uuid
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockRunForFinish = `-- name: LockRunForFinish :exec
+SELECT 1 FROM runs WHERE id = $1 FOR UPDATE
+`
+
+// LockRunForFinish is the first of a finish's two statements (see
+// store.FinishRun). FOR UPDATE conflicts with the KEY SHARE lock every
+// journal write that adds a step or an attempt holds on its run, so the
+// finish waits until those writes commit, and later ones wait for the
+// finish.
+func (q *Queries) LockRunForFinish(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, lockRunForFinish, id)
+	return err
 }
 
 const markRunRunning = `-- name: MarkRunRunning :exec

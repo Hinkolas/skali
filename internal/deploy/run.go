@@ -164,7 +164,7 @@ func (s *Service) runStages(ctx context.Context, runID uuid.UUID, in ExecuteInpu
 		return result, s.fail(cctx, in, runID, redactor, err)
 	}
 	promoteLog = append(promoteLog, info("target set to revision "+prepared.Revision.Checksum))
-	if err := step(ctx, promoteKey, promoteTitle, journal.StepSucceeded, promoteLog); err != nil {
+	if err := unlessConcluded(step(ctx, promoteKey, promoteTitle, journal.StepSucceeded, promoteLog)); err != nil {
 		return result, s.fail(ctx, in, runID, redactor, err)
 	}
 
@@ -173,7 +173,7 @@ func (s *Service) runStages(ctx context.Context, runID uuid.UUID, in ExecuteInpu
 	// deterministic step keys, and finishes it. Without one (kept for
 	// tests), promotion concludes the run.
 	if s.enqueuer != nil {
-		if _, err := in.Journal.EnsureStep(ctx, runID, nil, "rollout", "Roll out revision"); err != nil {
+		if _, err := in.Journal.EnsureStep(ctx, runID, nil, "rollout", "Roll out revision"); unlessConcluded(err) != nil {
 			return result, s.fail(ctx, in, runID, redactor, err)
 		}
 		s.enqueuer.Enqueue(in.EnvironmentID)

@@ -476,16 +476,16 @@ func (s *Service) Rollback(ctx context.Context, in RollbackInput) (*RollbackResu
 		return nil, finishRunFailed(ctx, in.Journal, run.ID, err)
 	}
 	for _, warning := range compiler.Warnings(rev.Definition) {
-		if err := s.instantStep(ctx, in.Journal, run.ID, redactor, warning.Code, "Backup policy warning", warning.Message); err != nil {
+		if err := unlessConcluded(s.instantStep(ctx, in.Journal, run.ID, redactor, warning.Code, "Backup policy warning", warning.Message)); err != nil {
 			return nil, finishRunFailed(ctx, in.Journal, run.ID, err)
 		}
 	}
-	if err := s.instantStep(ctx, in.Journal, run.ID, redactor, "promote", "Promote revision",
-		"target set to revision "+row.Checksum); err != nil {
+	if err := unlessConcluded(s.instantStep(ctx, in.Journal, run.ID, redactor, "promote", "Promote revision",
+		"target set to revision "+row.Checksum)); err != nil {
 		return nil, finishRunFailed(ctx, in.Journal, run.ID, err)
 	}
 	if s.enqueuer != nil {
-		if _, err := in.Journal.EnsureStep(ctx, run.ID, nil, "rollout", "Roll out revision"); err != nil {
+		if _, err := in.Journal.EnsureStep(ctx, run.ID, nil, "rollout", "Roll out revision"); unlessConcluded(err) != nil {
 			return nil, finishRunFailed(ctx, in.Journal, run.ID, err)
 		}
 		s.enqueuer.Enqueue(in.EnvironmentID)
@@ -598,12 +598,12 @@ func (s *Service) Restart(ctx context.Context, in RestartInput) (*RestartResult,
 	if in.ApplicationKey == "" {
 		stamped = "restart stamped for every application"
 	}
-	if err := s.instantStep(ctx, in.Journal, run.ID, redactor, "restart", "Restart application",
-		stamped); err != nil {
+	if err := unlessConcluded(s.instantStep(ctx, in.Journal, run.ID, redactor, "restart", "Restart application",
+		stamped)); err != nil {
 		return nil, finishRunFailed(ctx, in.Journal, run.ID, err)
 	}
 	if s.enqueuer != nil {
-		if _, err := in.Journal.EnsureStep(ctx, run.ID, nil, "rollout", "Roll out revision"); err != nil {
+		if _, err := in.Journal.EnsureStep(ctx, run.ID, nil, "rollout", "Roll out revision"); unlessConcluded(err) != nil {
 			return nil, finishRunFailed(ctx, in.Journal, run.ID, err)
 		}
 		s.enqueuer.Enqueue(in.EnvironmentID)
@@ -613,6 +613,17 @@ func (s *Service) Restart(ctx context.Context, in RestartInput) (*RestartResult,
 		return nil, err
 	}
 	return &RestartResult{RunID: run.ID}, nil
+}
+
+// unlessConcluded passes err on unless the run had already finished. Once
+// a change is promoted or stamped, the kernel owns its run, and a pass may
+// conclude the run before the change journals its last steps; the change
+// stands, and the steps have nothing left to explain.
+func unlessConcluded(err error) error {
+	if errors.Is(err, journal.ErrRunFinished) {
+		return nil
+	}
+	return err
 }
 
 // finishRunFailed concludes a run after a failure and returns the original

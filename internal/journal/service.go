@@ -31,6 +31,10 @@ var (
 	// ErrAttemptTerminal: log entries cannot be appended to a finished
 	// attempt; the journal is append-only on live attempts.
 	ErrAttemptTerminal = errors.New("journal: attempt is terminal")
+	// ErrRunFinished: the run has finished, or is gone, so no step or
+	// attempt is added under it any more. It is an invalid transition, so
+	// callers that tolerate a refused step write tolerate this one too.
+	ErrRunFinished = fmt.Errorf("%w: the run has finished", ErrInvalidTransition)
 )
 
 // Service is the sole write path into the journal tables. Every status
@@ -218,8 +222,12 @@ func (s *Service) EnsureStep(ctx context.Context, runID uuid.UUID, parentID *uui
 	})
 	step := store.Step(row)
 	if errors.Is(err, pgx.ErrNoRows) {
-		// Another writer created it after the statement's snapshot.
+		// Another writer created it after the statement's snapshot, or the
+		// run has finished and none exists.
 		step, err = s.st.GetStepByRunAndKey(ctx, store.GetStepByRunAndKeyParams{RunID: runID, Key: key})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrRunFinished
+		}
 	}
 	if err != nil {
 		return nil, fmt.Errorf("journal: ensure step: %w", err)
@@ -307,9 +315,9 @@ func (s *Service) StepStates(ctx context.Context, runID uuid.UUID) (map[string]S
 // way, and writes one finished attempt carrying the entries, redacted and
 // bounded like Append's, unless To is running. A step whose status does not
 // allow the change is refused with ErrInvalidTransition, and one with a
-// running attempt with ErrAttemptConflict; neither writes anything. The
-// returned state is the step's after the record, or as found when it was
-// refused.
+// running attempt with ErrAttemptConflict, and every record under a
+// finished run with ErrRunFinished; none writes anything. The returned
+// state is the step's after the record, or as found when it was refused.
 func (s *Service) RecordStep(ctx context.Context, record StepRecord, redactor *redact.Redactor) (StepState, error) {
 	if record.To == StepRunning && len(record.Entries) > 0 {
 		return StepState{}, fmt.Errorf("journal: record step: a step that starts writes no lines")
@@ -344,13 +352,15 @@ func (s *Service) RecordStep(ctx context.Context, record StepRecord, redactor *r
 		if err != nil {
 			return StepState{}, fmt.Errorf("journal: record step: %w", err)
 		}
-		if row.Written || row.PreviousStatus != "" {
+		if row.Written || row.PreviousStatus != "" || !row.RunOpen {
 			break
 		}
 	}
 	previous := StepStatus(row.PreviousStatus)
 	if !row.Written {
 		switch {
+		case !row.RunOpen:
+			return StepState{ID: row.StepID, Status: previous}, ErrRunFinished
 		case previous == "":
 			return StepState{}, fmt.Errorf("journal: record step: %s neither found nor created", record.Key)
 		case !slices.Contains(from, previous):
@@ -481,6 +491,7 @@ func (s *Service) LatestStepMessage(ctx context.Context, stepID uuid.UUID) (stri
 
 // StartAttempt opens the next attempt of a running step. The partial unique
 // index rejects a second running attempt; retries stay inside one step.
+// Under a finished run it opens none and returns ErrRunFinished.
 func (s *Service) StartAttempt(ctx context.Context, stepID uuid.UUID) (*store.Attempt, error) {
 	id, err := uuid.NewV7()
 	if err != nil {
@@ -489,6 +500,9 @@ func (s *Service) StartAttempt(ctx context.Context, stepID uuid.UUID) (*store.At
 	attempt, err := s.st.CreateAttempt(ctx, store.CreateAttemptParams{
 		ID: id, StepID: stepID, ExecutorID: s.executorID,
 	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrRunFinished
+	}
 	if err != nil {
 		if store.IsUniqueViolation(err) {
 			return nil, ErrAttemptConflict
