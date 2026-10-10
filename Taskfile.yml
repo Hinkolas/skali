@@ -191,7 +191,7 @@ tasks:
         vars:
           PACKAGES: './internal/substrate/...'
           RUN: '^TestLive'
-          LIVE_TIMEOUT: '{{.TIMEOUT | default "30m"}}'
+          LIVE_TIMEOUT: '{{.TIMEOUT | default "45m"}}'
 
   test:live:substrate:database:
     desc: Run database provisioning, system claims, vector, and credential rotation
@@ -221,12 +221,12 @@ tasks:
           LIVE_TIMEOUT: '{{.TIMEOUT | default "30m"}}'
 
   test:live:substrate:observation:
-    desc: Run isolated SeaweedFS outage and recovery coverage
+    desc: Run isolated SeaweedFS outage, recovery, and idle-poll coverage
     cmds:
       - task: _test:live
         vars:
           PACKAGES: './internal/substrate'
-          RUN: '^TestLiveSeaweedObservation$'
+          RUN: '^TestLive(SeaweedObservation|IdleBucketsCauseNoPasses)$'
           LIVE_TIMEOUT: '{{.TIMEOUT | default "30m"}}'
 
   test:live:substrate:network:
