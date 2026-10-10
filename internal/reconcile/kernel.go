@@ -10,6 +10,7 @@ package reconcile
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -187,7 +188,11 @@ type Config struct {
 	Audit           time.Duration
 	RolloutDeadline time.Duration
 	StaleThreshold  time.Duration
-	Workers         int
+	// PassTimeout bounds one environment's pass, the wait for its lock
+	// included: a call that hangs fails the pass, which retries, instead of
+	// holding a worker and the environment lock.
+	PassTimeout time.Duration
+	Workers     int
 	// ManagedCluster pins application pods to application-capable nodes.
 	// Local development leaves it false.
 	ManagedCluster bool
@@ -276,6 +281,9 @@ func New(deps Deps, cfg Config) *Kernel {
 	}
 	if cfg.RolloutDeadline <= 0 {
 		cfg.RolloutDeadline = 10 * time.Minute
+	}
+	if cfg.PassTimeout <= 0 {
+		cfg.PassTimeout = defaultPassTimeout
 	}
 	if cfg.RetireDrain <= 0 {
 		cfg.RetireDrain = defaultRetireDrain
@@ -393,17 +401,7 @@ func (k *Kernel) worker(ctx context.Context) {
 		// The pass is charged its database round trips, Kubernetes requests,
 		// request-budget waits, and lock time through the context.
 		pass := workstats.NewPass("kernel")
-		passCtx := workstats.WithPass(ctx, pass)
-		live := k.liveReadDue(environmentID)
-		if !live {
-			passCtx = kube.WithCachedReads(passCtx)
-		}
-		requeue, err := k.reconcileEnvironment(passCtx, environmentID)
-		if live && err == nil {
-			k.liveMu.Lock()
-			k.liveRead[environmentID] = time.Now()
-			k.liveMu.Unlock()
-		}
+		requeue, err := k.runPass(workstats.WithPass(ctx, pass), environmentID)
 		k.queue.Done(environmentID)
 		pass.Log(ctx, "reconcile: pass", waited, "environment", environmentID,
 			"requeue", requeue, "error", err != nil)
@@ -420,6 +418,32 @@ func (k *Kernel) worker(ctx context.Context) {
 			k.queue.Forget(environmentID)
 		}
 	}
+}
+
+// defaultPassTimeout is far above a pass's usual second: its slowest parts,
+// the edge probes, run in parallel under their own few seconds.
+const defaultPassTimeout = 2 * time.Minute
+
+// runPass runs one pass of environmentID under the pass deadline, reading
+// what it applies live when a live read is due and from the watch caches
+// otherwise.
+func (k *Kernel) runPass(ctx context.Context, environmentID uuid.UUID) (time.Duration, error) {
+	ctx, cancel := context.WithTimeout(ctx, k.cfg.PassTimeout)
+	defer cancel()
+	live := k.liveReadDue(environmentID)
+	if !live {
+		ctx = kube.WithCachedReads(ctx)
+	}
+	requeue, err := k.reconcileEnvironment(ctx, environmentID)
+	if err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return 0, fmt.Errorf("reconcile: the pass ran past its %s deadline: %w", k.cfg.PassTimeout, err)
+	}
+	if live && err == nil {
+		k.liveMu.Lock()
+		k.liveRead[environmentID] = time.Now()
+		k.liveMu.Unlock()
+	}
+	return requeue, err
 }
 
 // liveReadDue reports whether environmentID's next pass reads live: its

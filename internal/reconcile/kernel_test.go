@@ -547,3 +547,22 @@ func TestKernelAPIOnlyMode(t *testing.T) {
 		t.Fatal("API-only kernel did not stop on context cancel")
 	}
 }
+
+// A pass that cannot finish within its deadline, here because another
+// holder keeps the environment lock, fails as past its deadline and frees
+// its worker; the queue retries it.
+func TestPassEndsAtItsDeadline(t *testing.T) {
+	t.Parallel()
+	f := newKernelFixture(t, Config{PassTimeout: 200 * time.Millisecond})
+	ctx := context.Background()
+	f.executeDeployment(t)
+	unlock, err := f.st.LockEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	defer unlock()
+
+	started := time.Now()
+	_, err = f.kernel.runPass(ctx, f.environmentID)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.ErrorContains(t, err, "past its 200ms deadline")
+	require.Less(t, time.Since(started), 5*time.Second)
+}

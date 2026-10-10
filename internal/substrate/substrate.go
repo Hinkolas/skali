@@ -165,8 +165,11 @@ type Config struct {
 	Capabilities []string
 	// Resync re-enqueues unsettled claims and live pools periodically as the
 	// audit backstop.
-	Resync  time.Duration
-	Workers int
+	Resync time.Duration
+	// PassTimeout bounds one work item's pass: a call that hangs fails the
+	// pass, which retries, instead of holding a worker.
+	PassTimeout time.Duration
+	Workers     int
 }
 
 type workKind string
@@ -237,26 +240,27 @@ type Controller struct {
 
 // accessPeers completes the peers a platform port admits beyond its claim
 // holders: skalid's service-proxy sources, and on a local platform the host
-// behind the loopback NodePorts. Either derivation failing is logged and
-// leaves that peer out: the holders still converge, and the next pass
-// retries.
-func (c *Controller) accessPeers(ctx context.Context, environmentIDs []string) platform.AccessPeers {
+// behind the loopback NodePorts. Either derivation failing fails it: a
+// policy applied without that peer would cut skalid's own access off until
+// the next pass put it back, so the caller keeps the policy it has and its
+// pass retries.
+func (c *Controller) accessPeers(ctx context.Context, environmentIDs []string) (platform.AccessPeers, error) {
 	peers := platform.AccessPeers{Environments: environmentIDs}
-	if cidrs, err := c.deps.Cluster.ProxyCIDRs(ctx); err != nil {
-		slog.Warn("substrate: derive proxy cidrs", "error", err)
-	} else {
-		peers.ProxyCIDRs = cidrs
+	cidrs, err := c.deps.Cluster.ProxyCIDRs(ctx)
+	if err != nil {
+		return peers, fmt.Errorf("substrate: derive proxy cidrs: %w", err)
 	}
+	peers.ProxyCIDRs = cidrs
 	if !c.cfg.Managed {
-		if cidrs, err := c.deps.Cluster.PodCIDRs(ctx); err != nil {
-			slog.Warn("substrate: derive pod cidrs", "error", err)
-		} else {
-			// Non-nil even without nodes: a local platform always admits
-			// the host.
-			peers.HostExcept = append([]string{}, cidrs...)
+		cidrs, err := c.deps.Cluster.PodCIDRs(ctx)
+		if err != nil {
+			return peers, fmt.Errorf("substrate: derive pod cidrs: %w", err)
 		}
+		// Non-nil even without nodes: a local platform always admits the
+		// host.
+		peers.HostExcept = append([]string{}, cidrs...)
 	}
-	return peers
+	return peers, nil
 }
 
 // holderEnvironments collects the distinct environment ids of claim rows;
@@ -300,6 +304,9 @@ func New(deps Deps, cfg Config) *Controller {
 	}
 	if cfg.Resync <= 0 {
 		cfg.Resync = 5 * time.Minute
+	}
+	if cfg.PassTimeout <= 0 {
+		cfg.PassTimeout = defaultPassTimeout
 	}
 	// The failure backoff is capped at the waiting cadence: a transient
 	// error must never park in-flight claim work longer than an ordinary
@@ -476,6 +483,21 @@ func (c *Controller) repairEnqueue(ctx context.Context) {
 	}
 }
 
+// defaultPassTimeout leaves room for the slowest item, a bucket's pass:
+// a few admin shell execs of up to a minute each.
+const defaultPassTimeout = 5 * time.Minute
+
+// runPass runs one work item's pass under the pass deadline.
+func (c *Controller) runPass(ctx context.Context, key workKey) (time.Duration, error) {
+	ctx, cancel := context.WithTimeout(ctx, c.cfg.PassTimeout)
+	defer cancel()
+	requeue, err := c.process(ctx, key)
+	if err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return 0, fmt.Errorf("substrate: the pass ran past its %s deadline: %w", c.cfg.PassTimeout, err)
+	}
+	return requeue, err
+}
+
 func (c *Controller) processNext(ctx context.Context) bool {
 	key, waited, shutdown := c.queue.Take()
 	if shutdown {
@@ -484,7 +506,7 @@ func (c *Controller) processNext(ctx context.Context) bool {
 	defer c.queue.Done(key)
 
 	pass := workstats.NewPass("substrate")
-	requeue, err := c.process(workstats.WithPass(ctx, pass), key)
+	requeue, err := c.runPass(workstats.WithPass(ctx, pass), key)
 	pass.Log(ctx, "substrate: pass", waited, "kind", key.kind, "id", key.id,
 		"requeue", requeue, "error", err != nil)
 	switch {

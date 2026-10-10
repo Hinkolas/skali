@@ -62,6 +62,9 @@ type fakeCluster struct {
 	answer  func(command []string) string
 	// deleted records every Delete call's object name.
 	deleted []string
+	// proxyCIDRs and proxyErr answer ProxyCIDRs.
+	proxyCIDRs []string
+	proxyErr   error
 }
 
 // fakeExec is one recorded ExecInPod call.
@@ -256,7 +259,9 @@ func (f *fakeCluster) GetObject(_ context.Context, gvr schema.GroupVersionResour
 }
 
 func (f *fakeCluster) ProxyCIDRs(context.Context) ([]string, error) {
-	return nil, nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.proxyCIDRs, f.proxyErr
 }
 
 func (f *fakeCluster) PodCIDRs(context.Context) ([]string, error) {

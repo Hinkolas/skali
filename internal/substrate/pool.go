@@ -145,7 +145,11 @@ func (c *Controller) ensurePoolAccess(ctx context.Context, pool store.DatabaseCl
 	if err != nil {
 		return fmt.Errorf("substrate: list holders of pool %s: %w", pool.Name, err)
 	}
-	policy := cnpg.RenderAccessPolicy(Namespace, pool.Name, c.accessPeers(ctx, holderEnvironments(claims, nil)))
+	peers, err := c.accessPeers(ctx, holderEnvironments(claims, nil))
+	if err != nil {
+		return err
+	}
+	policy := cnpg.RenderAccessPolicy(Namespace, pool.Name, peers)
 	if _, err := c.deps.Cluster.ApplyAs(ctx, policy, kube.FieldManagerPlatform, false); err != nil {
 		return fmt.Errorf("substrate: apply pool %s access policy: %w", pool.Name, err)
 	}
