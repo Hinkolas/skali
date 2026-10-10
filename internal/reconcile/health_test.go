@@ -144,6 +144,25 @@ func TestAuditSweepsForgottenEnvironments(t *testing.T) {
 	require.True(t, ok)
 }
 
+// Every audit owes each environment a pass that reads live, however
+// recently its last one finished: an audit that arrives a little before a
+// full interval since then still gets one.
+func TestAuditMakesTheNextPassReadLive(t *testing.T) {
+	t.Parallel()
+	f := newKernelFixture(t, Config{RolloutDeadline: time.Hour})
+	ctx := context.Background()
+	f.deployHealthy(t)
+	require.True(t, f.kernel.liveReadDue(f.environmentID), "the first pass reads live")
+
+	f.kernel.liveMu.Lock()
+	f.kernel.liveRead[f.environmentID] = time.Now()
+	f.kernel.liveMu.Unlock()
+	require.False(t, f.kernel.liveReadDue(f.environmentID))
+
+	f.kernel.audit(ctx, time.Hour)
+	require.True(t, f.kernel.liveReadDue(f.environmentID))
+}
+
 func TestEnvironmentHealthNotRecordedWithoutTarget(t *testing.T) {
 	t.Parallel()
 	f := newKernelFixture(t, Config{})

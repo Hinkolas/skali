@@ -250,8 +250,9 @@ type Kernel struct {
 	// liveRead holds when each environment last finished a pass that read
 	// what it applies from the API server instead of the watch cache. One
 	// such pass per audit interval checks what the cache vouched for (see
-	// kube.WithCachedReads). In-memory by design: after a restart the boot
-	// audit's passes read live.
+	// kube.WithCachedReads): every audit clears the map, so each
+	// environment's next pass reads live. In-memory by design: after a
+	// restart the boot audit's passes read live.
 	liveMu   sync.Mutex
 	liveRead map[uuid.UUID]time.Time
 
@@ -422,7 +423,8 @@ func (k *Kernel) worker(ctx context.Context) {
 }
 
 // liveReadDue reports whether environmentID's next pass reads live: its
-// first, and then one per audit interval.
+// first, the first after each audit, and any whose last live read is an
+// audit interval old (a backstop for an audit that did not run).
 func (k *Kernel) liveReadDue(environmentID uuid.UUID) bool {
 	k.liveMu.Lock()
 	defer k.liveMu.Unlock()
@@ -438,6 +440,12 @@ func (k *Kernel) liveReadDue(environmentID uuid.UUID) bool {
 // diagnostics and touches nothing (removal is a destructive transition that
 // does not exist yet; see docs/limitations.md).
 func (k *Kernel) audit(ctx context.Context, spread time.Duration) {
+	// The audit owes every environment a live read. Timing it from the last
+	// live pass instead lets the next audit arrive a little early, read the
+	// cache again, and stretch the check to two intervals.
+	k.liveMu.Lock()
+	clear(k.liveRead)
+	k.liveMu.Unlock()
 	listedAt := time.Now()
 	targets, err := k.deps.Store.ListEnvironmentTargets(ctx)
 	if err != nil {
@@ -450,15 +458,8 @@ func (k *Kernel) audit(ctx context.Context, spread time.Duration) {
 		k.queue.AddAfter(target.EnvironmentID, workstats.Phase(target.EnvironmentID, spread), ReasonAudit)
 	}
 	// The same authoritative set retires health verdicts of environments
-	// whose rows vanished without a pass, and their live-read times.
+	// whose rows vanished without a pass.
 	k.sweepHealth(known, listedAt)
-	k.liveMu.Lock()
-	for id := range k.liveRead {
-		if !known[id] {
-			delete(k.liveRead, id)
-		}
-	}
-	k.liveMu.Unlock()
 	for _, namespace := range k.deps.Observed.ManagedNamespaces() {
 		if namespace.Environment != uuid.Nil && !known[namespace.Environment] {
 			slog.Warn("orphaned managed namespace retained",
