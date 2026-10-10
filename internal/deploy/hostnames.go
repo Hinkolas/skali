@@ -200,15 +200,6 @@ func (s *Service) ResumeRevision(ctx context.Context, env, id uuid.UUID) error {
 	})
 }
 
-func (s *Service) FallbackTarget(ctx context.Context, in store.FallbackEnvironmentTargetParams) (int64, error) {
-	unlock, err := s.st.LockEnvironmentWithin(ctx, in.EnvironmentID, s.requestWait)
-	if err != nil {
-		return 0, err
-	}
-	defer unlock()
-	return s.FallbackTargetLocked(ctx, in)
-}
-
 // FallbackTargetLocked is used by reconciliation, which already holds the
 // environment lock for its entire pass. Even automatic recovery must reclaim
 // a hostname which may have been released after the old route disappeared.

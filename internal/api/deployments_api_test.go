@@ -715,6 +715,15 @@ func TestRunCancellationPolicy(t *testing.T) {
 	require.Equal(t, http.StatusOK, status)
 	require.Equal(t, "cancelled", body["deployment"].(map[string]any)["status"])
 
+	// A promoted first deployment has nothing to return to: the run is
+	// cancelled, and its revision stays the target and keeps rolling out.
+	_, firstRun, firstRev := deployAndPromote("cancel-plant-first")
+	status, body = a.do("POST", "/v1/runs/"+firstRun+"/cancel", token, nil)
+	require.Equal(t, http.StatusOK, status, "%v", body)
+	require.False(t, body["fallback"].(bool))
+	require.True(t, body["continues"].(bool))
+	require.Equal(t, firstRev, a.targetOf(t, envID).TargetRevisionID.String())
+
 	// Revision A activates; revision B promotes and is cancelled mid
 	// rollout: the target returns to A.
 	_, runA, revA := deployAndPromote("cancel-plant-two")
@@ -725,6 +734,7 @@ func TestRunCancellationPolicy(t *testing.T) {
 	status, body = a.do("POST", "/v1/runs/"+runB+"/cancel", token, nil)
 	require.Equal(t, http.StatusOK, status, "%v", body)
 	require.True(t, body["fallback"].(bool))
+	require.False(t, body["continues"].(bool))
 	target := a.targetOf(t, envID)
 	require.Equal(t, revA, target.TargetRevisionID.String())
 	require.Equal(t, revA, target.ActiveRevisionID.String())

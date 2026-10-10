@@ -3779,7 +3779,11 @@ paths:
         artifact window closes (values, target, and active revision remain
         untouched); after promotion but before activation the target
         returns to the prior active revision and reconciliation converges
-        back; after activation cancellation is refused.
+        back; after activation cancellation is refused. A first deployment
+        has no prior revision: its revision stays the target and keeps
+        rolling out without a run until the next deployment replaces it.
+        A rollback run is cancelled like a promotion. The fallback and the
+        run's cancellation commit together, under the environment lock.
       tags: [runs]
       responses:
         "200":
@@ -3788,22 +3792,29 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [status, fallback]
+                required: [status, fallback, continues]
                 properties:
                   status:
                     type: string
                   fallback:
                     type: boolean
+                    description: The target returned to the prior active revision.
+                  continues:
+                    type: boolean
+                    description: |
+                      A first deployment had no prior revision to return
+                      to; its revision stays the target and keeps rolling
+                      out.
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
           description: |
-            `conflict`: the run is already terminal, or the deployment can
-            no longer be cancelled.
-            `environment_busy`: the run is cancelled, but a reconcile pass
-            or another change held the environment for 10 seconds and the
-            target did not fall back.
+            `conflict`: the run is already terminal, its rollout already
+            activated, or the deployment can no longer be cancelled.
+            `environment_busy`: a reconcile pass or another change held the
+            environment for 10 seconds; nothing changed, and the cancel can
+            be retried.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }

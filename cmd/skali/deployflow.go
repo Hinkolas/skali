@@ -1275,6 +1275,9 @@ func attachRunMode(ctx context.Context, out io.Writer, api *client.Client, runID
 	}
 	var disarm <-chan time.Time
 	cancelRequested := false
+	// continues: the cancelled run was a first deployment, whose revision
+	// stays the target with no earlier one to return to.
+	continues := false
 
 	poll := time.NewTicker(500 * time.Millisecond)
 	defer poll.Stop()
@@ -1309,9 +1312,11 @@ func attachRunMode(ctx context.Context, out io.Writer, api *client.Client, runID
 			cancelRequested = true
 			disarm = nil
 			renderer.Footer = style.Yellow("cancelling the run, waiting for the server")
-			if _, err := api.CancelRun(ctx, runID); err != nil && !isRunAlreadyFinished(err) {
+			outcome, err := api.CancelRun(ctx, runID)
+			if err != nil && !isRunAlreadyFinished(err) {
 				return true, "", err
 			}
+			continues = outcome != nil && outcome.Continues
 		default:
 			disarm = time.After(interruptCancelWindow)
 			renderer.Footer = style.Yellow("press Ctrl-C again to cancel the run, d to detach")
@@ -1334,6 +1339,10 @@ func attachRunMode(ctx context.Context, out io.Writer, api *client.Client, runID
 		switch tree.Run.Status {
 		case "succeeded", "failed", "cancelled":
 			renderer.Finish(tree)
+			if continues && tree.Run.Status == "cancelled" {
+				fmt.Fprintln(out, style.Yellow("this was the environment's first deployment, so there is no earlier "+
+					"revision to return to: its revision keeps rolling out until the next deployment"))
+			}
 			return attachOutcome{Status: tree.Run.Status, Failure: tree.Run.Failure}, nil
 		}
 		renderer.Render(tree)

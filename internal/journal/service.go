@@ -181,8 +181,47 @@ func boundFailure(reason string) string {
 }
 
 func (s *Service) finish(ctx context.Context, id uuid.UUID, to RunStatus, failure *string) error {
+	params, err := finishParams(id, to, failure)
+	if err != nil {
+		return err
+	}
+	environmentID, err := s.st.FinishRun(ctx, params)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return s.refusedRun(ctx, s.st.Queries, id, to)
+	}
+	if err != nil {
+		return fmt.Errorf("journal: finish run: %w", err)
+	}
+	return s.concluded(ctx, id, environmentID)
+}
+
+// FinishRunTx is FinishRun inside the caller's transaction, for a finish
+// that must commit together with another change, like a cancel's fallback.
+// It returns what the caller runs once the transaction committed: the
+// retention caps and the notifications.
+func (s *Service) FinishRunTx(ctx context.Context, q *store.Queries, id uuid.UUID, to RunStatus) (func(context.Context) error, error) {
+	params, err := finishParams(id, to, nil)
+	if err != nil {
+		return nil, err
+	}
+	// In a transaction the finish's snapshot is taken after the lock, as
+	// in store.FinishRun's batch.
+	if err := q.LockRunForFinish(ctx, id); err != nil {
+		return nil, fmt.Errorf("journal: lock run: %w", err)
+	}
+	environmentID, err := q.FinishRun(ctx, params)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, s.refusedRun(ctx, q, id, to)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("journal: finish run: %w", err)
+	}
+	return func(ctx context.Context) error { return s.concluded(ctx, id, environmentID) }, nil
+}
+
+func finishParams(id uuid.UUID, to RunStatus, failure *string) (store.FinishRunParams, error) {
 	if !Runs.Terminal(to) {
-		return fmt.Errorf("%w: finish requires a terminal status, got %s", ErrInvalidTransition, to)
+		return store.FinishRunParams{}, fmt.Errorf("%w: finish requires a terminal status, got %s", ErrInvalidTransition, to)
 	}
 	closeStatus := "cancelled"
 	if to == RunFailed {
@@ -190,21 +229,26 @@ func (s *Service) finish(ctx context.Context, id uuid.UUID, to RunStatus, failur
 	} else {
 		failure = nil // a reason only explains a failure
 	}
-	environmentID, err := s.st.FinishRun(ctx, store.FinishRunParams{
+	return store.FinishRunParams{
 		ID: id, Status: string(to), FromStatuses: statuses(Runs.Sources(to)),
 		Failure: failure, CloseStatus: closeStatus,
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		run, err := s.st.GetRunByID(ctx, id)
-		if err != nil {
-			return notFoundOr(err, "get run")
-		}
-		return fmt.Errorf("%w: %v -> %v", ErrInvalidTransition, run.Status, to)
-	}
+	}, nil
+}
+
+// refusedRun explains a guarded finish that changed nothing: the run is
+// gone, or its status does not allow the change.
+func (s *Service) refusedRun(ctx context.Context, q *store.Queries, id uuid.UUID, to RunStatus) error {
+	run, err := q.GetRunByID(ctx, id)
 	if err != nil {
-		return fmt.Errorf("journal: finish run: %w", err)
+		return notFoundOr(err, "get run")
 	}
-	err = s.prune(ctx, environmentID)
+	return fmt.Errorf("%w: %v -> %v", ErrInvalidTransition, run.Status, to)
+}
+
+// concluded applies the retention caps and notifies, once a finish
+// committed.
+func (s *Service) concluded(ctx context.Context, id uuid.UUID, environmentID *uuid.UUID) error {
+	err := s.prune(ctx, environmentID)
 	s.notifyRun(id)
 	s.notifyEnvironment(environmentID)
 	return err
