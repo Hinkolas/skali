@@ -256,6 +256,9 @@ type Kernel struct {
 	// audit's passes re-derive it.
 	healthMu sync.RWMutex
 	health   map[uuid.UUID]EnvironmentHealth
+	// unhealthyPasses counts each environment's passes in a row that ended
+	// unhealthy without a rollout, the exponent of its health backoff.
+	unhealthyPasses map[uuid.UUID]int
 
 	// liveRead holds when each environment last finished a pass that read
 	// what it applies from the API server instead of the watch cache. One
@@ -306,17 +309,17 @@ func New(deps Deps, cfg Config) *Kernel {
 	// error must never park an in-flight rollout longer than an ordinary
 	// waiting pass.
 	return &Kernel{
-		deps:      deps,
-		cfg:       cfg,
-		retired:   map[retireKey]time.Time{},
-		domains:   map[string]domainProbe{},
-		routes:    map[routeKey]routeRecord{},
-		health:    map[uuid.UUID]EnvironmentHealth{},
-		liveRead:  map[uuid.UUID]time.Time{},
-		revisions: map[uuid.UUID]store.Revision{},
-
-		claimChecks: map[uuid.UUID]uuid.UUID{},
-		claimsOwed:  map[uuid.UUID]bool{},
+		deps:            deps,
+		cfg:             cfg,
+		retired:         map[retireKey]time.Time{},
+		domains:         map[string]domainProbe{},
+		routes:          map[routeKey]routeRecord{},
+		health:          map[uuid.UUID]EnvironmentHealth{},
+		unhealthyPasses: map[uuid.UUID]int{},
+		liveRead:        map[uuid.UUID]time.Time{},
+		revisions:       map[uuid.UUID]store.Revision{},
+		claimChecks:     map[uuid.UUID]uuid.UUID{},
+		claimsOwed:      map[uuid.UUID]bool{},
 		queue: workstats.NewQueue(workqueue.NewTypedWithMaxWaitRateLimiter(
 			workqueue.DefaultTypedControllerRateLimiter[uuid.UUID](), requeueHealthCheck),
 			func(uuid.UUID) string { return "environment" }),

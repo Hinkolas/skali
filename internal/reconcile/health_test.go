@@ -192,3 +192,48 @@ func TestEnvironmentHealthWithoutObservation(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, module.HealthUnknown, verdict.Health, "no observation means no trusted verdict")
 }
+
+// An environment that stays unhealthy without a rollout is polled less and
+// less often, up to a cap; a rollout polls at the health-check cadence,
+// and a healthy pass ends the backoff.
+func TestUnhealthyEnvironmentBacksOff(t *testing.T) {
+	t.Parallel()
+	f := newKernelFixture(t, Config{RolloutDeadline: time.Hour})
+	ctx := context.Background()
+	result := f.executeDeployment(t)
+	f.fake.SetFresh()
+	pass := func() time.Duration {
+		t.Helper()
+		requeue, err := f.kernel.reconcileEnvironment(ctx, f.environmentID)
+		require.NoError(t, err)
+		return requeue
+	}
+	require.Equal(t, requeueHealthCheck, pass(), "a rollout polls at the health-check cadence")
+	require.Equal(t, requeueHealthCheck, pass())
+	f.markHealthy(t)
+	require.Zero(t, pass(), "activation")
+	run, err := f.st.GetRunByID(ctx, result.RunID)
+	require.NoError(t, err)
+	require.Equal(t, "succeeded", run.Status)
+
+	breakWeb := func() {
+		target := f.target(t)
+		row, err := f.st.GetRevisionByID(ctx, *target.TargetRevisionID)
+		require.NoError(t, err)
+		f.setWebWorkload(t, row.Checksum[:16], module.WorkloadStatus{Desired: 1, Ready: 0, Updated: 1})
+		f.fake.SetPod(f.environmentID, f.namespace, "web", "web-1", "node-a",
+			module.PodStatus{Phase: "Running", Ready: false})
+	}
+	breakWeb()
+	var delays []time.Duration
+	for range 7 {
+		delays = append(delays, pass())
+	}
+	require.Equal(t, []time.Duration{15 * time.Second, 30 * time.Second, time.Minute, 2 * time.Minute,
+		4 * time.Minute, 5 * time.Minute, 5 * time.Minute}, delays)
+
+	f.markHealthy(t)
+	require.Zero(t, pass())
+	breakWeb()
+	require.Equal(t, requeueHealthCheck, pass(), "health ends the backoff")
+}

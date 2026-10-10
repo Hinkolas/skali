@@ -30,8 +30,12 @@ import (
 )
 
 // requeueHealthCheck is the safety interval while waiting on health; watch
-// events normally beat it.
-const requeueHealthCheck = 15 * time.Second
+// events normally beat it. An environment that stays unhealthy without a
+// rollout backs off from it, doubling per pass up to requeueUnhealthyCap.
+const (
+	requeueHealthCheck  = 15 * time.Second
+	requeueUnhealthyCap = 5 * time.Minute
+)
 
 // reconcileEnvironment is one level-triggered pass: load the target
 // revision, render the desired state, apply and prune idempotently,
@@ -409,6 +413,12 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 			"blocked", strings.Join(blocked, "; "))
 	}
 
+	healthCheck := requeueHealthCheck
+	if healthy {
+		k.healthSettled(environmentID)
+	} else {
+		healthCheck = k.healthRequeue(environmentID, attachment.adopted() && rolloutRun(attachment.run.Kind))
+	}
 	if healthy && !tls.blocked {
 		if tls.failed && attachment.created {
 			// A converged environment's issuance failed after its domain
@@ -459,12 +469,12 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 			// reconciliation continues on the ordinary cadence so a late
 			// recovery still activates, instead of the environment silently
 			// leaving the queue until the audit.
-			return soonest(soonest(requeueHealthCheck, retireRequeue), tls.requeue), nil
+			return soonest(soonest(healthCheck, retireRequeue), tls.requeue), nil
 		}
 		attachment.waitStepFields(ctx, "verify", "Verify health",
 			strings.Join(healthSummary(statuses), "\n"), healthFields(statuses))
 	}
-	return soonest(soonest(requeueHealthCheck, retireRequeue), tls.requeue), nil
+	return soonest(soonest(healthCheck, retireRequeue), tls.requeue), nil
 }
 
 // soonest picks the shorter of two requeue delays, ignoring zero (none).

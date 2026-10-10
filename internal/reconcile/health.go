@@ -49,6 +49,32 @@ func troubled(health module.Health) bool {
 	return health == module.HealthDegraded || health == module.HealthUnhealthy
 }
 
+// healthRequeue is the health backstop of a pass that did not activate: the
+// requeueHealthCheck interval while a rollout runs, and for an environment
+// that stays unhealthy without one, double the last interval up to
+// requeueUnhealthyCap. Watch events still start a pass the moment the
+// environment changes; this is only the poll behind them, and a crash-
+// looping environment no longer takes four passes a minute for as long as
+// it stays broken.
+func (k *Kernel) healthRequeue(environmentID uuid.UUID, rollout bool) time.Duration {
+	k.healthMu.Lock()
+	defer k.healthMu.Unlock()
+	if rollout {
+		delete(k.unhealthyPasses, environmentID)
+		return requeueHealthCheck
+	}
+	passes := k.unhealthyPasses[environmentID]
+	k.unhealthyPasses[environmentID] = passes + 1
+	return min(requeueHealthCheck<<min(passes, 5), requeueUnhealthyCap)
+}
+
+// healthSettled ends an environment's unhealthy backoff.
+func (k *Kernel) healthSettled(environmentID uuid.UUID) {
+	k.healthMu.Lock()
+	delete(k.unhealthyPasses, environmentID)
+	k.healthMu.Unlock()
+}
+
 // forgetHealth drops an environment that has nothing to evaluate: no target
 // revision yet, taken down, releasing, or its row gone. Absence reads as
 // unknown without an evaluation time, which is the truth. The revision its
@@ -56,6 +82,7 @@ func troubled(health module.Health) bool {
 func (k *Kernel) forgetHealth(environmentID uuid.UUID) {
 	k.healthMu.Lock()
 	delete(k.health, environmentID)
+	delete(k.unhealthyPasses, environmentID)
 	k.healthMu.Unlock()
 	k.revisionMu.Lock()
 	delete(k.revisions, environmentID)
