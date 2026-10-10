@@ -124,3 +124,24 @@ counters run since the daemon started; subtract two samples to see an
 interval. A failed request is recorded as an error line and sampling
 continues, so a daemon restart shows up as a gap. The output file must not
 exist yet.
+
+## Reference results
+
+Measured with this example on a production cluster: k3s v1.36.3 on 11
+nodes with 23 environments, skalid on the node farthest from its database
+(about 24 ms per round trip). The warm restart is `measure.py --redeploy`;
+the changed image runs a normal deploy after editing `version.txt`.
+
+| | v0.1.1 | v0.1.2 |
+| --- | --- | --- |
+| Warm restart, run created to run done | 225.2 s (one run) | median 5.29 s, p95 5.78 s (30 runs) |
+| Promotion to the rollout's first pass | 47–108 s | median 0.18 s |
+| Pod Ready to rollout done (traffic switched) | 108–130 s | median 0.54 s |
+| Kernel pass on a converged environment | 12–14 s | 0.47 s |
+| Kernel queue depth while idle | 11–21 | 0 |
+| Changed image, promotion to activation | | 9.3–10.0 s, migration included |
+
+Of the v0.1.2 warm restart, about 3.2 s is the application's own readiness
+(its probes against the database and the bucket); skali accounts for about
+2.2 s. A first run after a skalid upgrade re-runs the release Job and takes
+about 12 s.
