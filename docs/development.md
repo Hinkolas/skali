@@ -55,7 +55,7 @@ admin`) per project and per environment; see
 
 ## Local setup
 
-Requirements: Go 1.26.8+, Node 22+, [go-task](https://taskfile.dev), Docker
+Requirements: Go 1.26.9+, Node 22+, [go-task](https://taskfile.dev), Docker
 with Docker Compose (for the project Postgres, k3d dev cluster, and image
 builds), and sqlc when changing queries.
 
