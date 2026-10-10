@@ -121,6 +121,13 @@ func (s *Service) CancelRollout(ctx context.Context, in CancelRolloutInput) (Can
 		concluded, err = in.Journal.FinishRunTx(ctx, q, in.RunID, journal.RunCancelled)
 		return err
 	})
+	if errors.Is(err, journal.ErrInvalidTransition) {
+		// The run's own work finished it (a failed promotion) after the read
+		// above; the fallback rolled back with the refused finish.
+		if run, readErr := in.Journal.Run(ctx, in.RunID); readErr == nil {
+			return CancelOutcome{}, &RunConcludedError{Status: run.Status}
+		}
+	}
 	if err != nil {
 		return CancelOutcome{}, err
 	}
