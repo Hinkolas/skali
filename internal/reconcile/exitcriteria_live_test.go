@@ -350,6 +350,7 @@ func restartKernel(t *testing.T, f *liveFixture) *liveFixture {
 		StaleThreshold: 30 * time.Second,
 		Enqueue:        func(id uuid.UUID, reason string) { kernel.EnqueueFor(id, reason) },
 	})
+	client.UseObjectCache(source)
 	registry := module.NewRegistry()
 	require.NoError(t, registry.Register(app.Module{}))
 	kernel = New(Deps{

@@ -105,6 +105,7 @@ func newLiveFixture(t *testing.T, cfg Config, config *rest.Config) *liveFixture 
 		StaleThreshold: staleThreshold,
 		Enqueue:        func(id uuid.UUID, reason string) { kernel.EnqueueFor(id, reason) },
 	})
+	client.UseObjectCache(source)
 	kernel = New(Deps{
 		Store: st, Deploy: deploySvc, Values: valueSvc, Journal: journalSvc,
 		Registry: registry, Observed: observed, Source: source, Cluster: client,

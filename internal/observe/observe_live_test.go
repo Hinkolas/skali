@@ -10,9 +10,16 @@ import (
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	kuberuntime "k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/rest"
 
+	"github.com/Hinkolas/skali/internal/edge"
+	"github.com/Hinkolas/skali/internal/edge/edgeobserve"
 	"github.com/Hinkolas/skali/internal/kube"
 	"github.com/Hinkolas/skali/internal/kubetest"
 	"github.com/Hinkolas/skali/internal/module"
@@ -150,4 +157,75 @@ func TestLiveWatchDisconnectStaleAndRecover(t *testing.T) {
 	_, err = clientset.AppsV1().Deployments(namespace).UpdateScale(ctx, "observed", scale, metav1.UpdateOptions{})
 	require.NoError(t, err)
 	waitForWorkload(t, store, envID, func(w module.WorkloadStatus) bool { return w.Desired == 3 })
+}
+
+// Live: the caches answer a read before apply with exactly what a read of
+// the API server returns: typed caches (converted back), dynamic ones, and
+// the NetworkPolicy cache nothing observes.
+func TestLiveCachedObjectMatchesRead(t *testing.T) {
+	t.Parallel()
+	config := kubetest.Config(t)
+	clientset := kubetest.Clientset(t)
+	namespace := kubetest.Namespace(t, clientset)
+	envID := uuid.New()
+	client, err := kube.NewFromConfig(config)
+	require.NoError(t, err)
+	store := observe.NewStore(nil)
+	source := observe.NewKubeSource(client, store, observe.SourceOptions{
+		Resync:         time.Hour,
+		StaleThreshold: 30 * time.Second,
+		Dynamic:        edgeobserve.Kinds(false),
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go func() { _ = source.Run(ctx) }()
+	require.Eventually(t, store.Ready, 30*time.Second, 100*time.Millisecond, "cache must synchronize")
+
+	labels := map[string]string{"skali.dev/managed": "true", "skali.dev/environment": envID.String()}
+	service := &corev1.Service{
+		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Service"},
+		ObjectMeta: metav1.ObjectMeta{Name: "observed", Namespace: namespace, Labels: labels},
+		Spec: corev1.ServiceSpec{
+			Selector: map[string]string{"app": "observed"},
+			Ports:    []corev1.ServicePort{{Name: "http", Port: 80, TargetPort: intstr.FromInt32(8080)}},
+		},
+	}
+	policy := &networkingv1.NetworkPolicy{
+		TypeMeta:   metav1.TypeMeta{APIVersion: "networking.k8s.io/v1", Kind: "NetworkPolicy"},
+		ObjectMeta: metav1.ObjectMeta{Name: "observed", Namespace: namespace, Labels: labels},
+		Spec: networkingv1.NetworkPolicySpec{
+			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress},
+			Ingress:     []networkingv1.NetworkPolicyIngressRule{{From: []networkingv1.NetworkPolicyPeer{{PodSelector: &metav1.LabelSelector{}}}}},
+		},
+	}
+	middleware := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": edge.MiddlewareGVK.GroupVersion().String(),
+		"kind":       edge.MiddlewareGVK.Kind,
+		"metadata":   map[string]any{"name": "observed", "namespace": namespace},
+		"spec":       map[string]any{"stripPrefix": map[string]any{"prefixes": []any{"/observed"}}},
+	}}
+	middleware.SetLabels(labels)
+	for _, object := range []struct {
+		resource schema.GroupVersionResource
+		object   kuberuntime.Object
+	}{
+		{appsv1.SchemeGroupVersion.WithResource("deployments"), labeledDeployment(namespace, envID, 1)},
+		{corev1.SchemeGroupVersion.WithResource("services"), service},
+		{networkingv1.SchemeGroupVersion.WithResource("networkpolicies"), policy},
+		{edge.MiddlewareGVR, middleware},
+	} {
+		applied, err := client.Apply(context.Background(), object.object, false)
+		require.NoError(t, err)
+		var cached, live *unstructured.Unstructured
+		require.Eventually(t, func() bool {
+			var ok bool
+			cached, ok = source.CachedObject(object.resource, namespace, applied.Live.GetName())
+			live, err = client.Dynamic.Resource(object.resource).Namespace(namespace).Get(context.Background(), applied.Live.GetName(), metav1.GetOptions{})
+			require.NoError(t, err)
+			return ok && cached.GetResourceVersion() == live.GetResourceVersion()
+		}, 30*time.Second, 100*time.Millisecond, "%s must reach the cache", object.resource.Resource)
+		require.Equal(t, live.Object, cached.Object, object.resource.Resource)
+	}
+	_, ok := source.CachedObject(corev1.SchemeGroupVersion.WithResource("secrets"), namespace, "observed")
+	require.False(t, ok, "secrets are never cached")
 }

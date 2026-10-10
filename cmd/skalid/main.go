@@ -248,6 +248,8 @@ func runServe() error {
 			Enqueue:        func(environmentID uuid.UUID, reason string) { kernel.EnqueueFor(environmentID, reason) },
 			Dynamic:        append(cnpg.ObserveKinds(), edgeobserve.Kinds(cfg.CertManager)...),
 		})
+		// Passes read the objects they apply from the watch caches.
+		kubeClient.UseObjectCache(source)
 	}
 	kernelDeps := reconcile.Deps{
 		Store:    st,

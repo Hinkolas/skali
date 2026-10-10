@@ -76,9 +76,19 @@ type KubeSource struct {
 	opts      SourceOptions
 	informers []namedInformer
 
+	// reads indexes the caches CachedObject answers from, by resource.
+	reads map[schema.GroupVersionResource]readable
+
 	mu          sync.Mutex
 	current     map[string]watch.Interface // kind -> live watch connection
 	lastRefresh time.Time
+}
+
+// readable is one cache CachedObject answers from. A typed cache holds
+// objects without their kind, which kind restores.
+type readable struct {
+	informer cache.SharedIndexInformer
+	kind     schema.GroupVersionKind // zero for unstructured caches
 }
 
 type namedInformer struct {
@@ -109,9 +119,57 @@ func NewKubeSource(client *kube.Client, store *Store, opts SourceOptions) *KubeS
 	if opts.StaleThreshold <= 0 {
 		opts.StaleThreshold = 30 * time.Second
 	}
-	k := &KubeSource{client: client, store: store, opts: opts}
+	k := &KubeSource{client: client, store: store, opts: opts, reads: map[schema.GroupVersionResource]readable{}}
 	k.register()
 	return k
+}
+
+var _ kube.ObjectCache = (*KubeSource)(nil)
+
+// CachedObject implements kube.ObjectCache: kube.Client reads the objects a
+// pass applies from these caches instead of the API server. Only a fresh,
+// synchronized cache answers. Deployments, Services, Namespaces, volume
+// claims, autoscalers, NetworkPolicies and the dynamic kinds (the edge's
+// routes and certificates) are cached; Secrets never are.
+func (k *KubeSource) CachedObject(resource schema.GroupVersionResource, namespace, name string) (*unstructured.Unstructured, bool) {
+	entry, ok := k.reads[resource]
+	if !ok || !entry.informer.HasSynced() || k.store.Source().State != module.SourceFresh {
+		return nil, false
+	}
+	key := name
+	if namespace != "" {
+		key = namespace + "/" + name
+	}
+	raw, exists, err := entry.informer.GetStore().GetByKey(key)
+	if err != nil || !exists {
+		return nil, false
+	}
+	switch object := raw.(type) {
+	case *unstructured.Unstructured:
+		return object.DeepCopy(), true
+	case runtime.Object:
+		// The typed client decodes the same JSON a GET returns, so the
+		// conversion gives back what a GET would, apart from fields this
+		// build does not know, which no rendered object sets.
+		content, err := runtime.DefaultUnstructuredConverter.ToUnstructured(object)
+		if err != nil || entry.kind.Empty() {
+			return nil, false
+		}
+		converted := &unstructured.Unstructured{Object: content}
+		converted.SetGroupVersionKind(entry.kind)
+		return converted, true
+	}
+	return nil, false
+}
+
+// readFrom lets CachedObject answer for resource from informer; kind is
+// the kind of a typed informer's objects.
+func (k *KubeSource) readFrom(resource schema.GroupVersionResource, kind string, informer cache.SharedIndexInformer) {
+	entry := readable{informer: informer}
+	if kind != "" {
+		entry.kind = resource.GroupVersion().WithKind(kind)
+	}
+	k.reads[resource] = entry
 }
 
 // Run starts every informer, waits for the initial cache synchronization,
@@ -160,7 +218,7 @@ func (k *KubeSource) register() {
 		},
 		managed, ""), convertPod)
 
-	k.addObjectInformer("Deployment", &appsv1.Deployment{}, k.listWatch("Deployment",
+	deployments := k.addObjectInformer("Deployment", &appsv1.Deployment{}, k.listWatch("Deployment",
 		func(o metav1.ListOptions) (runtime.Object, error) {
 			return apps.Deployments(all).List(context.Background(), o)
 		},
@@ -181,7 +239,7 @@ func (k *KubeSource) register() {
 		},
 		managed, ""), convertJob)
 
-	k.addObjectInformer("Service", &corev1.Service{}, k.listWatch("Service",
+	services := k.addObjectInformer("Service", &corev1.Service{}, k.listWatch("Service",
 		func(o metav1.ListOptions) (runtime.Object, error) {
 			return core.Services(all).List(context.Background(), o)
 		},
@@ -214,7 +272,7 @@ func (k *KubeSource) register() {
 		},
 		rendering.InterceptEndpointSliceSelector, ""), convertPlain(schema.GroupVersionKind{Group: "discovery.k8s.io", Version: "v1", Kind: "EndpointSlice"}, module.KindEndpointSlice))
 
-	k.addObjectInformer("PersistentVolumeClaim", &corev1.PersistentVolumeClaim{}, k.listWatch("PersistentVolumeClaim",
+	claims := k.addObjectInformer("PersistentVolumeClaim", &corev1.PersistentVolumeClaim{}, k.listWatch("PersistentVolumeClaim",
 		func(o metav1.ListOptions) (runtime.Object, error) {
 			return core.PersistentVolumeClaims(all).List(context.Background(), o)
 		},
@@ -223,7 +281,7 @@ func (k *KubeSource) register() {
 		},
 		managed, ""), convertPlain(schema.GroupVersionKind{Version: "v1", Kind: "PersistentVolumeClaim"}, module.KindVolume))
 
-	k.addObjectInformer("HorizontalPodAutoscaler", &autoscalingv2.HorizontalPodAutoscaler{}, k.listWatch("HorizontalPodAutoscaler",
+	autoscalers := k.addObjectInformer("HorizontalPodAutoscaler", &autoscalingv2.HorizontalPodAutoscaler{}, k.listWatch("HorizontalPodAutoscaler",
 		func(o metav1.ListOptions) (runtime.Object, error) {
 			return autoscaling.HorizontalPodAutoscalers(all).List(context.Background(), o)
 		},
@@ -232,7 +290,7 @@ func (k *KubeSource) register() {
 		},
 		managed, ""), convertAutoscaler)
 
-	k.addObjectInformer("Namespace", &corev1.Namespace{}, k.listWatch("Namespace",
+	namespaces := k.addObjectInformer("Namespace", &corev1.Namespace{}, k.listWatch("Namespace",
 		func(o metav1.ListOptions) (runtime.Object, error) {
 			return core.Namespaces().List(context.Background(), o)
 		},
@@ -240,6 +298,25 @@ func (k *KubeSource) register() {
 			return core.Namespaces().Watch(context.Background(), o)
 		},
 		managed, ""), convertNamespace)
+
+	// The kinds a pass applies serve its reads before apply (CachedObject).
+	k.readFrom(appsv1.SchemeGroupVersion.WithResource("deployments"), "Deployment", deployments)
+	k.readFrom(corev1.SchemeGroupVersion.WithResource("services"), "Service", services)
+	k.readFrom(corev1.SchemeGroupVersion.WithResource("persistentvolumeclaims"), "PersistentVolumeClaim", claims)
+	k.readFrom(autoscalingv2.SchemeGroupVersion.WithResource("horizontalpodautoscalers"), "HorizontalPodAutoscaler", autoscalers)
+	k.readFrom(corev1.SchemeGroupVersion.WithResource("namespaces"), "Namespace", namespaces)
+
+	// Environment NetworkPolicies are not observed, only cached for those
+	// reads: nothing about them is health, and nothing prunes them.
+	policies := networkingv1.SchemeGroupVersion.WithResource("networkpolicies")
+	k.addCacheInformer("NetworkPolicy", policies, k.listWatch("NetworkPolicy",
+		func(o metav1.ListOptions) (runtime.Object, error) {
+			return k.client.Dynamic.Resource(policies).Namespace(all).List(context.Background(), o)
+		},
+		func(o metav1.ListOptions) (watch.Interface, error) {
+			return k.client.Dynamic.Resource(policies).Namespace(all).Watch(context.Background(), o)
+		},
+		managed, ""))
 
 	// Nodes are unlabeled infrastructure: observed only to fan a node change
 	// out to the environments with pods placed on it.
@@ -265,7 +342,7 @@ func (k *KubeSource) register() {
 	for _, dynamicKind := range k.opts.Dynamic {
 		gvr := dynamicKind.GVR
 		convert := dynamicKind.Convert
-		k.addObjectInformer(dynamicKind.Kind, &unstructured.Unstructured{}, k.listWatch(dynamicKind.Kind,
+		informer := k.addObjectInformer(dynamicKind.Kind, &unstructured.Unstructured{}, k.listWatch(dynamicKind.Kind,
 			func(o metav1.ListOptions) (runtime.Object, error) {
 				return k.client.Dynamic.Resource(gvr).Namespace(all).List(context.Background(), o)
 			},
@@ -279,6 +356,7 @@ func (k *KubeSource) register() {
 			}
 			return convert(object)
 		})
+		k.readFrom(gvr, "", informer)
 	}
 }
 
@@ -411,10 +489,39 @@ type contactWatcher struct {
 func (c *contactWatcher) Stop()                          { c.inner.Stop() }
 func (c *contactWatcher) ResultChan() <-chan watch.Event { return c.out }
 
+// addCacheInformer watches resource only to cache it for CachedObject:
+// nothing reaches the store. A change still enqueues its environment, as
+// one to an observed kind does, so a change a pass read past (the cache
+// had not delivered it yet) is redone by the next pass.
+func (k *KubeSource) addCacheInformer(kind string, resource schema.GroupVersionResource, lw cache.ListerWatcher) {
+	informer := cache.NewSharedIndexInformer(lw, &unstructured.Unstructured{}, k.opts.Resync, cache.Indexers{})
+	k.watchErrors(informer)
+	enqueue := func(raw any) {
+		if tombstone, ok := raw.(cache.DeletedFinalStateUnknown); ok {
+			raw = tombstone.Obj
+		}
+		if object, ok := raw.(metav1.Object); ok {
+			environment, _, _ := identity(object)
+			k.enqueue(environment, EnqueueWatch)
+		}
+	}
+	_, _ = informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: enqueue,
+		UpdateFunc: func(old, raw any) {
+			if !resynced(old, raw) {
+				enqueue(raw)
+			}
+		},
+		DeleteFunc: enqueue,
+	})
+	k.informers = append(k.informers, namedInformer{kind: kind, informer: informer})
+	k.readFrom(resource, "", informer)
+}
+
 // addObjectInformer wires one watched kind into the store: every add or
 // update upserts the converted projection, every delete removes it, and
 // each change enqueues the affected environment.
-func (k *KubeSource) addObjectInformer(kind string, example runtime.Object, lw cache.ListerWatcher, convert func(any) (Object, bool)) {
+func (k *KubeSource) addObjectInformer(kind string, example runtime.Object, lw cache.ListerWatcher, convert func(any) (Object, bool)) cache.SharedIndexInformer {
 	informer := cache.NewSharedIndexInformer(lw, example, k.opts.Resync, cache.Indexers{})
 	k.watchErrors(informer)
 	_, _ = informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
@@ -444,6 +551,7 @@ func (k *KubeSource) addObjectInformer(kind string, example runtime.Object, lw c
 		},
 	})
 	k.informers = append(k.informers, namedInformer{kind: kind, informer: informer})
+	return informer
 }
 
 // enqueueAffected pokes the object's environment; a platform-scoped shared

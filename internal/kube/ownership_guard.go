@@ -38,7 +38,7 @@ func (c *Client) protectedResource(gvk schema.GroupVersionKind, namespace string
 	if guard == nil || !guard.valid.Load() || guard.context.Err() != nil {
 		return nil
 	}
-	resource, err := guard.server.resource(gvk, namespace)
+	resource, _, err := guard.server.resource(gvk, namespace)
 	if err != nil {
 		return nil
 	}

@@ -239,6 +239,14 @@ type Kernel struct {
 	// audit's passes re-derive it.
 	healthMu sync.RWMutex
 	health   map[uuid.UUID]EnvironmentHealth
+
+	// liveRead holds when each environment last finished a pass that read
+	// what it applies from the API server instead of the watch cache. One
+	// such pass per audit interval checks what the cache vouched for (see
+	// kube.WithCachedReads). In-memory by design: after a restart the boot
+	// audit's passes read live.
+	liveMu   sync.Mutex
+	liveRead map[uuid.UUID]time.Time
 }
 
 func New(deps Deps, cfg Config) *Kernel {
@@ -261,12 +269,13 @@ func New(deps Deps, cfg Config) *Kernel {
 	// error must never park an in-flight rollout longer than an ordinary
 	// waiting pass.
 	return &Kernel{
-		deps:    deps,
-		cfg:     cfg,
-		retired: map[retireKey]time.Time{},
-		domains: map[string]domainProbe{},
-		routes:  map[routeKey]routeRecord{},
-		health:  map[uuid.UUID]EnvironmentHealth{},
+		deps:     deps,
+		cfg:      cfg,
+		retired:  map[retireKey]time.Time{},
+		domains:  map[string]domainProbe{},
+		routes:   map[routeKey]routeRecord{},
+		health:   map[uuid.UUID]EnvironmentHealth{},
+		liveRead: map[uuid.UUID]time.Time{},
 		queue: workstats.NewQueue(workqueue.NewTypedWithMaxWaitRateLimiter(
 			workqueue.DefaultTypedControllerRateLimiter[uuid.UUID](), requeueHealthCheck),
 			func(uuid.UUID) string { return "environment" }),
@@ -368,7 +377,17 @@ func (k *Kernel) worker(ctx context.Context) {
 		// The pass is charged its database round trips, Kubernetes requests,
 		// request-budget waits, and lock time through the context.
 		pass := workstats.NewPass("kernel")
-		requeue, err := k.reconcileEnvironment(workstats.WithPass(ctx, pass), environmentID)
+		passCtx := workstats.WithPass(ctx, pass)
+		live := k.liveReadDue(environmentID)
+		if !live {
+			passCtx = kube.WithCachedReads(passCtx)
+		}
+		requeue, err := k.reconcileEnvironment(passCtx, environmentID)
+		if live && err == nil {
+			k.liveMu.Lock()
+			k.liveRead[environmentID] = time.Now()
+			k.liveMu.Unlock()
+		}
 		k.queue.Done(environmentID)
 		pass.Log(ctx, "reconcile: pass", waited, "environment", environmentID,
 			"requeue", requeue, "error", err != nil)
@@ -385,6 +404,15 @@ func (k *Kernel) worker(ctx context.Context) {
 			k.queue.Forget(environmentID)
 		}
 	}
+}
+
+// liveReadDue reports whether environmentID's next pass reads live: its
+// first, and then one per audit interval.
+func (k *Kernel) liveReadDue(environmentID uuid.UUID) bool {
+	k.liveMu.Lock()
+	defer k.liveMu.Unlock()
+	last, ok := k.liveRead[environmentID]
+	return !ok || time.Since(last) >= k.cfg.Audit
 }
 
 // audit enqueues every environment from Postgres: the slower correctness
@@ -407,8 +435,15 @@ func (k *Kernel) audit(ctx context.Context, spread time.Duration) {
 		k.queue.AddAfter(target.EnvironmentID, workstats.Phase(target.EnvironmentID, spread), ReasonAudit)
 	}
 	// The same authoritative set retires health verdicts of environments
-	// whose rows vanished without a pass.
+	// whose rows vanished without a pass, and their live-read times.
 	k.sweepHealth(known, listedAt)
+	k.liveMu.Lock()
+	for id := range k.liveRead {
+		if !known[id] {
+			delete(k.liveRead, id)
+		}
+	}
+	k.liveMu.Unlock()
 	for _, namespace := range k.deps.Observed.ManagedNamespaces() {
 		if namespace.Environment != uuid.Nil && !known[namespace.Environment] {
 			slog.Warn("orphaned managed namespace retained",
