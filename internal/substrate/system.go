@@ -28,11 +28,15 @@ type SystemClaimOutputs struct {
 // project release paths). Level-triggered: callers re-invoke until
 // Provisioned, the substrate works toward it in the background.
 func (c *Controller) EnsureSystemClaim(ctx context.Context, key string, spec dbstore.ClaimSpec) (SystemClaimOutputs, error) {
-	row, err := c.deps.DB.EnsureClaim(ctx, dbstore.SystemOwner(key), spec)
+	row, changed, err := c.deps.DB.EnsureClaimChanged(ctx, dbstore.SystemOwner(key), spec)
 	if err != nil {
 		return SystemClaimOutputs{}, err
 	}
-	c.EnqueueClaim(row.ID)
+	// Like a service claim, a settled one is repaired on the substrate's
+	// cadence rather than on every caller's pass.
+	if changed || claim.Phase(row.Phase) != claim.PhaseProvisioned {
+		c.EnqueueClaim(row.ID, reasonObjectStore)
+	}
 	if claim.Phase(row.Phase) != claim.PhaseProvisioned {
 		waiting := c.WaitingReason(row.ID)
 		if waiting == "" {
@@ -64,6 +68,6 @@ func (c *Controller) ReleaseSystemClaim(ctx context.Context, key string) error {
 	if _, err := c.deps.DB.ReleaseClaim(ctx, row.ID); err != nil {
 		return err
 	}
-	c.EnqueueClaim(row.ID)
+	c.EnqueueClaim(row.ID, reasonRelease)
 	return nil
 }

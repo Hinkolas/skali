@@ -170,6 +170,39 @@ func TestEnsureClaimIdempotentAndDrift(t *testing.T) {
 	require.ErrorIs(t, err, ErrSpecConflict)
 }
 
+// A caller holding the live claim gets it back untouched when nothing
+// changed; a change, a conflict, or a missing claim takes the stored path.
+func TestEnsureClaimFromLive(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	ctx := context.Background()
+
+	created, err := f.svc.EnsureClaim(ctx, f.owner("data"), spec())
+	require.NoError(t, err)
+	same, changed, err := f.svc.EnsureClaimFrom(ctx, f.owner("data"), spec(), created)
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.Same(t, created, same)
+
+	drifted := spec()
+	drifted.StorageBytes = 2 << 30
+	updated, changed, err := f.svc.EnsureClaimFrom(ctx, f.owner("data"), drifted, created)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, created.ID, updated.ID)
+	require.Equal(t, int64(2<<30), updated.StorageBytes)
+
+	conflicting := drifted
+	conflicting.Major = 18
+	_, _, err = f.svc.EnsureClaimFrom(ctx, f.owner("data"), conflicting, updated)
+	require.ErrorIs(t, err, ErrSpecConflict)
+
+	fresh, changed, err := f.svc.EnsureClaimFrom(ctx, f.owner("cache"), spec(), nil)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.NotEqual(t, created.ID, fresh.ID)
+}
+
 func TestReleaseUnplacedClaimReleasesDirectly(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)

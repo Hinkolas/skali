@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"reflect"
 	"sync"
 
@@ -28,11 +29,22 @@ func (c *Client) SetPlatformCredentials(accessKey, secretKey string) {
 	c.platformAccessKey, c.platformSecretKey = accessKey, secretKey
 }
 
-// s3 builds a client for the S3 API as the platform identity, bound to
+// s3Transport carries every S3 call. It is shared, so the calls reuse their
+// connections, and a gateway that accepts a request but never answers it
+// fails the request after httpTimeout instead of holding it for as long as
+// the caller's context allows.
+var s3Transport = func() *http.Transport {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ResponseHeaderTimeout = httpTimeout
+	return transport
+}()
+
+// s3 returns a client for the S3 API as the platform identity, bound to
 // the gateway address the transport can dial (Service DNS in-cluster, a
 // port-forward from a laptop). Unlike the filer and master calls this
 // cannot ride the API server's service proxy: SigV4 covers the Host header
-// and the path the proxy rewrites.
+// and the path the proxy rewrites. The client is built once per address
+// and keypair.
 func (c *Client) s3(ctx context.Context) (*minio.Client, error) {
 	c.platformMu.Lock()
 	accessKey, secretKey := c.platformAccessKey, c.platformSecretKey
@@ -44,14 +56,22 @@ func (c *Client) s3(ctx context.Context) (*minio.Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	c.platformMu.Lock()
+	defer c.platformMu.Unlock()
+	built := c.s3Built
+	if c.s3Client != nil && built.address == address && built.accessKey == accessKey && built.secretKey == secretKey {
+		return c.s3Client, nil
+	}
 	client, err := minio.New(address, &minio.Options{
 		Creds:        credentials.NewStaticV4(accessKey, secretKey, ""),
 		Region:       Region,
 		BucketLookup: minio.BucketLookupPath,
+		Transport:    s3Transport,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("seaweed: s3 client: %w", err)
 	}
+	c.s3Client, c.s3Built = client, s3Binding{address: address, accessKey: accessKey, secretKey: secretKey}
 	return client, nil
 }
 
@@ -220,5 +240,14 @@ type platformCredentials struct {
 	platformMu        sync.Mutex
 	platformAccessKey string
 	platformSecretKey string
-	configMu          sync.Mutex
+	// s3Client is the S3 client last built, for the address and keypair in
+	// s3Built; guarded by platformMu.
+	s3Client *minio.Client
+	s3Built  s3Binding
+	configMu sync.Mutex
+}
+
+// s3Binding is what an S3 client was built for.
+type s3Binding struct {
+	address, accessKey, secretKey string
 }

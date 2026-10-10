@@ -146,38 +146,36 @@ func (s *Service) GetDeployment(ctx context.Context, id uuid.UUID) (*store.Deplo
 	return &row, nil
 }
 
-// setDeploymentStatus applies one guarded status change under a row lock,
-// optionally recording the revision the deployment produced.
+// setDeploymentStatus applies one guarded status change, optionally
+// recording the revision the deployment produced.
 func (s *Service) setDeploymentStatus(ctx context.Context, id uuid.UUID, to DeploymentStatus, revisionID uuid.UUID) error {
-	return s.st.WithTx(ctx, func(q *store.Queries) error {
-		return setDeploymentStatusTx(ctx, q, id, to, revisionID)
-	})
+	return setDeploymentStatusTx(ctx, s.st.Queries, id, to, revisionID)
 }
 
-// setDeploymentStatusTx is the guarded change itself, so a caller that
-// already owns a transaction (Promote) can make the status part of it.
+// setDeploymentStatusTx is the guarded change itself, one statement that
+// applies only from the statuses the machine allows, so a caller that owns
+// a transaction (Promote) can make the status part of it.
 func setDeploymentStatusTx(ctx context.Context, q *store.Queries, id uuid.UUID,
 	to DeploymentStatus, revisionID uuid.UUID) error {
-	row, err := q.GetDeploymentForUpdate(ctx, id)
-	if err != nil {
+	sources := DeploymentStatuses.Sources(to)
+	from := make([]string, len(sources))
+	for i, status := range sources {
+		from[i] = string(status)
+	}
+	_, err := q.MoveDeployment(ctx, store.MoveDeploymentParams{
+		ID: id, Status: string(to), RevisionID: utils.NilWhenZero(revisionID), FromStatuses: from,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		row, err := q.GetDeploymentByID(ctx, id)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrDeploymentNotFound
 		}
-		return fmt.Errorf("deploy: lock deployment: %w", err)
-	}
-	if !DeploymentStatuses.Can(DeploymentStatus(row.Status), to) {
+		if err != nil {
+			return fmt.Errorf("deploy: get deployment: %w", err)
+		}
 		return fmt.Errorf("%w: %s -> %s", ErrInvalidDeploymentTransition, row.Status, to)
 	}
-	if revisionID != uuid.Nil {
-		if err := q.SetDeploymentRevision(ctx, store.SetDeploymentRevisionParams{
-			ID: id, RevisionID: &revisionID,
-		}); err != nil {
-			return fmt.Errorf("deploy: set deployment revision: %w", err)
-		}
-	}
-	if err := q.SetDeploymentStatus(ctx, store.SetDeploymentStatusParams{
-		ID: id, Status: string(to),
-	}); err != nil {
+	if err != nil {
 		return fmt.Errorf("deploy: set deployment status: %w", err)
 	}
 	return nil

@@ -287,6 +287,20 @@ func TestPlaintextsResolvesPinnedVersions(t *testing.T) {
 	require.Error(t, err)
 	require.NotContains(t, err.Error(), "plant-value")
 	require.ErrorContains(t, err, "version 9")
+
+	// Several pins resolve together, each at its own version, and one
+	// unknown pin fails the whole set.
+	candidate, err := svc.Stage(ctx, envID, map[string]string{"API_KEY": "key-plant-value"})
+	require.NoError(t, err)
+	require.NoError(t, st.WithTx(ctx, func(q *store.Queries) error {
+		return svc.PromoteTx(ctx, q, envID, candidate.ID)
+	}))
+	plaintexts, err = svc.Plaintexts(ctx, envID, map[string]int{"SESSION_SECRET": 1, "API_KEY": 1})
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"SESSION_SECRET": "first-plant-value", "API_KEY": "key-plant-value"}, plaintexts)
+	_, err = svc.Plaintexts(ctx, envID, map[string]int{"SESSION_SECRET": 2, "API_KEY": 7})
+	require.ErrorContains(t, err, "API_KEY version 7")
+	require.NotContains(t, err.Error(), "plant-value")
 }
 
 // Unset tombstones the current generation: it disappears from listings, old

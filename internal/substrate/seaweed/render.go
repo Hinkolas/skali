@@ -304,10 +304,10 @@ func renderMasterService(namespace, name string) *corev1.Service {
 			ClusterIP:                "None",
 			PublishNotReadyAddresses: true,
 			Selector:                 map[string]string{"app": MasterService},
-			Ports: []corev1.ServicePort{
+			Ports: targetPorts([]corev1.ServicePort{
 				{Name: "http", Port: MasterPort},
 				{Name: "grpc", Port: MasterGRPCPort},
-			},
+			}),
 		},
 	}
 }
@@ -318,9 +318,19 @@ func renderService(namespace, name, _ string, selectorApp string, ports []corev1
 		ObjectMeta: objectMeta(namespace, name, selectorApp),
 		Spec: corev1.ServiceSpec{
 			Selector: map[string]string{"app": selectorApp},
-			Ports:    ports,
+			Ports:    targetPorts(ports),
 		},
 	}
+}
+
+// targetPorts targets each port's own number, as the server defaults an
+// unset target: a port rendered without one differs from the one the
+// server keeps, and an unchanged Service would apply again on every pass.
+func targetPorts(ports []corev1.ServicePort) []corev1.ServicePort {
+	for i := range ports {
+		ports[i].TargetPort = intstr.FromInt32(ports[i].Port)
+	}
+	return ports
 }
 
 func capabilitySelector() map[string]string {
@@ -336,6 +346,7 @@ func capabilitySelector() map[string]string {
 // (measured on the pin).
 func renderMasters(spec StoreSpec) *appsv1.StatefulSet {
 	peers := masterPeers(spec.Namespace, spec.Masters)
+	filesystem := corev1.PersistentVolumeFilesystem
 	// -volumeSizeLimitMB pins volumes small (8 GB, not the 30 GB default):
 	// volumes seal sooner, vacuum passes are smaller, rebalancing is
 	// finer-grained. New volumes only, which is why it is right from day
@@ -374,7 +385,9 @@ func renderMasters(spec StoreSpec) *appsv1.StatefulSet {
 						Env: []corev1.EnvVar{{
 							Name: "POD_NAME",
 							ValueFrom: &corev1.EnvVarSource{
-								FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.name"},
+								// The server's default version, rendered
+								// because the selector is replaced whole.
+								FieldRef: &corev1.ObjectFieldSelector{APIVersion: "v1", FieldPath: "metadata.name"},
 							},
 						}},
 						Ports: []corev1.ContainerPort{
@@ -409,7 +422,11 @@ func renderMasters(spec StoreSpec) *appsv1.StatefulSet {
 					}},
 				},
 			},
+			// The claim templates are replaced whole, so they carry what
+			// the server defaults in them: rendering less would differ from
+			// the StatefulSet the server keeps and apply on every pass.
 			VolumeClaimTemplates: []corev1.PersistentVolumeClaim{{
+				TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "PersistentVolumeClaim"},
 				ObjectMeta: metav1.ObjectMeta{Name: "data"},
 				Spec: corev1.PersistentVolumeClaimSpec{
 					AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
@@ -418,7 +435,9 @@ func renderMasters(spec StoreSpec) *appsv1.StatefulSet {
 							corev1.ResourceStorage: resource.MustParse("1Gi"),
 						},
 					},
+					VolumeMode: &filesystem,
 				},
+				Status: corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimPending},
 			}},
 		},
 	}
@@ -865,11 +884,11 @@ func RenderDevS3NodePort(namespace string) *corev1.Service {
 		Spec: corev1.ServiceSpec{
 			Type:     corev1.ServiceTypeNodePort,
 			Selector: map[string]string{"app": AllInOneApp},
-			Ports: []corev1.ServicePort{{
+			Ports: targetPorts([]corev1.ServicePort{{
 				Name:     "s3",
 				Port:     S3Port,
 				NodePort: bundle.S3NodePort,
-			}},
+			}}),
 		},
 	}
 }

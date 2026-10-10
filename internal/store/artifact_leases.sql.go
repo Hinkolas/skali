@@ -11,36 +11,37 @@ import (
 	"github.com/google/uuid"
 )
 
-const createArtifactLease = `-- name: CreateArtifactLease :exec
-INSERT INTO artifact_leases (revision_id, artifact_id)
-VALUES ($1, $2)
-ON CONFLICT DO NOTHING
+const listLeasedArtifacts = `-- name: ListLeasedArtifacts :many
+SELECT artifacts.id, artifacts.project_id, artifacts.application, artifacts.kind, artifacts.phase, artifacts.reference, artifacts.digest, artifacts.upstream, artifacts.context_hash, artifacts.provenance, artifacts.created_at, artifacts.updated_at, artifacts.verified_at FROM artifacts
+JOIN artifact_leases ON artifact_leases.artifact_id = artifacts.id
+WHERE artifact_leases.revision_id = $1
 `
 
-type CreateArtifactLeaseParams struct {
-	RevisionID uuid.UUID
-	ArtifactID uuid.UUID
-}
-
-func (q *Queries) CreateArtifactLease(ctx context.Context, arg CreateArtifactLeaseParams) error {
-	_, err := q.db.Exec(ctx, createArtifactLease, arg.RevisionID, arg.ArtifactID)
-	return err
-}
-
-const listArtifactLeasesByRevision = `-- name: ListArtifactLeasesByRevision :many
-SELECT revision_id, artifact_id, created_at FROM artifact_leases WHERE revision_id = $1
-`
-
-func (q *Queries) ListArtifactLeasesByRevision(ctx context.Context, revisionID uuid.UUID) ([]ArtifactLease, error) {
-	rows, err := q.db.Query(ctx, listArtifactLeasesByRevision, revisionID)
+// The artifacts a revision leases.
+func (q *Queries) ListLeasedArtifacts(ctx context.Context, revisionID uuid.UUID) ([]Artifact, error) {
+	rows, err := q.db.Query(ctx, listLeasedArtifacts, revisionID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ArtifactLease
+	var items []Artifact
 	for rows.Next() {
-		var i ArtifactLease
-		if err := rows.Scan(&i.RevisionID, &i.ArtifactID, &i.CreatedAt); err != nil {
+		var i Artifact
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.Application,
+			&i.Kind,
+			&i.Phase,
+			&i.Reference,
+			&i.Digest,
+			&i.Upstream,
+			&i.ContextHash,
+			&i.Provenance,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.VerifiedAt,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

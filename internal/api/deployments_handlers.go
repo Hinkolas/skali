@@ -6,6 +6,7 @@ import (
 	"errors"
 	"github.com/Hinkolas/skali/internal/diagnostic"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -99,9 +100,14 @@ type deploymentPayload struct {
 }
 
 func (h *deploymentsHandlers) actionPayloads(ctx context.Context, projectID uuid.UUID, actions []deploy.ArtifactAction) []artifactActionPayload {
+	// Only a build pushes into the project's release repository.
 	projectName := ""
-	if project, err := h.st.GetProjectByID(ctx, projectID); err == nil {
-		projectName = project.Name
+	if !h.registry.Disabled() && slices.ContainsFunc(actions, func(action deploy.ArtifactAction) bool {
+		return action.Action == "build"
+	}) {
+		if project, err := h.st.GetProjectByID(ctx, projectID); err == nil {
+			projectName = project.Name
+		}
 	}
 	payloads := make([]artifactActionPayload, len(actions))
 	for index, action := range actions {
@@ -673,7 +679,9 @@ func (h *deploymentsHandlers) heartbeatBuild(w http.ResponseWriter, r *http.Requ
 // POST /v1/runs/{id}/cancel: cancellation is explicit (detaching never
 // cancels) and applies the product policy: before promotion the artifact
 // window closes; after promotion but before activation the target returns
-// to the prior active revision; after activation cancellation is refused.
+// to the prior active revision, or, for a first deployment with none, stays
+// and its rollout continues without a run; after activation cancellation is
+// refused.
 func (h *deploymentsHandlers) cancelRun(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
 	if !ok {
@@ -693,73 +701,57 @@ func (h *deploymentsHandlers) cancelRun(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	fallback := false
+	var outcome deploy.CancelOutcome
+	environmentID := uuid.Nil
 	deployment, err := h.st.GetDeploymentByRunID(r.Context(), &id)
 	switch {
+	case err != nil && !errors.Is(err, pgx.ErrNoRows):
+		writeInternalError(r.Context(), w, "get deployment for run", err)
+		return
 	case err == nil && deployment.Status == string(deploy.DeploymentPreparing):
 		if err := h.deploy.CancelDeployment(r.Context(), deployment.ID, h.journal); err != nil {
 			writeDeployError(r.Context(), w, err)
 			return
 		}
-	case err == nil && deployment.Status == string(deploy.DeploymentPromoted):
-		if err := h.journal.FinishRun(r.Context(), id, journal.RunCancelled); err != nil &&
-			!errors.Is(err, journal.ErrInvalidTransition) {
-			writeInternalError(r.Context(), w, "cancel run", err)
+	case err == nil && deployment.Status == string(deploy.DeploymentPromoted) && deployment.RevisionID != nil:
+		environmentID = deployment.EnvironmentID
+		outcome, err = h.deploy.CancelRollout(r.Context(), deploy.CancelRolloutInput{
+			RunID: id, EnvironmentID: environmentID, RevisionID: deployment.RevisionID, Journal: h.journal,
+		})
+		if err != nil {
+			writeCancelError(r.Context(), w, err)
 			return
 		}
-		if deployment.RevisionID != nil {
-			rows, err := h.deploy.FallbackTarget(r.Context(), store.FallbackEnvironmentTargetParams{
-				EnvironmentID:    deployment.EnvironmentID,
-				TargetRevisionID: deployment.RevisionID,
-			})
-			if err != nil {
-				writeInternalError(r.Context(), w, "fall back target", err)
-				return
-			}
-			if rows > 0 {
-				fallback = true
-				h.reconcile.Enqueue(deployment.EnvironmentID)
-			}
-		}
-	case err == nil || errors.Is(err, pgx.ErrNoRows):
-		// Runs without a deployment row (reconcile runs, rollback runs):
-		// the journal is cancelled, and a rollback additionally
-		// returns the target to the prior active revision like a cancelled
-		// promotion.
-		if err := h.journal.FinishRun(r.Context(), id, journal.RunCancelled); err != nil &&
-			!errors.Is(err, journal.ErrInvalidTransition) {
-			writeInternalError(r.Context(), w, "cancel run", err)
+	case run.Kind == "rollback" && run.EnvironmentID != nil:
+		// A rollback returns the target to the prior active revision like a
+		// cancelled promotion.
+		environmentID = *run.EnvironmentID
+		outcome, err = h.deploy.CancelRollout(r.Context(), deploy.CancelRolloutInput{
+			RunID: id, EnvironmentID: environmentID, Journal: h.journal,
+		})
+		if err != nil {
+			writeCancelError(r.Context(), w, err)
 			return
-		}
-		if run.Kind == "rollback" && run.EnvironmentID != nil {
-			target, err := h.st.GetEnvironmentTarget(r.Context(), *run.EnvironmentID)
-			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-				writeInternalError(r.Context(), w, "get environment target", err)
-				return
-			}
-			if err == nil && target.TargetRevisionID != nil {
-				rows, err := h.deploy.FallbackTarget(r.Context(), store.FallbackEnvironmentTargetParams{
-					EnvironmentID:    *run.EnvironmentID,
-					TargetRevisionID: target.TargetRevisionID,
-				})
-				if err != nil {
-					writeInternalError(r.Context(), w, "fall back target", err)
-					return
-				}
-				if rows > 0 {
-					fallback = true
-					h.reconcile.Enqueue(*run.EnvironmentID)
-				}
-			}
 		}
 	default:
-		writeInternalError(r.Context(), w, "get deployment for run", err)
-		return
+		// Runs with no rollout to undo (reconcile, restart, teardown): the
+		// journal is cancelled.
+		if err := h.journal.FinishRun(r.Context(), id, journal.RunCancelled); err != nil {
+			if errors.Is(err, journal.ErrInvalidTransition) {
+				err = h.concludedRun(r.Context(), id)
+			}
+			writeCancelError(r.Context(), w, err)
+			return
+		}
+	}
+	if outcome.Fallback {
+		h.reconcile.EnqueueFor(environmentID, reconcile.ReasonAPI)
 	}
 	writeJSON(w, http.StatusOK, struct {
-		Status   string `json:"status"`
-		Fallback bool   `json:"fallback"`
-	}{"cancelled", fallback})
+		Status    string `json:"status"`
+		Fallback  bool   `json:"fallback"`
+		Continues bool   `json:"continues"`
+	}{"cancelled", outcome.Fallback, outcome.Continues})
 }
 
 func newDeploymentPayload(deployment *store.Deployment) deploymentPayload {
@@ -842,6 +834,38 @@ func parseDeploymentSelector(w http.ResponseWriter, definitionVersion, from, can
 	return uuid.Nil, fromEnvironmentID, candidateID, true
 }
 
+// concludedRun explains a cancel that found its run already finished.
+func (h *deploymentsHandlers) concludedRun(ctx context.Context, id uuid.UUID) error {
+	run, err := h.journal.Run(ctx, id)
+	if err != nil {
+		return err
+	}
+	return &deploy.RunConcludedError{Status: run.Status}
+}
+
+// writeCancelError answers a cancel that changed nothing.
+func writeCancelError(ctx context.Context, w http.ResponseWriter, err error) {
+	var concluded *deploy.RunConcludedError
+	switch {
+	case errors.As(err, &concluded):
+		writeError(w, http.StatusConflict, codeConflict, trimDeployPrefix(err))
+	case errors.Is(err, deploy.ErrRevisionActive):
+		writeError(w, http.StatusConflict, codeConflict,
+			"the rollout already activated its revision; roll back to undo it")
+	default:
+		// A busy environment, and an active revision whose hostname went to
+		// another environment meanwhile, answer like any other change.
+		writeDeployError(ctx, w, err)
+	}
+}
+
+// writeEnvironmentBusy answers a change that waited out a reconcile pass or
+// another change holding the environment lock.
+func writeEnvironmentBusy(w http.ResponseWriter) {
+	writeError(w, http.StatusConflict, codeEnvironmentBusy,
+		"the environment is busy with a reconcile pass or another change; retry shortly")
+}
+
 // writeDeployError maps deploy and registry sentinel errors onto the
 // envelope.
 func writeDeployError(ctx context.Context, w http.ResponseWriter, err error) {
@@ -880,6 +904,8 @@ func writeDeployError(ctx context.Context, w http.ResponseWriter, err error) {
 	case errors.Is(err, deploy.ErrDeploymentInFlight):
 		writeError(w, http.StatusConflict, codeDeploymentInFlight,
 			"another deployment is already running for this environment")
+	case errors.Is(err, deploy.ErrEnvironmentBusy):
+		writeEnvironmentBusy(w)
 	case errors.Is(err, deploy.ErrDestructiveChange):
 		writeError(w, http.StatusConflict, codeDestructiveChange,
 			"the plan contains destructive changes; review it and explicitly allow them")

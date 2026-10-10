@@ -9,8 +9,7 @@ RETURNING *;
 -- name: GetMaxRunLogSeq :one
 SELECT COALESCE(MAX(seq), 0)::bigint FROM run_logs WHERE attempt_id = $1;
 
--- The most recent line of a step across attempts; waiting steps append a
--- fresh reason only when it changed, so this is the dedupe read.
+-- The most recent line of a step across attempts.
 -- name: LatestStepLog :one
 SELECT run_logs.message
 FROM run_logs

@@ -4,10 +4,11 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/Hinkolas/skali/internal/project"
 	"github.com/Hinkolas/skali/internal/redact"
@@ -76,34 +77,43 @@ func TestRunLifecycleGuards(t *testing.T) {
 	// Terminal runs cannot be finished again.
 	require.ErrorIs(t, f.svc.FinishRun(ctx, run.ID, RunFailed), ErrInvalidTransition)
 	require.ErrorIs(t, f.svc.StartRun(ctx, uuid.New()), ErrNotFound)
+	require.ErrorIs(t, f.svc.FinishRun(ctx, uuid.New(), RunSucceeded), ErrNotFound)
+
+	// A queued run can only be cancelled.
+	queued, err := f.svc.CreateRun(ctx, RunInput{Kind: "deployment", EnvironmentID: f.environmentID})
+	require.NoError(t, err)
+	require.ErrorIs(t, f.svc.FinishRun(ctx, queued.ID, RunSucceeded), ErrInvalidTransition)
+	require.NoError(t, f.svc.FinishRun(ctx, queued.ID, RunCancelled))
+	row, err := f.svc.Run(ctx, queued.ID)
+	require.NoError(t, err)
+	require.Equal(t, "cancelled", row.Status)
+	require.NotNil(t, row.FinishedAt)
 }
 
-// A run whose start lost the environment's running-run race is removed
-// rather than left pending: nothing would ever finish it and the retention
-// caps only reclaim terminal runs.
-func TestDiscardRun(t *testing.T) {
+// A run begins running in one statement, and one that loses the
+// environment's running-run race leaves no row behind: nothing would ever
+// finish it and the retention caps only reclaim terminal runs.
+func TestBeginRun(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	ctx := context.Background()
+	input := RunInput{Kind: "reconcile", ProjectID: f.projectID, EnvironmentID: f.environmentID, Actor: "system:reconcile"}
 
-	running := f.startRun(t)
-	loser, err := f.svc.CreateRun(ctx, RunInput{
-		Kind: "reconcile", ProjectID: f.projectID, EnvironmentID: f.environmentID, Actor: "system:reconcile",
-	})
+	running, err := f.svc.BeginRun(ctx, input)
 	require.NoError(t, err)
-	require.ErrorIs(t, f.svc.StartRun(ctx, loser.ID), ErrRunConflict)
+	require.Equal(t, string(RunRunning), running.Status)
+	require.NotNil(t, running.StartedAt)
 
-	require.NoError(t, f.svc.DiscardRun(ctx, loser.ID))
-	_, err = f.st.GetRunByID(ctx, loser.ID)
-	require.ErrorIs(t, err, pgx.ErrNoRows)
-
-	// A run that did start is never removed underneath its writer.
-	require.NoError(t, f.svc.DiscardRun(ctx, running.ID))
-	kept, err := f.st.GetRunByID(ctx, running.ID)
+	_, err = f.svc.BeginRun(ctx, input)
+	require.ErrorIs(t, err, ErrRunConflict)
+	runs, err := f.st.ListRunsByEnvironment(ctx, &f.environmentID)
 	require.NoError(t, err)
-	require.Equal(t, string(RunRunning), kept.Status)
+	require.Len(t, runs, 1)
 
-	require.ErrorIs(t, f.svc.DiscardRun(ctx, uuid.New()), ErrNotFound)
+	require.NoError(t, f.svc.FinishRun(ctx, running.ID, RunSucceeded))
+	next, err := f.svc.BeginRun(ctx, input)
+	require.NoError(t, err)
+	require.NotEqual(t, running.ID, next.ID)
 }
 
 func TestStepAndAttemptGuards(t *testing.T) {
@@ -142,6 +152,193 @@ func TestStepAndAttemptGuards(t *testing.T) {
 	require.NoError(t, f.svc.FinishAttempt(ctx, retry.ID, AttemptSucceeded))
 	require.NoError(t, f.svc.SetStepStatus(ctx, step.ID, StepSucceeded))
 	require.NoError(t, f.svc.FinishRun(ctx, run.ID, RunSucceeded))
+
+	require.ErrorIs(t, f.svc.SetStepStatus(ctx, uuid.New(), StepRunning), ErrNotFound)
+	require.ErrorIs(t, f.svc.FinishAttempt(ctx, uuid.New(), AttemptSucceeded), ErrNotFound)
+}
+
+// Concurrent writers ensuring one step all get the same row, including
+// those whose statement snapshot predates the winner's insert.
+func TestEnsureStepConcurrently(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	ctx := context.Background()
+	run := f.startRun(t)
+
+	ids := make([]uuid.UUID, 8)
+	var group errgroup.Group
+	for i := range ids {
+		group.Go(func() error {
+			step, err := f.svc.EnsureStep(ctx, run.ID, nil, "apply:web", "Apply web")
+			if err == nil {
+				ids[i] = step.ID
+			}
+			return err
+		})
+	}
+	require.NoError(t, group.Wait())
+	for _, id := range ids {
+		require.Equal(t, ids[0], id)
+	}
+}
+
+// RecordStep creates a step by key or moves the existing one as the step
+// machine allows, writing one finished attempt per record in the same
+// statement; a deduplicated record whose line is unchanged adds nothing.
+func TestRecordStep(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	ctx := context.Background()
+	run := f.startRun(t)
+	redactor := redact.New(map[string]string{"s3cr3t": "DB_PASSWORD"})
+	record := func(key string, to StepStatus, line string, dedupe bool) (StepState, error) {
+		return f.svc.RecordStep(ctx, StepRecord{RunID: run.ID, Key: key, Title: key, To: to,
+			Entries: []LogEntry{{Level: "info", Message: line}}, Dedupe: dedupe}, redactor)
+	}
+	lines := func(stepID uuid.UUID) []string {
+		events, err := f.svc.StepLogs(ctx, stepID, Cursor{}, 10)
+		require.NoError(t, err)
+		messages := make([]string, 0, len(events))
+		for _, event := range events {
+			messages = append(messages, event.Message)
+		}
+		return messages
+	}
+
+	// A new step waits with its redacted line; the same line again writes
+	// nothing, and a new one appends.
+	waiting, err := record("verify", StepWaiting, "pool starting with s3cr3t", true)
+	require.NoError(t, err)
+	require.Equal(t, StepState{ID: waiting.ID, Status: StepWaiting,
+		Latest: "pool starting with [redacted:DB_PASSWORD]"}, waiting)
+	again, err := record("verify", StepWaiting, "pool starting with s3cr3t", true)
+	require.NoError(t, err)
+	require.Equal(t, waiting, again)
+	_, err = record("verify", StepWaiting, "database applying", true)
+	require.NoError(t, err)
+	require.Equal(t, []string{"pool starting with [redacted:DB_PASSWORD]", "database applying"}, lines(waiting.ID))
+	states, err := f.svc.StepStates(ctx, run.ID)
+	require.NoError(t, err)
+	require.Equal(t, map[string]StepState{
+		"verify": {ID: waiting.ID, Status: StepWaiting, Latest: "database applying"},
+	}, states)
+
+	// Succeeding with the unchanged line moves the step as if through
+	// running and adds no line; a terminal step is refused.
+	done, err := record("verify", StepSucceeded, "database applying", true)
+	require.NoError(t, err)
+	require.Equal(t, StepSucceeded, done.Status)
+	require.Len(t, lines(waiting.ID), 2)
+	tree, err := f.svc.RunTree(ctx, run.ID)
+	require.NoError(t, err)
+	require.Equal(t, "succeeded", tree.Steps[0].Step.Status)
+	require.NotNil(t, tree.Steps[0].Step.StartedAt)
+	require.NotNil(t, tree.Steps[0].Step.FinishedAt)
+	refused, err := record("verify", StepWaiting, "late", true)
+	require.ErrorIs(t, err, ErrInvalidTransition)
+	require.Equal(t, StepState{ID: waiting.ID, Status: StepSucceeded}, refused)
+	require.Len(t, lines(waiting.ID), 2)
+
+	// A step with a running attempt is refused.
+	busy, err := f.svc.EnsureStep(ctx, run.ID, nil, "apply:worker", "Apply worker")
+	require.NoError(t, err)
+	require.NoError(t, f.svc.SetStepStatus(ctx, busy.ID, StepRunning))
+	_, err = f.svc.StartAttempt(ctx, busy.ID)
+	require.NoError(t, err)
+	_, err = record("apply:worker", StepSucceeded, "applied", false)
+	require.ErrorIs(t, err, ErrAttemptConflict)
+
+	// A completed step is created under its parent with a failed attempt.
+	failed, err := f.svc.RecordStep(ctx, StepRecord{RunID: run.ID, ParentID: &busy.ID, Key: "apply:web",
+		Title: "Apply web", To: StepFailed, Entries: []LogEntry{{Level: "error", Message: "boom"}}}, nil)
+	require.NoError(t, err)
+	step, err := f.st.GetStepByID(ctx, failed.ID)
+	require.NoError(t, err)
+	require.Equal(t, "failed", step.Status)
+	require.Equal(t, &busy.ID, step.ParentID)
+	var status string
+	require.NoError(t, f.st.Pool.QueryRow(ctx,
+		"SELECT status FROM attempts WHERE step_id = $1", failed.ID).Scan(&status))
+	require.Equal(t, "failed", status)
+	require.Equal(t, []string{"boom"}, lines(failed.ID))
+
+	// A step that starts is created running without an attempt, and its
+	// outcome lands as the one finished attempt, published live with
+	// redacted fields.
+	started, err := f.svc.RecordStep(ctx, StepRecord{RunID: run.ID, Key: "revision", Title: "Create revision",
+		To: StepRunning}, nil)
+	require.NoError(t, err)
+	require.Equal(t, StepRunning, started.Status)
+	var attempts int
+	require.NoError(t, f.st.Pool.QueryRow(ctx,
+		"SELECT count(*) FROM attempts WHERE step_id = $1", started.ID).Scan(&attempts))
+	require.Zero(t, attempts)
+	_, err = f.svc.RecordStep(ctx, StepRecord{RunID: run.ID, Key: "revision", To: StepRunning,
+		Entries: []LogEntry{{Level: "info", Message: "early"}}}, nil)
+	require.Error(t, err, "a step that starts writes no lines")
+	subscription, err := f.svc.Subscribe(ctx, started.ID, Cursor{})
+	require.NoError(t, err)
+	defer subscription.Cancel()
+	_, err = f.svc.RecordStep(ctx, StepRecord{RunID: run.ID, Key: "revision", To: StepSucceeded, Entries: []LogEntry{
+		{Level: "info", Message: "stored with s3cr3t"},
+		{Level: "warn", Message: "slow", Fields: map[string]any{"detail": "s3cr3t", "count": 2}},
+	}}, redactor)
+	require.NoError(t, err)
+	events, err := f.svc.StepLogs(ctx, started.ID, Cursor{}, 10)
+	require.NoError(t, err)
+	require.Len(t, events, 2)
+	require.Equal(t, int64(1), events[0].AttemptNumber)
+	require.Equal(t, []int64{1, 2}, []int64{events[0].Seq, events[1].Seq})
+	require.Equal(t, "stored with [redacted:DB_PASSWORD]", events[0].Message)
+	require.Equal(t, "warn", events[1].Level)
+	require.JSONEq(t, `{"count": 2, "detail": "[redacted:DB_PASSWORD]"}`, string(events[1].Fields))
+	live := <-subscription.Events
+	require.Equal(t, events[0].Message, live.Message)
+	require.Equal(t, int64(1), live.Seq)
+}
+
+// A record whose statement snapshot predates another writer's insert of
+// the step neither finds nor creates it; it records again and lands on the
+// step that writer created.
+func TestRecordStepAfterConcurrentInsert(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	ctx := context.Background()
+	run := f.startRun(t)
+
+	tx, err := f.st.Pool.Begin(ctx)
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback(ctx) }()
+	inserted := uuid.New()
+	_, err = tx.Exec(ctx, `INSERT INTO steps (id, run_id, key, title, status)
+		VALUES ($1, $2, 'verify', 'Verify health', 'waiting')`, inserted, run.ID)
+	require.NoError(t, err)
+
+	type result struct {
+		state StepState
+		err   error
+	}
+	recorded := make(chan result, 1)
+	go func() {
+		state, err := f.svc.RecordStep(ctx, StepRecord{RunID: run.ID, Key: "verify", Title: "Verify health",
+			To: StepWaiting, Entries: []LogEntry{{Level: "info", Message: "waiting"}}, Dedupe: true}, nil)
+		recorded <- result{state, err}
+	}()
+	// The record's insert waits on the uncommitted one.
+	require.Eventually(t, func() bool {
+		var waiting int
+		require.NoError(t, f.st.Pool.QueryRow(ctx, `SELECT count(*) FROM pg_stat_activity
+			WHERE datname = current_database() AND wait_event_type = 'Lock'`).Scan(&waiting))
+		return waiting > 0
+	}, 10*time.Second, 10*time.Millisecond)
+	require.NoError(t, tx.Commit(ctx))
+
+	got := <-recorded
+	require.NoError(t, got.err)
+	require.Equal(t, inserted, got.state.ID)
+	events, err := f.svc.StepLogs(ctx, inserted, Cursor{}, 10)
+	require.NoError(t, err)
+	require.Len(t, events, 1)
 }
 
 func TestFinishRunForcesTerminality(t *testing.T) {
@@ -180,6 +377,106 @@ func TestFinishRunForcesTerminality(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "failed", closed.Status)
 	require.NotNil(t, closed.FinishedAt)
+}
+
+// waitUntilBlocked waits until a statement whose text holds marker waits
+// on a lock, or until done delivered: a statement that should have waited
+// and did not then fails on what it wrote, not on the wait.
+func waitUntilBlocked[T any](t *testing.T, st *store.Store, marker string, done chan T) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		var waiting int
+		require.NoError(t, st.Pool.QueryRow(context.Background(), `SELECT count(*) FROM pg_stat_activity
+			WHERE datname = current_database() AND wait_event_type = 'Lock' AND query LIKE '%' || $1 || '%'`,
+			marker).Scan(&waiting))
+		return waiting > 0 || len(done) > 0
+	}, 10*time.Second, 10*time.Millisecond)
+}
+
+// A finish waits for a step and an attempt whose inserts have not
+// committed yet, and then closes them with the rest of the run: its
+// snapshot never misses work written under the run before it.
+func TestFinishRunWaitsForUncommittedSteps(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	ctx := context.Background()
+	run := f.startRun(t)
+
+	tx, err := f.st.Pool.Begin(ctx)
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback(ctx) }()
+	pending, running, attempt := uuid.New(), uuid.New(), uuid.New()
+	_, err = tx.Exec(ctx, `INSERT INTO steps (id, run_id, key, title) VALUES ($1, $2, 'pending', 'Pending')`,
+		pending, run.ID)
+	require.NoError(t, err)
+	_, err = tx.Exec(ctx, `INSERT INTO steps (id, run_id, key, title, status, started_at)
+		VALUES ($1, $2, 'running', 'Running', 'running', now())`, running, run.ID)
+	require.NoError(t, err)
+	_, err = tx.Exec(ctx, `INSERT INTO attempts (id, step_id, number, executor_id) VALUES ($1, $2, 1, 'other')`,
+		attempt, running)
+	require.NoError(t, err)
+
+	finished := make(chan error, 1)
+	go func() { finished <- f.svc.FinishRun(ctx, run.ID, RunCancelled) }()
+	waitUntilBlocked(t, f.st, "LockRunForFinish", finished)
+	require.NoError(t, tx.Commit(ctx))
+	require.NoError(t, <-finished)
+
+	for id, want := range map[uuid.UUID]string{pending: "skipped", running: "cancelled"} {
+		step, err := f.st.GetStepByID(ctx, id)
+		require.NoError(t, err)
+		require.Equal(t, want, step.Status)
+	}
+	closed, err := f.st.GetAttemptByID(ctx, attempt)
+	require.NoError(t, err)
+	require.Equal(t, "cancelled", closed.Status)
+}
+
+// Nothing is journaled under a finished run: a step write that arrives
+// while the finish is committing waits for it and then writes nothing, and
+// so does every later one. The refusal is an invalid transition, so
+// callers that tolerate a refused step tolerate it too.
+func TestNothingIsJournaledUnderAFinishedRun(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	ctx := context.Background()
+	run := f.startRun(t)
+	existing, err := f.svc.EnsureStep(ctx, run.ID, nil, "existing", "Existing")
+	require.NoError(t, err)
+	require.NoError(t, f.svc.SetStepStatus(ctx, existing.ID, StepRunning))
+
+	// A finish in flight holds the run row until it commits.
+	tx, err := f.st.Pool.Begin(ctx)
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback(ctx) }()
+	_, err = tx.Exec(ctx, `SELECT 1 FROM runs WHERE id = $1 FOR UPDATE`, run.ID)
+	require.NoError(t, err)
+	_, err = tx.Exec(ctx, `UPDATE runs SET status = 'cancelled', finished_at = now() WHERE id = $1`, run.ID)
+	require.NoError(t, err)
+
+	ensured := make(chan error, 1)
+	go func() {
+		_, err := f.svc.EnsureStep(ctx, run.ID, nil, "late", "Late")
+		ensured <- err
+	}()
+	waitUntilBlocked(t, f.st, "EnsureStep", ensured)
+	require.NoError(t, tx.Commit(ctx))
+	require.ErrorIs(t, <-ensured, ErrRunFinished)
+
+	_, err = f.svc.RecordStep(ctx, StepRecord{RunID: run.ID, Key: "later", Title: "Later", To: StepSucceeded,
+		Entries: []LogEntry{{Level: "info", Message: "done"}}}, nil)
+	require.ErrorIs(t, err, ErrRunFinished)
+	require.ErrorIs(t, err, ErrInvalidTransition)
+	_, err = f.svc.RecordStep(ctx, StepRecord{RunID: run.ID, Key: "existing", Title: "Existing", To: StepSucceeded}, nil)
+	require.ErrorIs(t, err, ErrRunFinished)
+	_, err = f.svc.StartAttempt(ctx, existing.ID)
+	require.ErrorIs(t, err, ErrRunFinished)
+
+	tree, err := f.svc.RunTree(ctx, run.ID)
+	require.NoError(t, err)
+	require.Len(t, tree.Steps, 1)
+	require.Equal(t, "running", tree.Steps[0].Step.Status, "the raw finish above closed nothing")
+	require.Empty(t, tree.Steps[0].Attempts)
 }
 
 // FailRun records the one-line reason lists and closing lines show; other
@@ -315,6 +612,27 @@ func TestPruneKeepsNewestRuns(t *testing.T) {
 		require.NoError(t, f.svc.FinishRun(ctx, run.ID, RunSucceeded))
 	}
 	runs, err := f.svc.ListRuns(ctx, f.environmentID)
+	require.NoError(t, err)
+	require.Len(t, runs, MaxRunsPerEnvironment)
+
+	// A terminal run past the age cap goes anywhere, with the next finish
+	// of any run; a younger one and a running one stay.
+	aged, err := f.svc.CreateRun(ctx, RunInput{Kind: "rotation", Actor: "tester"})
+	require.NoError(t, err)
+	require.NoError(t, f.svc.StartRun(ctx, aged.ID))
+	require.NoError(t, f.svc.FinishRun(ctx, aged.ID, RunSucceeded))
+	_, err = f.st.Pool.Exec(ctx, "UPDATE runs SET finished_at = $2 WHERE id = $1",
+		aged.ID, time.Now().Add(-MaxRunAge-time.Hour))
+	require.NoError(t, err)
+	young, err := f.svc.CreateRun(ctx, RunInput{Kind: "rotation", Actor: "tester"})
+	require.NoError(t, err)
+	require.NoError(t, f.svc.StartRun(ctx, young.ID))
+	require.NoError(t, f.svc.FinishRun(ctx, young.ID, RunSucceeded))
+	_, err = f.svc.Run(ctx, aged.ID)
+	require.ErrorIs(t, err, ErrNotFound)
+	_, err = f.svc.Run(ctx, young.ID)
+	require.NoError(t, err)
+	runs, err = f.svc.ListRuns(ctx, f.environmentID)
 	require.NoError(t, err)
 	require.Len(t, runs, MaxRunsPerEnvironment)
 }

@@ -46,6 +46,77 @@ func (q *Queries) FallbackEnvironmentTarget(ctx context.Context, arg FallbackEnv
 	return result.RowsAffected(), nil
 }
 
+const getEnvironmentPass = `-- name: GetEnvironmentPass :one
+SELECT environments.id, environments.project_id, environments.name, environments.created_at, environments.updated_at, environments.max_role, environments.deploy_policy, environments.promote_from, environments.priority, environments.backup_schedule, environments.backup_retention_seconds, environments.backup_strategy, environments.previous_names, environments.backup_namespace, environment_targets.environment_id, environment_targets.target_revision_id, environment_targets.active_revision_id, environment_targets.updated_at, environment_targets.state, environment_targets.restarted_at,
+       runs.id AS run_id, runs.kind AS run_kind, deployments.status AS deployment_status,
+       (SELECT jsonb_object_agg(environment_intercepts.application_key, environment_intercepts.ports)
+        FROM environment_intercepts
+        WHERE environment_intercepts.environment_id = environments.id)::jsonb AS intercepts,
+       (SELECT jsonb_object_agg(environment_restarts.application_key, environment_restarts.restarted_at)
+        FROM environment_restarts
+        WHERE environment_restarts.environment_id = environments.id)::jsonb AS restarts,
+       EXISTS (SELECT 1 FROM hostname_claims
+               WHERE hostname_claims.environment_id = environments.id) AS claims_hostnames
+FROM environments
+JOIN environment_targets ON environment_targets.environment_id = environments.id
+LEFT JOIN runs ON runs.environment_id = environments.id AND runs.status = 'running'
+LEFT JOIN deployments ON runs.kind = 'deployment'
+    AND deployments.environment_id = environments.id AND deployments.run_id = runs.id
+WHERE environments.id = $1
+`
+
+type GetEnvironmentPassRow struct {
+	Environment       Environment
+	EnvironmentTarget EnvironmentTarget
+	RunID             *uuid.UUID
+	RunKind           *string
+	DeploymentStatus  *string
+	Intercepts        []byte
+	Restarts          []byte
+	ClaimsHostnames   bool
+}
+
+// GetEnvironmentPass reads what a reconcile pass starts from in one round
+// trip: the environment, its target pointers, and its running run with,
+// for a deployment run, the status of its deployment, which are NULL when
+// nothing runs. intercepts maps each intercepted application to its host
+// ports and restarts each restarted application to its stamp; both are
+// NULL when empty. claims_hostnames reports whether the environment holds
+// any hostname claim.
+func (q *Queries) GetEnvironmentPass(ctx context.Context, id uuid.UUID) (GetEnvironmentPassRow, error) {
+	row := q.db.QueryRow(ctx, getEnvironmentPass, id)
+	var i GetEnvironmentPassRow
+	err := row.Scan(
+		&i.Environment.ID,
+		&i.Environment.ProjectID,
+		&i.Environment.Name,
+		&i.Environment.CreatedAt,
+		&i.Environment.UpdatedAt,
+		&i.Environment.MaxRole,
+		&i.Environment.DeployPolicy,
+		&i.Environment.PromoteFrom,
+		&i.Environment.Priority,
+		&i.Environment.BackupSchedule,
+		&i.Environment.BackupRetentionSeconds,
+		&i.Environment.BackupStrategy,
+		&i.Environment.PreviousNames,
+		&i.Environment.BackupNamespace,
+		&i.EnvironmentTarget.EnvironmentID,
+		&i.EnvironmentTarget.TargetRevisionID,
+		&i.EnvironmentTarget.ActiveRevisionID,
+		&i.EnvironmentTarget.UpdatedAt,
+		&i.EnvironmentTarget.State,
+		&i.EnvironmentTarget.RestartedAt,
+		&i.RunID,
+		&i.RunKind,
+		&i.DeploymentStatus,
+		&i.Intercepts,
+		&i.Restarts,
+		&i.ClaimsHostnames,
+	)
+	return i, err
+}
+
 const getEnvironmentTarget = `-- name: GetEnvironmentTarget :one
 SELECT environment_id, target_revision_id, active_revision_id, updated_at, state, restarted_at FROM environment_targets WHERE environment_id = $1
 `
@@ -188,21 +259,24 @@ func (q *Queries) SetEnvironmentActiveRevision(ctx context.Context, arg SetEnvir
 
 const setEnvironmentTarget = `-- name: SetEnvironmentTarget :execrows
 UPDATE environment_targets
-SET target_revision_id = $2, state = 'active', updated_at = now()
-WHERE environment_id = $1 AND state <> 'releasing'
+SET target_revision_id = $1, state = 'active', updated_at = now(),
+    restarted_at = CASE WHEN $2::boolean THEN now() ELSE restarted_at END
+WHERE environment_id = $3 AND state <> 'releasing'
 `
 
 type SetEnvironmentTargetParams struct {
-	EnvironmentID    uuid.UUID
 	TargetRevisionID *uuid.UUID
+	Restart          bool
+	EnvironmentID    uuid.UUID
 }
 
 // The single writer of the target pointer; runs only inside the deploy
 // promotion or rollback transaction. Promoting resurrects an environment
 // that was taken down, but never one that is releasing: purge is one-way,
-// so a promote racing a purge fails on the 0-row result.
+// so a promote racing a purge fails on the 0-row result. With restart set,
+// the same write stamps a workload restart (a forced deployment).
 func (q *Queries) SetEnvironmentTarget(ctx context.Context, arg SetEnvironmentTargetParams) (int64, error) {
-	result, err := q.db.Exec(ctx, setEnvironmentTarget, arg.EnvironmentID, arg.TargetRevisionID)
+	result, err := q.db.Exec(ctx, setEnvironmentTarget, arg.TargetRevisionID, arg.Restart, arg.EnvironmentID)
 	if err != nil {
 		return 0, err
 	}

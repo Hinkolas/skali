@@ -12,6 +12,50 @@ import (
 	"github.com/google/uuid"
 )
 
+const beginRun = `-- name: BeginRun :one
+INSERT INTO runs (id, kind, project_id, environment_id, actor, bypass_protection, status, started_at)
+VALUES ($1, $2, $3, $4, $5, $6, 'running', now())
+RETURNING id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection, failure
+`
+
+type BeginRunParams struct {
+	ID               uuid.UUID
+	Kind             string
+	ProjectID        *uuid.UUID
+	EnvironmentID    *uuid.UUID
+	Actor            string
+	BypassProtection bool
+}
+
+// BeginRun creates a run already running. The partial unique index turns
+// a second running run for the same environment into a unique violation,
+// and then no row exists.
+func (q *Queries) BeginRun(ctx context.Context, arg BeginRunParams) (Run, error) {
+	row := q.db.QueryRow(ctx, beginRun,
+		arg.ID,
+		arg.Kind,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.Actor,
+		arg.BypassProtection,
+	)
+	var i Run
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.Actor,
+		&i.Status,
+		&i.CreatedAt,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.BypassProtection,
+		&i.Failure,
+	)
+	return i, err
+}
+
 const countRunningRuns = `-- name: CountRunningRuns :one
 SELECT count(*) FROM runs WHERE status = 'running'
 `
@@ -66,58 +110,52 @@ func (q *Queries) CreateRun(ctx context.Context, arg CreateRunParams) (Run, erro
 	return i, err
 }
 
-const deleteAgedTerminalRuns = `-- name: DeleteAgedTerminalRuns :execrows
-DELETE FROM runs
-WHERE status IN ('succeeded', 'failed', 'cancelled') AND finished_at < $1
-`
-
-func (q *Queries) DeleteAgedTerminalRuns(ctx context.Context, finishedAt *time.Time) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteAgedTerminalRuns, finishedAt)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
-const deleteExcessTerminalRuns = `-- name: DeleteExcessTerminalRuns :execrows
-DELETE FROM runs WHERE id IN (
-    SELECT terminal.id FROM runs AS terminal
-    WHERE terminal.environment_id = $1
-      AND terminal.status IN ('succeeded', 'failed', 'cancelled')
-    ORDER BY terminal.created_at DESC
-    OFFSET $2
+const finishRun = `-- name: FinishRun :one
+WITH run AS (
+    UPDATE runs SET status = $1::text, finished_at = now(), failure = $2::text
+    WHERE runs.id = $3::uuid AND runs.status = ANY($4::text[])
+    RETURNING runs.id, runs.environment_id
+), closed_attempts AS (
+    UPDATE attempts SET status = $5::text, finished_at = now()
+    FROM steps, run
+    WHERE attempts.step_id = steps.id AND steps.run_id = run.id AND attempts.status = 'running'
+), closed_steps AS (
+    UPDATE steps SET
+        status = CASE WHEN steps.status = 'running' THEN $5::text ELSE 'skipped' END,
+        finished_at = now()
+    FROM run
+    WHERE steps.run_id = run.id AND steps.status IN ('pending', 'waiting', 'running')
 )
+SELECT run.environment_id FROM run
 `
 
-type DeleteExcessTerminalRunsParams struct {
-	EnvironmentID *uuid.UUID
-	Offset        int32
+type FinishRunParams struct {
+	Status       string
+	Failure      *string
+	ID           uuid.UUID
+	FromStatuses []string
+	CloseStatus  string
 }
 
-// Retention: drop terminal runs beyond the newest keep-count of one
-// environment, and terminal runs older than the age cutoff anywhere.
-func (q *Queries) DeleteExcessTerminalRuns(ctx context.Context, arg DeleteExcessTerminalRunsParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteExcessTerminalRuns, arg.EnvironmentID, arg.Offset)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
-const deletePendingRun = `-- name: DeletePendingRun :execrows
-DELETE FROM runs WHERE id = $1 AND status = 'pending'
-`
-
-// A run that never started explains nothing and nothing will ever finish
-// it: the creator removes the row instead of stranding it pending, which
-// the terminal-only retention below would never reclaim. Guarded on the
-// status so a run that did start is never deleted underneath its writer.
-func (q *Queries) DeletePendingRun(ctx context.Context, id uuid.UUID) (int64, error) {
-	result, err := q.db.Exec(ctx, deletePendingRun, id)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+// FinishRun moves a run to a terminal status, and every non-terminal step
+// and attempt of the run with it: running work adopts close_status,
+// unstarted steps are skipped. It applies only from one of from_statuses,
+// which the journal derives from its run machine; otherwise nothing is
+// written and no row returns. The failure text is only meaningful with
+// status 'failed'; the journal passes NULL for every other terminal
+// status. Send it through store.FinishRun, after LockRunForFinish: on its
+// own its snapshot misses a step whose insert has not committed yet.
+func (q *Queries) FinishRun(ctx context.Context, arg FinishRunParams) (*uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, finishRun,
+		arg.Status,
+		arg.Failure,
+		arg.ID,
+		arg.FromStatuses,
+		arg.CloseStatus,
+	)
+	var environment_id *uuid.UUID
+	err := row.Scan(&environment_id)
+	return environment_id, err
 }
 
 const getRunByID = `-- name: GetRunByID :one
@@ -237,6 +275,10 @@ const listRunsByEnvironment = `-- name: ListRunsByEnvironment :many
 SELECT id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection, failure FROM runs WHERE environment_id = $1 ORDER BY created_at DESC
 `
 
+// A run that never started explains nothing and nothing will ever finish
+// it: the creator removes the row instead of stranding it pending, which
+// the terminal-only retention below would never reclaim. Guarded on the
+// status so a run that did start is never deleted underneath its writer.
 func (q *Queries) ListRunsByEnvironment(ctx context.Context, environmentID *uuid.UUID) ([]Run, error) {
 	rows, err := q.db.Query(ctx, listRunsByEnvironment, environmentID)
 	if err != nil {
@@ -269,20 +311,17 @@ func (q *Queries) ListRunsByEnvironment(ctx context.Context, environmentID *uuid
 	return items, nil
 }
 
-const markRunFinished = `-- name: MarkRunFinished :exec
-UPDATE runs SET status = $2, finished_at = now(), failure = $3 WHERE id = $1
+const lockRunForFinish = `-- name: LockRunForFinish :exec
+SELECT 1 FROM runs WHERE id = $1 FOR UPDATE
 `
 
-type MarkRunFinishedParams struct {
-	ID      uuid.UUID
-	Status  string
-	Failure *string
-}
-
-// The failure text is only meaningful with status 'failed'; the journal
-// passes NULL for every other terminal status.
-func (q *Queries) MarkRunFinished(ctx context.Context, arg MarkRunFinishedParams) error {
-	_, err := q.db.Exec(ctx, markRunFinished, arg.ID, arg.Status, arg.Failure)
+// LockRunForFinish is the first of a finish's two statements (see
+// store.FinishRun). FOR UPDATE conflicts with the KEY SHARE lock every
+// journal write that adds a step or an attempt holds on its run, so the
+// finish waits until those writes commit, and later ones wait for the
+// finish.
+func (q *Queries) LockRunForFinish(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, lockRunForFinish, id)
 	return err
 }
 
@@ -292,5 +331,35 @@ UPDATE runs SET status = 'running', started_at = now() WHERE id = $1
 
 func (q *Queries) MarkRunRunning(ctx context.Context, id uuid.UUID) error {
 	_, err := q.db.Exec(ctx, markRunRunning, id)
+	return err
+}
+
+const pruneRuns = `-- name: PruneRuns :exec
+WITH excess AS (
+    DELETE FROM runs WHERE runs.id IN (
+        SELECT terminal.id FROM runs AS terminal
+        WHERE terminal.environment_id = $2::uuid
+          AND terminal.status IN ('succeeded', 'failed', 'cancelled')
+        ORDER BY terminal.created_at DESC
+        OFFSET $3::bigint
+    )
+    RETURNING runs.id
+)
+DELETE FROM runs
+WHERE runs.status IN ('succeeded', 'failed', 'cancelled') AND runs.finished_at < $1::timestamptz
+  AND runs.id NOT IN (SELECT excess.id FROM excess)
+`
+
+type PruneRunsParams struct {
+	Cutoff        time.Time
+	EnvironmentID *uuid.UUID
+	Keep          int64
+}
+
+// Retention: drop terminal runs beyond the newest keep-count of one
+// environment (none when environment_id is NULL), and terminal runs older
+// than the age cutoff anywhere.
+func (q *Queries) PruneRuns(ctx context.Context, arg PruneRunsParams) error {
+	_, err := q.db.Exec(ctx, pruneRuns, arg.Cutoff, arg.EnvironmentID, arg.Keep)
 	return err
 }

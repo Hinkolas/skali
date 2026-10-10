@@ -75,11 +75,16 @@ type ClusterSpec struct {
 func RenderCluster(spec ClusterSpec) *unstructured.Unstructured {
 	roles := make([]any, 0, len(spec.Roles))
 	for _, role := range spec.Roles {
+		// The roles list is atomic, so each entry carries the CRD's
+		// default connection limit: an entry without it differs from the
+		// one the server keeps, and an unchanged pool would apply again
+		// on every pass.
 		entry := map[string]any{
-			"name":    role.Name,
-			"ensure":  "present",
-			"login":   role.Login,
-			"inherit": true,
+			"name":            role.Name,
+			"ensure":          "present",
+			"login":           role.Login,
+			"inherit":         true,
+			"connectionLimit": int64(-1),
 		}
 		if role.SecretName != "" {
 			entry["passwordSecret"] = map[string]any{"name": role.SecretName}
@@ -274,8 +279,9 @@ func RenderMetricsService(namespace, poolName string) *corev1.Service {
 				"cnpg.io/instanceRole": "primary",
 			},
 			Ports: []corev1.ServicePort{{
-				Name: "metrics",
-				Port: MetricsPort,
+				Name:       "metrics",
+				Port:       MetricsPort,
+				TargetPort: intstr.FromInt32(MetricsPort),
 			}},
 		},
 	}
@@ -372,9 +378,10 @@ func RenderPrimaryNodePortService(namespace, poolName string, nodePort int32) *c
 				"cnpg.io/instanceRole": "primary",
 			},
 			Ports: []corev1.ServicePort{{
-				Name:     "postgres",
-				Port:     5432,
-				NodePort: nodePort,
+				Name:       "postgres",
+				Port:       5432,
+				TargetPort: intstr.FromInt32(5432),
+				NodePort:   nodePort,
 			}},
 		},
 	}

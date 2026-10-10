@@ -1,6 +1,7 @@
 package observe
 
 import (
+	"sort"
 	"testing"
 	"time"
 
@@ -141,7 +142,8 @@ func TestNodeRecords(t *testing.T) {
 	store := NewStore(nil)
 	require.Empty(t, store.Nodes())
 
-	store.SetNodeRecord(NodeRecord{Name: "b", Role: "agent", Arch: "amd64", Ready: true, Schedulable: true})
+	require.True(t, store.SetNodeRecord(NodeRecord{Name: "b", Role: "agent", Arch: "amd64", Ready: true, Schedulable: true}),
+		"a new node is a change")
 	store.SetNodeRecord(NodeRecord{Name: "a", Role: "server", Arch: "arm64", Ready: true, Schedulable: true})
 
 	nodes := store.Nodes()
@@ -150,8 +152,15 @@ func TestNodeRecords(t *testing.T) {
 	require.Equal(t, "server", nodes[0].Role)
 	require.Equal(t, "b", nodes[1].Name)
 
+	// A heartbeat alone is stored but is no change.
+	heartbeat := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
+	require.False(t, store.SetNodeRecord(NodeRecord{Name: "b", Role: "agent", Arch: "amd64", Ready: true,
+		Schedulable: true, LastHeartbeat: heartbeat}))
+	require.Equal(t, heartbeat, store.Nodes()[1].LastHeartbeat)
+
 	// An update replaces the record in place.
-	store.SetNodeRecord(NodeRecord{Name: "b", Role: "agent", Arch: "amd64", Ready: false, Schedulable: false})
+	require.True(t, store.SetNodeRecord(NodeRecord{Name: "b", Role: "agent", Arch: "amd64", Ready: false,
+		Schedulable: false, LastHeartbeat: heartbeat}))
 	nodes = store.Nodes()
 	require.Len(t, nodes, 2)
 	require.False(t, nodes[1].Ready)
@@ -351,10 +360,10 @@ func TestReplaceSourceReconcilesObjectSet(t *testing.T) {
 	require.Len(t, store.Snapshot(envA).Objects, 1)
 	require.Len(t, store.Snapshot(envB).Objects, 1)
 
-	// An unchanged probe still reports its environments (statuses may have
-	// changed inside the objects) but leaves the set intact.
+	// An unchanged probe reports nothing and leaves the set intact.
 	affected = store.ReplaceSource("seaweedfs", []Object{bucket("b-a", envA), bucket("b-b", envB)})
-	require.Len(t, affected, 2)
+	require.Empty(t, affected)
+	require.Len(t, store.Snapshot(envB).Objects, 1)
 
 	// A vanished object is removed: no ghosts after a provider crash.
 	affected = store.ReplaceSource("seaweedfs", []Object{bucket("b-a", envA)})
@@ -373,6 +382,70 @@ func TestReplaceSourceReconcilesObjectSet(t *testing.T) {
 	store.ReplaceSource("seaweedfs", nil)
 	require.Len(t, store.Snapshot(envB).Objects, 1, "kubernetes objects survive a provider reconcile")
 	require.Empty(t, store.Snapshot(envA).Objects)
+}
+
+// A probe reports exactly the environments whose projections changed in a
+// way a pass can act on; subscribers still see usage move.
+func TestReplaceSourceReportsOnlyChanges(t *testing.T) {
+	t.Parallel()
+	store := NewStore(nil)
+	envA, envB := uuid.New(), uuid.New()
+	storeRef := kube.ObjectRef{GVK: schema.GroupVersionKind{Group: "seaweed.skali.dev", Version: "v1", Kind: "ObjectStore"}, Name: "store"}
+	objectStore := func(s3Ready bool) Object {
+		return Object{Ref: storeRef, Kind: module.KindObjectStore, Name: "object-store", SharedKey: "object-store",
+			ObjectStore: &module.ObjectStoreStatus{MastersDesired: 3, MastersReady: 3, S3Ready: s3Ready}}
+	}
+	bucket := func(env uuid.UUID, status module.BucketStatus) Object {
+		return Object{
+			Ref:  kube.ObjectRef{GVK: schema.GroupVersionKind{Group: "seaweed.skali.dev", Version: "v1", Kind: "Bucket"}, Name: "b-files"},
+			Kind: module.KindBucket, Name: "buckets.files", Environment: env, Service: "buckets.files",
+			SharedKey: "object-store", Bucket: &status,
+		}
+	}
+	probe := func(store Object, buckets ...Object) []Object { return append([]Object{store}, buckets...) }
+	events, cancel := store.Subscribe(envA)
+	defer cancel()
+	drain := func() int {
+		for n := 0; ; n++ {
+			select {
+			case <-events:
+			default:
+				return n
+			}
+		}
+	}
+	idle := module.BucketStatus{Exists: true, UsedBytes: 10, QuotaBytes: 100}
+
+	require.Equal(t, []uuid.UUID{envA}, store.ReplaceSource("seaweedfs", probe(objectStore(true), bucket(envA, idle))))
+	drain()
+
+	// Identical: no pass, no refresh.
+	require.Empty(t, store.ReplaceSource("seaweedfs", probe(objectStore(true), bucket(envA, idle))))
+	require.Zero(t, drain())
+
+	// Usage alone: subscribers refresh, no pass is due.
+	written := idle
+	written.UsedBytes, written.DiskBytes, written.EntryCount = 20, 30, 2
+	require.Empty(t, store.ReplaceSource("seaweedfs", probe(objectStore(true), bucket(envA, written))))
+	require.Equal(t, 1, drain())
+
+	// A nested status change that health reads is a change.
+	full := written
+	full.ReadOnly = true
+	require.Equal(t, []uuid.UUID{envA}, store.ReplaceSource("seaweedfs", probe(objectStore(true), bucket(envA, full))))
+
+	// The shared object store fans out to every environment referencing it,
+	// but only when it changed.
+	require.Equal(t, []uuid.UUID{envA}, store.ReplaceSource("seaweedfs", probe(objectStore(false), bucket(envA, full))))
+	require.Empty(t, store.ReplaceSource("seaweedfs", probe(objectStore(false), bucket(envA, full))))
+
+	// An owner move affects both the old and the new owner.
+	want := []uuid.UUID{envA, envB}
+	sort.Slice(want, func(i, j int) bool { return want[i].String() < want[j].String() })
+	require.Equal(t, want, store.ReplaceSource("seaweedfs", probe(objectStore(false), bucket(envB, full))))
+
+	// A removal affects the owner it leaves.
+	require.Equal(t, []uuid.UUID{envB}, store.ReplaceSource("seaweedfs", probe(objectStore(false))))
 }
 
 func TestSubscribeInvalidations(t *testing.T) {
@@ -407,9 +480,10 @@ func TestSubscribeOverflowCloses(t *testing.T) {
 	defer cancel()
 
 	// Never reading, the buffered channel fills and the subscriber is
-	// disconnected rather than blocking the write side.
-	for range 200 {
-		fake.SetWorkload(envID, "ns", "demo-web", "web", "abcd", module.WorkloadStatus{Desired: 1, Ready: 1})
+	// disconnected rather than blocking the write side. Each write is a
+	// real change: an identical one publishes nothing.
+	for i := range 200 {
+		fake.SetWorkload(envID, "ns", "demo-web", "web", "abcd", module.WorkloadStatus{Desired: 1, Ready: int32(i % 2)})
 	}
 	closed := false
 	for !closed {

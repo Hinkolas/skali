@@ -73,6 +73,7 @@ func runSeed(args []string) error {
 	}
 	defer pool.Close()
 	st := store.NewStore(pool)
+	defer st.Close()
 
 	values, err := valuestore.New(st, cfg.AuthSecret)
 	if err != nil {
@@ -865,13 +866,10 @@ func (s *seeder) runBackup(ctx context.Context, proj *store.Project, env *store.
 	if r.kind == runRestoreFailed {
 		kind = backup.KindRestore
 	}
-	run, err := s.journal.CreateRun(ctx, journal.RunInput{
+	run, err := s.journal.BeginRun(ctx, journal.RunInput{
 		Kind: kind, ProjectID: proj.ID, EnvironmentID: env.ID, Actor: s.actorID(r.actor),
 	})
 	if err != nil {
-		return err
-	}
-	if err := s.journal.StartRun(ctx, run.ID); err != nil {
 		return err
 	}
 	id, err := uuid.NewV7()

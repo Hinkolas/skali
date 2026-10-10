@@ -467,7 +467,11 @@ func (c *Controller) ensureS3Access(ctx context.Context, storeID uuid.UUID) erro
 	if err != nil {
 		return fmt.Errorf("substrate: list bucket holders: %w", err)
 	}
-	policy := seaweed.RenderS3AccessPolicy(Namespace, c.accessPeers(ctx, holderEnvironments(nil, claims)))
+	peers, err := c.accessPeers(ctx, holderEnvironments(nil, claims))
+	if err != nil {
+		return err
+	}
+	policy := seaweed.RenderS3AccessPolicy(Namespace, peers)
 	if _, err := c.deps.Cluster.ApplyAs(ctx, policy, kube.FieldManagerPlatform, false); err != nil {
 		return fmt.Errorf("substrate: ensure S3 access policy: %w", err)
 	}

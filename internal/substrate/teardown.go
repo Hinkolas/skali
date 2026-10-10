@@ -43,7 +43,7 @@ func (c *Controller) Release(ctx context.Context, environmentID uuid.UUID) (bool
 		if err != nil {
 			return false, nil, err
 		}
-		c.EnqueueClaim(row.ID)
+		c.EnqueueClaim(row.ID, reasonTeardown)
 		c.publishClaim(*released)
 		detail = append(detail, "releasing databases."+row.ServiceKey)
 	}
@@ -52,7 +52,7 @@ func (c *Controller) Release(ctx context.Context, environmentID uuid.UUID) (bool
 		if err != nil {
 			return false, nil, err
 		}
-		c.EnqueueBucketClaim(row.ID)
+		c.EnqueueBucketClaim(row.ID, reasonTeardown)
 		c.publishBucketClaim(*released)
 		detail = append(detail, "releasing buckets."+row.ServiceKey)
 	}
@@ -195,7 +195,7 @@ func (c *Controller) finishClaimRelease(ctx context.Context, row store.DatabaseC
 	if _, err := c.ensurePool(ctx, *pool, time.Now()); err != nil {
 		return err
 	}
-	c.EnqueuePool(poolID)
+	c.enqueuePool(poolID, reasonTeardown)
 	return nil
 }
 

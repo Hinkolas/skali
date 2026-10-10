@@ -155,28 +155,40 @@ func TestProbeDueSkipsUsableSameDomainOnly(t *testing.T) {
 }
 
 // The read-only adoption decision agrees with attachRun: runs the backup
-// controller owns are never adopted, a deployment run past its artifact
-// window is.
+// controller owns are never adopted, nor is a deployment run inside its
+// artifact window; one past it is.
 func TestAdoptableRunMatchesAttachRun(t *testing.T) {
 	t.Parallel()
 	f := newKernelFixture(t, Config{})
 	ctx := context.Background()
+	adoptable := func() (*attachedRun, bool) {
+		state, err := f.st.GetEnvironmentPass(ctx, f.environmentID)
+		require.NoError(t, err)
+		return adoptableRun(state)
+	}
 
 	backup, err := f.journal.CreateRun(ctx, journal.RunInput{
 		Kind: "backup", ProjectID: f.projectID, EnvironmentID: f.environmentID, Actor: "tester",
 	})
 	require.NoError(t, err)
 	require.NoError(t, f.journal.StartRun(ctx, backup.ID))
-	_, ok := f.kernel.adoptableRun(ctx, f.environmentID)
+	_, ok := adoptable()
 	require.False(t, ok, "a backup run belongs to the backup controller")
 	require.NoError(t, f.journal.FinishRun(ctx, backup.ID, journal.RunSucceeded))
 
-	_, ok = f.kernel.adoptableRun(ctx, f.environmentID)
+	_, ok = adoptable()
 	require.False(t, ok, "nothing running")
 
 	result := f.executeDeploymentManifest(t, kernelManifest)
-	run, ok := f.kernel.adoptableRun(ctx, f.environmentID)
+	run, ok := adoptable()
 	require.True(t, ok)
 	require.Equal(t, result.RunID, run.ID)
 	require.Equal(t, "deployment", run.Kind)
+
+	_, err = f.st.Pool.Exec(ctx, `INSERT INTO deployments (id, project_id, environment_id, definition_version_id, status, run_id)
+		SELECT $1, project_id, environment_id, definition_version_id, 'preparing', $2 FROM revisions WHERE id = $3`,
+		uuid.New(), result.RunID, result.RevisionID)
+	require.NoError(t, err)
+	_, ok = adoptable()
+	require.False(t, ok, "a preparing deployment's run belongs to the build client")
 }

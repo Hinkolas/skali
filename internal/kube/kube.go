@@ -71,6 +71,8 @@ type Client struct {
 	Mapper   meta.RESTMapper
 
 	ownership atomic.Pointer[ownershipProtection]
+	schemas   applySchemas
+	reads     readCache
 
 	// inCluster records that credentials came from the pod's service
 	// account: Service DNS is dialable directly (forward.go).
@@ -85,22 +87,59 @@ type Client struct {
 	proxyErr  error
 }
 
+// RequestBudget is the client-side limit on requests to the API server:
+// QPS sustained, Burst momentarily. With QPS set, the typed clientset shares
+// one budget and the dynamic and metadata clients get one each; zero QPS
+// keeps client-go's default of 5 per second with a burst of 10 for every
+// client, and then Burst is ignored.
+type RequestBudget struct {
+	QPS   float32
+	Burst int
+}
+
+// apply sets the budget on config. Zero QPS clears the burst as well:
+// client-go defaults each of the two separately, so a burst left set would
+// keep it above the default.
+func (b RequestBudget) apply(config *rest.Config) {
+	if b.QPS <= 0 {
+		config.QPS, config.Burst = 0, 0
+		return
+	}
+	config.QPS, config.Burst = b.QPS, b.Burst
+}
+
+// Effective resolves the zero budget to client-go's default.
+func (b RequestBudget) Effective() RequestBudget {
+	if b.QPS <= 0 {
+		return RequestBudget{QPS: rest.DefaultQPS, Burst: rest.DefaultBurst}
+	}
+	return b
+}
+
 // New resolves cluster credentials. A set kubeconfigPath must load or the
 // call fails; with it unset, in-cluster configuration is attempted and
 // ErrNoCluster reports its absence. The ambient KUBECONFIG variable is
-// deliberately never consulted.
+// deliberately never consulted. The clients keep client-go's default
+// request budget.
 func New(kubeconfigPath string) (*Client, error) {
+	return NewWithBudget(kubeconfigPath, RequestBudget{})
+}
+
+// NewWithBudget is New with an explicit request budget.
+func NewWithBudget(kubeconfigPath string, budget RequestBudget) (*Client, error) {
 	if kubeconfigPath != "" {
 		config, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
 		if err != nil {
 			return nil, fmt.Errorf("kube: load kubeconfig %s: %w", kubeconfigPath, err)
 		}
+		budget.apply(config)
 		return NewFromConfig(config)
 	}
 	config, err := rest.InClusterConfig()
 	if err != nil {
 		return nil, ErrNoCluster
 	}
+	budget.apply(config)
 	client, err := NewFromConfig(config)
 	if err != nil {
 		return nil, err
@@ -170,9 +209,12 @@ func (c *Client) Apply(ctx context.Context, obj runtime.Object, force bool) (App
 }
 
 // ApplyAs server-side-applies one rendered object under an explicit field
-// manager; the installer bundle applies under FieldManagerInstaller.
+// manager; the installer bundle applies under FieldManagerInstaller. An
+// apply that would change nothing ends at its read (see unchangedBy), which
+// an environment's object can take from the watch cache under
+// WithCachedReads (see readForApply).
 func (c *Client) ApplyAs(ctx context.Context, obj runtime.Object, manager string, force bool) (ApplyResult, error) {
-	applied, resource, err := c.prepare(obj)
+	applied, resource, gvr, err := c.prepare(obj)
 	if err != nil {
 		return ApplyResult{}, err
 	}
@@ -183,6 +225,9 @@ func (c *Client) ApplyAs(ctx context.Context, obj runtime.Object, manager string
 	if owner != "" {
 		stampIdentity(applied)
 	}
+	// Only the first attempt may read the cache: a retry reads live, since
+	// the cache may be what it conflicted with. A forced apply reads live.
+	cacheable := owner != "" && !force && cachedReads(ctx)
 	var result ApplyResult
 	var pinned types.UID
 	var lastErr error
@@ -191,7 +236,8 @@ func (c *Client) ApplyAs(ctx context.Context, obj runtime.Object, manager string
 			return false, err
 		}
 		var retryable bool
-		result, retryable, lastErr = c.applyAttempt(ctx, applied.DeepCopy(), resource, owner, manager, force, &pinned)
+		result, retryable, lastErr = c.applyAttempt(ctx, applied.DeepCopy(), resource, gvr, owner, manager, force, cacheable, &pinned)
+		cacheable = false
 		if retryable {
 			return false, nil
 		}
@@ -207,18 +253,20 @@ func (c *Client) ApplyAs(ctx context.Context, obj runtime.Object, manager string
 }
 
 // applyAttempt never reuses a previous attempt's version or accepts a replacement
-// for an object already observed by this call. Only known concurrency failures
+// for an object already read live by this call. Only known concurrency failures
 // are retryable; field ownership, admission and validation failures are not.
 func (c *Client) applyAttempt(ctx context.Context, applied *unstructured.Unstructured, resource dynamic.ResourceInterface,
-	owner, manager string, force bool, pinned *types.UID) (ApplyResult, bool, error) {
+	gvr schema.GroupVersionResource, owner, manager string, force, cacheable bool, pinned *types.UID) (ApplyResult, bool, error) {
 	priorVersion := ""
 	priorGeneration := int64(0)
-	live, err := resource.Get(ctx, applied.GetName(), metav1.GetOptions{})
+	live, cached, err := c.readForApply(ctx, resource, gvr, applied, cacheable)
 	if err == nil {
 		if *pinned != "" && *pinned != live.GetUID() {
 			return ApplyResult{}, false, fmt.Errorf("kube: ownership changed for %s", applied.GetName())
 		}
-		*pinned = live.GetUID()
+		if !cached {
+			*pinned = live.GetUID()
+		}
 		if owner != "" {
 			if err := checkOwner(live, owner, applied.GroupVersionKind()); err != nil {
 				return ApplyResult{}, false, err
@@ -228,6 +276,14 @@ func (c *Client) applyAttempt(ctx context.Context, applied *unstructured.Unstruc
 				applied.SetUID(live.GetUID())
 			} else {
 				applied.SetResourceVersion(live.GetResourceVersion())
+			}
+		}
+		// An apply that would change nothing is not sent. A forced apply
+		// always is: it exists to take fields from another manager.
+		if !force {
+			if converter := c.converter(ctx, applied.GroupVersionKind().GroupVersion()); converter != nil &&
+				unchangedBy(converter, applied, live, manager) {
+				return ApplyResult{Live: live}, false, nil
 			}
 		}
 		priorVersion = live.GetResourceVersion()
@@ -242,10 +298,11 @@ func (c *Client) applyAttempt(ctx context.Context, applied *unstructured.Unstruc
 		if err != nil {
 			return ApplyResult{}, apierrors.IsAlreadyExists(err), err
 		}
+		c.reads.saw(gvr, applied.GetNamespace(), applied.GetName(), created)
 		// Create's Update entry must become Apply so future revisions have one
 		// field owner rather than conflicting with this manager's creation entry.
 		ref := ObjectRef{GVK: applied.GroupVersionKind(), Namespace: applied.GetNamespace(), Name: applied.GetName(), UID: created.GetUID()}
-		if err := c.claimCreatedFields(ctx, resource, ref, manager); err != nil {
+		if err := c.claimCreatedFields(ctx, resource, gvr, ref, manager); err != nil {
 			return ApplyResult{}, false, err
 		}
 		return ApplyResult{Changed: true, Live: created}, false, nil
@@ -256,9 +313,15 @@ func (c *Client) applyAttempt(ctx context.Context, applied *unstructured.Unstruc
 	}
 	result, err := resource.Patch(ctx, applied.GetName(), types.ApplyPatchType, data, metav1.PatchOptions{FieldManager: manager, Force: &force})
 	if err != nil {
-		retryable := applied.GetResourceVersion() != "" && apierrors.IsConflict(err) && !apierrors.HasStatusCause(err, metav1.CauseTypeFieldManagerConflict)
+		// A conflict after a cached read retries live even under a UID
+		// precondition alone: the cache may predate a replacement.
+		retryable := (applied.GetResourceVersion() != "" || cached) && apierrors.IsConflict(err) && !apierrors.HasStatusCause(err, metav1.CauseTypeFieldManagerConflict)
 		return ApplyResult{}, retryable, fmt.Errorf("kube: apply %s: %w", applied.GetName(), err)
 	}
+	c.reads.saw(gvr, applied.GetNamespace(), applied.GetName(), result)
+	// A cached prior version may be older than the live one, never newer:
+	// Changed may then count another writer's change, but never misses
+	// this apply's own.
 	changed := result.GetResourceVersion() != priorVersion
 	if result.GetGeneration() > 0 {
 		changed = result.GetGeneration() != priorGeneration
@@ -270,7 +333,7 @@ func (c *Client) applyAttempt(ctx context.Context, applied *unstructured.Unstruc
 // the creating manager's Update entry becomes its Apply entry. Retries on
 // conflict like DisownFields: controllers writing status right after
 // creation are routine.
-func (c *Client) claimCreatedFields(ctx context.Context, resource dynamic.ResourceInterface, ref ObjectRef, manager string) error {
+func (c *Client) claimCreatedFields(ctx context.Context, resource dynamic.ResourceInterface, gvr schema.GroupVersionResource, ref ObjectRef, manager string) error {
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		live, err := resource.Get(ctx, ref.Name, metav1.GetOptions{})
 		if err != nil {
@@ -284,7 +347,10 @@ func (c *Client) claimCreatedFields(ctx context.Context, resource dynamic.Resour
 			return nil
 		}
 		live.SetManagedFields(rewritten)
-		_, err = resource.Update(ctx, live, metav1.UpdateOptions{})
+		updated, err := resource.Update(ctx, live, metav1.UpdateOptions{})
+		if err == nil {
+			c.reads.saw(gvr, ref.Namespace, ref.Name, updated)
+		}
 		return err
 	})
 	if err != nil {
@@ -293,14 +359,43 @@ func (c *Client) claimCreatedFields(ctx context.Context, resource dynamic.Resour
 	return nil
 }
 
+// readForApply reads the object an apply compares against and takes its
+// preconditions from. A cacheable read is answered by the watch cache when
+// it can vouch for the object and holds no older version than this client
+// saw (see readCache); anything else, including an object the cache does
+// not hold, is read live. Secrets are not cached, so they are always read
+// live. A stale answer is safe where it matters: an apply that is sent
+// carries the full intent (and a stale version conflicts and retries
+// live), and one skipped as unchanged is redone by the pass the watch
+// change enqueues.
+func (c *Client) readForApply(ctx context.Context, resource dynamic.ResourceInterface, gvr schema.GroupVersionResource,
+	applied *unstructured.Unstructured, cacheable bool) (live *unstructured.Unstructured, cached bool, err error) {
+	if cacheable {
+		if object, ok := c.reads.cached(gvr, applied.GetNamespace(), applied.GetName()); ok {
+			return object, true, nil
+		}
+	}
+	live, err = resource.Get(ctx, applied.GetName(), metav1.GetOptions{})
+	switch {
+	case err == nil:
+		c.reads.saw(gvr, applied.GetNamespace(), applied.GetName(), live)
+	case apierrors.IsNotFound(err):
+		c.reads.saw(gvr, applied.GetNamespace(), applied.GetName(), nil)
+	}
+	return live, false, err
+}
+
 // Delete removes one object, reporting whether anything was deleted. A set
 // UID preconditions the delete; NotFound counts as success because the
 // desired state is absence.
 func (c *Client) Delete(ctx context.Context, ref ObjectRef) (bool, error) {
-	resource, err := c.resource(ref.GVK, ref.Namespace)
+	resource, gvr, err := c.resource(ref.GVK, ref.Namespace)
 	if err != nil {
 		return false, err
 	}
+	// Until its watch delivers the deletion, the cache must not answer for
+	// the object: an apply of its namesake would find it unchanged.
+	defer c.reads.saw(gvr, ref.Namespace, ref.Name, nil)
 	// Background propagation is explicit because batch/v1 Jobs still default
 	// to orphaning their pods at the API level; every other managed kind
 	// already cascades in the background, so this only pins the behavior.
@@ -342,7 +437,7 @@ func (c *Client) Delete(ctx context.Context, ref ObjectRef) (bool, error) {
 // read-modify-write retries on conflict: any status writer bumping the
 // resourceVersion between the read and the update is routine, not an error.
 func (c *Client) DisownFields(ctx context.Context, ref ObjectRef, manager string, paths ...string) error {
-	resource, err := c.resource(ref.GVK, ref.Namespace)
+	resource, gvr, err := c.resource(ref.GVK, ref.Namespace)
 	if err != nil {
 		return err
 	}
@@ -370,7 +465,10 @@ func (c *Client) DisownFields(ctx context.Context, ref ObjectRef, manager string
 			return nil
 		}
 		live.SetManagedFields(rewritten)
-		_, err = resource.Update(ctx, live, metav1.UpdateOptions{})
+		updated, err := resource.Update(ctx, live, metav1.UpdateOptions{})
+		if err == nil {
+			c.reads.saw(gvr, ref.Namespace, ref.Name, updated)
+		}
 		return err
 	})
 	if err != nil && !apierrors.IsConflict(err) {
@@ -384,25 +482,25 @@ func (c *Client) DisownFields(ctx context.Context, ref ObjectRef, manager string
 
 // prepare converts a rendered object into its applied configuration:
 // unstructured, without status or server-populated metadata.
-func (c *Client) prepare(obj runtime.Object) (*unstructured.Unstructured, dynamic.ResourceInterface, error) {
+func (c *Client) prepare(obj runtime.Object) (*unstructured.Unstructured, dynamic.ResourceInterface, schema.GroupVersionResource, error) {
 	content, err := runtime.DefaultUnstructuredConverter.ToUnstructured(obj)
 	if err != nil {
-		return nil, nil, fmt.Errorf("kube: convert to unstructured: %w", err)
+		return nil, nil, schema.GroupVersionResource{}, fmt.Errorf("kube: convert to unstructured: %w", err)
 	}
 	applied := (&unstructured.Unstructured{Object: content}).DeepCopy()
 	StripServerFields(applied)
 	gvk := applied.GroupVersionKind()
 	if gvk.Empty() {
-		return nil, nil, fmt.Errorf("kube: object %s has no TypeMeta", applied.GetName())
+		return nil, nil, schema.GroupVersionResource{}, fmt.Errorf("kube: object %s has no TypeMeta", applied.GetName())
 	}
-	resource, err := c.resource(gvk, applied.GetNamespace())
+	resource, gvr, err := c.resource(gvk, applied.GetNamespace())
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, schema.GroupVersionResource{}, err
 	}
-	return applied, resource, nil
+	return applied, resource, gvr, nil
 }
 
-func (c *Client) resource(gvk schema.GroupVersionKind, namespace string) (dynamic.ResourceInterface, error) {
+func (c *Client) resource(gvk schema.GroupVersionKind, namespace string) (dynamic.ResourceInterface, schema.GroupVersionResource, error) {
 	mapping, err := c.Mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
 	if meta.IsNoMatchError(err) {
 		// A CRD established after the discovery cache warmed (the Traefik
@@ -414,12 +512,12 @@ func (c *Client) resource(gvk schema.GroupVersionKind, namespace string) (dynami
 		}
 	}
 	if err != nil {
-		return nil, fmt.Errorf("kube: map %s: %w", gvk.Kind, err)
+		return nil, schema.GroupVersionResource{}, fmt.Errorf("kube: map %s: %w", gvk.Kind, err)
 	}
 	if mapping.Scope.Name() == meta.RESTScopeNameNamespace {
-		return c.Dynamic.Resource(mapping.Resource).Namespace(namespace), nil
+		return c.Dynamic.Resource(mapping.Resource).Namespace(namespace), mapping.Resource, nil
 	}
-	return c.Dynamic.Resource(mapping.Resource), nil
+	return c.Dynamic.Resource(mapping.Resource), mapping.Resource, nil
 }
 
 // StripServerFields removes status and server-populated metadata from an

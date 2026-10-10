@@ -31,6 +31,7 @@ import (
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/substrate/cnpg"
 	"github.com/Hinkolas/skali/internal/testdb"
+	"github.com/Hinkolas/skali/internal/workstats"
 )
 
 // fakeCluster satisfies Cluster with canned CNPG status objects so claim
@@ -62,6 +63,9 @@ type fakeCluster struct {
 	answer  func(command []string) string
 	// deleted records every Delete call's object name.
 	deleted []string
+	// proxyCIDRs and proxyErr answer ProxyCIDRs.
+	proxyCIDRs []string
+	proxyErr   error
 }
 
 // fakeExec is one recorded ExecInPod call.
@@ -256,7 +260,9 @@ func (f *fakeCluster) GetObject(_ context.Context, gvr schema.GroupVersionResour
 }
 
 func (f *fakeCluster) ProxyCIDRs(context.Context) ([]string, error) {
-	return nil, nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.proxyCIDRs, f.proxyErr
 }
 
 func (f *fakeCluster) PodCIDRs(context.Context) ([]string, error) {
@@ -274,6 +280,7 @@ func (f *fakeCluster) policy(name string) *networkingv1.NetworkPolicy {
 // settleFixture is the shared scaffolding: a real claims database, a fake
 // cluster, and a controller whose environment pokes are captured.
 type settleFixture struct {
+	st          *store.Store
 	db          *dbstore.Service
 	fake        *fakeCluster
 	control     *Controller
@@ -318,7 +325,7 @@ func newSettleFixture(t *testing.T) *settleFixture {
 	require.NoError(t, err)
 
 	return &settleFixture{
-		db: dbSvc, fake: fake, control: controller,
+		st: st, db: dbSvc, fake: fake, control: controller,
 		projectID: proj.ID, projectName: proj.Name,
 		envID: env.ID, claim: created, poked: &poked,
 	}
@@ -356,6 +363,24 @@ func TestClaimSettlesInOnePass(t *testing.T) {
 	require.Contains(t, *fx.poked, fx.envID,
 		"provisioning must poke the environment reconciler")
 	require.Empty(t, fx.control.WaitingReason(fx.claim.ID))
+}
+
+// A database claim has an output generation once provisioned, not before.
+func TestOutputsGenerateProvisionedDatabases(t *testing.T) {
+	fx := newSettleFixture(t)
+	ctx := context.Background()
+	outputs, err := fx.control.Outputs(ctx, fx.envID)
+	require.NoError(t, err)
+	require.Empty(t, outputs.Generations)
+
+	fx.fake.set(clusterHealthyPhase, 1, true)
+	_, phase := fx.pass(t)
+	require.Equal(t, claim.PhaseProvisioned, phase)
+	outputs, err = fx.control.Outputs(ctx, fx.envID)
+	require.NoError(t, err)
+	require.Len(t, outputs.Generations, 1)
+	require.NotEmpty(t, outputs.Generations["databases.data"])
+	require.Empty(t, outputs.BucketNames)
 }
 
 // TestClaimWaitingKeepsRequeueAndPokes pins two queue behaviors: a waiting
@@ -465,4 +490,151 @@ func TestExtensionsPendingSettlesOnlyOnTheAppliedEncoding(t *testing.T) {
 	fx.control.markExtensionsPending(id, desired)
 	fx.control.clearExtensions(id)
 	require.False(t, fx.control.extensionsPending(id))
+}
+
+// drain empties the controller's queue without running passes and reports
+// the keys it held.
+func (fx *settleFixture) drain() []workKey {
+	var keys []workKey
+	for fx.control.queue.Len() > 0 {
+		key, _ := fx.control.queue.Get()
+		fx.control.queue.Done(key)
+		fx.control.queue.Forget(key)
+		keys = append(keys, key)
+	}
+	return keys
+}
+
+// TestEnsureEnqueuesOnlyClaimsWithWorkDue pins the environment pass's
+// contract with the substrate: it enqueues a claim that is new, changed, or
+// unsettled, and leaves a settled one to the repair cadence.
+func TestEnsureEnqueuesOnlyClaimsWithWorkDue(t *testing.T) {
+	fx := newSettleFixture(t)
+	ctx := context.Background()
+	claimKey := workKey{kind: workClaim, id: fx.claim.ID}
+
+	_, err := fx.control.Ensure(ctx, fx.ensureInput())
+	require.NoError(t, err)
+	require.Equal(t, []workKey{claimKey}, fx.drain(), "a pending claim is enqueued")
+
+	fx.fake.set(clusterHealthyPhase, 1, true)
+	_, phase := fx.pass(t)
+	require.Equal(t, claim.PhaseProvisioned, phase)
+	fx.drain()
+
+	_, err = fx.control.Ensure(ctx, fx.ensureInput())
+	require.NoError(t, err)
+	require.Empty(t, fx.drain(), "a settled, unchanged claim is not enqueued")
+	repair := fx.ensureInput()
+	repair.Repair = true
+	_, err = fx.control.Ensure(ctx, repair)
+	require.NoError(t, err)
+	require.Equal(t, []workKey{claimKey}, fx.drain(), "unless the pass asks for every claim")
+
+	// A spec change is due now, and stays due while the extension is
+	// pending, even once the spec matches.
+	fx.fake.set(clusterHealthyPhase, 1, false)
+	_, err = fx.control.Ensure(ctx, fx.ensureInput("vector"))
+	require.NoError(t, err)
+	require.Equal(t, []workKey{claimKey}, fx.drain())
+	_, err = fx.control.Ensure(ctx, fx.ensureInput("vector"))
+	require.NoError(t, err)
+	require.Equal(t, []workKey{claimKey}, fx.drain())
+
+	fx.fake.set(clusterHealthyPhase, 1, true)
+	fx.pass(t)
+	_, err = fx.control.Ensure(ctx, fx.ensureInput("vector"))
+	require.NoError(t, err)
+	require.Empty(t, fx.drain(), "settled again once the extension applied")
+}
+
+// arrivals counts the work of one kind that entered the queue for reason.
+func (fx *settleFixture) arrivals(kind workKind, reason string) uint64 {
+	for _, stats := range fx.control.queue.Stats().Kinds {
+		if stats.Kind == string(kind) {
+			return stats.Arrivals[reason]
+		}
+	}
+	return 0
+}
+
+// A pass that leaves a claim settled books its next drift repair at the
+// claim's slot, so every settled claim, a new one included, is repaired
+// within one interval; a pass that leaves it unsettled books none.
+func TestSettledPassBooksTheNextRepair(t *testing.T) {
+	fx := newSettleFixture(t)
+	fx.fake.set("Setting up primary", 0, false)
+	_, phase := fx.pass(t)
+	require.NotEqual(t, claim.PhaseProvisioned, phase)
+	require.Zero(t, fx.arrivals(workClaim, reasonRepair))
+
+	fx.fake.set(clusterHealthyPhase, 1, true)
+	_, phase = fx.pass(t)
+	require.Equal(t, claim.PhaseProvisioned, phase)
+	require.EqualValues(t, 1, fx.arrivals(workClaim, reasonRepair))
+	require.Empty(t, fx.drain(), "the repair waits for its slot")
+}
+
+// Repair slots sit at a claim's fixed phase of the wall clock's grid: the
+// next one is never more than an interval away, wherever the scheduling
+// pass fell.
+func TestRepairDelayFollowsTheClock(t *testing.T) {
+	id := uuid.New()
+	slot := time.Unix(0, 0).Add(1000*repairInterval + workstats.Phase(id, repairInterval))
+	require.Equal(t, time.Second, repairDelay(id, slot.Add(-time.Second)))
+	require.Equal(t, repairInterval, repairDelay(id, slot))
+	require.Equal(t, repairInterval-time.Second, repairDelay(id, slot.Add(time.Second)))
+	require.Equal(t, repairDelay(id, slot.Add(time.Minute)), repairDelay(id, slot.Add(repairInterval+time.Minute)))
+}
+
+// A pass's Ensure compares the revision with the claims its Outputs read,
+// handed on as ClaimOutputs.Live, instead of reading them again; without
+// that read Ensure reads the claims itself.
+func TestEnsureComparesWithTheOutputsRead(t *testing.T) {
+	fx := newSettleFixture(t)
+	ctx := context.Background()
+	fx.fake.set(clusterHealthyPhase, 1, true)
+	_, phase := fx.pass(t)
+	require.Equal(t, claim.PhaseProvisioned, phase)
+	outputs, err := fx.control.Outputs(ctx, fx.envID)
+	require.NoError(t, err)
+	require.NotEmpty(t, outputs.Generations["databases.data"])
+
+	// The claim leaves the live set after the read.
+	_, err = fx.st.Pool.Exec(ctx, "UPDATE database_claims SET phase = 'released' WHERE id = $1", fx.claim.ID)
+	require.NoError(t, err)
+	claims := func() int {
+		var n int
+		require.NoError(t, fx.st.Pool.QueryRow(ctx,
+			"SELECT count(*) FROM database_claims WHERE environment_id = $1", fx.envID).Scan(&n))
+		return n
+	}
+
+	in := fx.ensureInput()
+	in.Live = outputs.Live
+	states, err := fx.control.Ensure(ctx, in)
+	require.NoError(t, err)
+	require.True(t, states[0].Provisioned, "the read still holds the provisioned claim")
+	require.Equal(t, 1, claims(), "nothing is recorded")
+
+	states, err = fx.control.Ensure(ctx, fx.ensureInput())
+	require.NoError(t, err)
+	require.False(t, states[0].Provisioned)
+	require.Equal(t, 2, claims(), "a fresh read finds no live claim and records one")
+}
+
+// TestRepairSchedulesEveryLiveClaim pins the cadence that replaces per-pass
+// repair: every live claim is scheduled, spread over the interval rather
+// than runnable at once.
+func TestRepairSchedulesEveryLiveClaim(t *testing.T) {
+	fx := newSettleFixture(t)
+	fx.control.repairEnqueue(context.Background())
+	require.Zero(t, fx.control.queue.Len(), "repairs are spread over the interval")
+	var arrivals map[string]uint64
+	for _, kind := range fx.control.QueueStats().Kinds {
+		if kind.Kind == string(workClaim) {
+			arrivals = kind.Arrivals
+		}
+	}
+	require.Equal(t, map[string]uint64{reasonRepair: 1}, arrivals)
 }

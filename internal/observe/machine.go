@@ -115,8 +115,9 @@ func (s *Store) MarkUnready(source string) {
 }
 
 // MarkContact records one source's successful list, watch establishment, or
-// probe; it recovers a stale source to fresh.
-func (s *Store) MarkContact(source string) {
+// probe; it recovers a stale source to fresh and reports whether it did, so
+// the source can wake the environments whose passes waited on it.
+func (s *Store) MarkContact(source string) bool {
 	now := s.clock()
 	s.mu.Lock()
 	record := s.sourceLocked(source)
@@ -136,6 +137,7 @@ func (s *Store) MarkContact(source string) {
 		slog.Info("observe: source recovered", "source", source, "stale_for", staleFor)
 		s.invalidateAll()
 	}
+	return changed
 }
 
 // MarkFailure records one source's contact failure. The source turns stale

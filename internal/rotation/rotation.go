@@ -177,21 +177,17 @@ func (c *Controller) Create(ctx context.Context, in Input) (uuid.UUID, error) {
 		return uuid.Nil, fmt.Errorf("rotation: unknown collection %q", in.Collection)
 	}
 
-	run, err := c.deps.Journal.CreateRun(ctx, journal.RunInput{
+	run, err := c.deps.Journal.BeginRun(ctx, journal.RunInput{
 		Kind:          Kind,
 		ProjectID:     environment.ProjectID,
 		EnvironmentID: in.EnvironmentID,
 		Actor:         in.Actor,
 	})
-	if err != nil {
-		return uuid.Nil, fmt.Errorf("rotation: create run: %w", err)
+	if errors.Is(err, journal.ErrRunConflict) {
+		return uuid.Nil, ErrRunInFlight
 	}
-	if err := c.deps.Journal.StartRun(ctx, run.ID); err != nil {
-		_ = c.deps.Journal.DiscardRun(ctx, run.ID)
-		if errors.Is(err, journal.ErrRunConflict) {
-			return uuid.Nil, ErrRunInFlight
-		}
-		return uuid.Nil, fmt.Errorf("rotation: start run: %w", err)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("rotation: begin run: %w", err)
 	}
 	c.mu.Lock()
 	c.pending[run.ID] = in

@@ -236,6 +236,21 @@ gateways and bytes all survive a node loses its buckets while the pool's
 one Postgres pod is away; moving the metadata claim to a replicated tier
 once the fleet can hold one is tracked on the roadmap.
 
+## Changes behind the platform are repaired on a schedule
+
+Skali writes the objects behind each database and bucket, and puts them
+back when something outside it changes or removes them. It does not watch
+them, so the repair runs on a schedule:
+
+- A bucket's settings (its policy, CORS, lifecycle rules, and versioning)
+  are reset within 15 seconds, by storage upkeep.
+- The connection Secret in the environment's namespace, the credentials
+  behind it, a bucket's access identity, and the bucket itself are
+  repaired within 10 minutes. They are also checked at once when a
+  deploy, rollback, or restart begins, and when the environment's health
+  turns degraded or unhealthy, so a pod that cannot start for a deleted
+  connection Secret does not wait out the interval.
+
 ## Bucket snapshots are loosely consistent
 
 `skali backup` copies a bucket object by object while the application may

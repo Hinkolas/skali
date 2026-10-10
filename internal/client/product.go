@@ -664,15 +664,22 @@ func (c *Client) GetRun(ctx context.Context, id string) (*RunTree, error) {
 	return &res, nil
 }
 
-func (c *Client) CancelRun(ctx context.Context, id string) (bool, error) {
-	var res struct {
-		Status   string `json:"status"`
-		Fallback bool   `json:"fallback"`
-	}
+// CancelOutcome is what cancelling a run did to its environment's target.
+type CancelOutcome struct {
+	Status string `json:"status"`
+	// Fallback: the target returned to the prior active revision.
+	Fallback bool `json:"fallback"`
+	// Continues: a first deployment had no earlier revision to return to,
+	// so its revision stays the target and keeps rolling out without a run.
+	Continues bool `json:"continues"`
+}
+
+func (c *Client) CancelRun(ctx context.Context, id string) (*CancelOutcome, error) {
+	var res CancelOutcome
 	if err := c.do(ctx, http.MethodPost, "/v1/runs/"+id+"/cancel", nil, &res); err != nil {
-		return false, err
+		return nil, err
 	}
-	return res.Fallback, nil
+	return &res, nil
 }
 
 func (c *Client) EnsureStep(ctx context.Context, runID, key, title, parentKey string) (*Step, error) {

@@ -224,6 +224,74 @@ func (q *Queries) ListLiveBucketAllocationsByStore(ctx context.Context, storeID 
 	return items, nil
 }
 
+const listLiveBucketClaimOutputsByEnvironment = `-- name: ListLiveBucketClaimOutputsByEnvironment :many
+SELECT bucket_claims.id, bucket_claims.owner_kind, bucket_claims.project_id, bucket_claims.environment_id, bucket_claims.service_key, bucket_claims.system_key, bucket_claims.owner_ref, bucket_claims.visibility, bucket_claims.storage_quota_bytes, bucket_claims.object_quota, bucket_claims.max_object_bytes, bucket_claims.versioning, bucket_claims.abort_uploads_after_seconds, bucket_claims.expire_noncurrent_after_seconds, bucket_claims.phase, bucket_claims.created_at, bucket_claims.updated_at, bucket_claims.cors, bucket_claims.route, bucket_allocations.bucket_name AS allocation_bucket_name,
+       bucket_allocations.endpoint AS allocation_endpoint,
+       bucket_allocations.credential_version AS allocation_credential_version,
+       bucket_allocations.output_version AS allocation_output_version
+FROM bucket_claims
+LEFT JOIN bucket_allocations ON bucket_allocations.claim_id = bucket_claims.id
+    AND bucket_allocations.released_at IS NULL
+WHERE bucket_claims.environment_id = $1 AND bucket_claims.owner_kind = 'service'
+    AND bucket_claims.phase <> 'released'
+ORDER BY bucket_claims.service_key
+`
+
+type ListLiveBucketClaimOutputsByEnvironmentRow struct {
+	BucketClaim                 BucketClaim
+	AllocationBucketName        *string
+	AllocationEndpoint          *string
+	AllocationCredentialVersion *int64
+	AllocationOutputVersion     *int64
+}
+
+// Every live service claim of an environment with its live allocation's
+// bucket name and output facts, when it has an allocation: what a reconcile
+// pass compares the revision with and what it renders, in one read.
+func (q *Queries) ListLiveBucketClaimOutputsByEnvironment(ctx context.Context, environmentID *uuid.UUID) ([]ListLiveBucketClaimOutputsByEnvironmentRow, error) {
+	rows, err := q.db.Query(ctx, listLiveBucketClaimOutputsByEnvironment, environmentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListLiveBucketClaimOutputsByEnvironmentRow
+	for rows.Next() {
+		var i ListLiveBucketClaimOutputsByEnvironmentRow
+		if err := rows.Scan(
+			&i.BucketClaim.ID,
+			&i.BucketClaim.OwnerKind,
+			&i.BucketClaim.ProjectID,
+			&i.BucketClaim.EnvironmentID,
+			&i.BucketClaim.ServiceKey,
+			&i.BucketClaim.SystemKey,
+			&i.BucketClaim.OwnerRef,
+			&i.BucketClaim.Visibility,
+			&i.BucketClaim.StorageQuotaBytes,
+			&i.BucketClaim.ObjectQuota,
+			&i.BucketClaim.MaxObjectBytes,
+			&i.BucketClaim.Versioning,
+			&i.BucketClaim.AbortUploadsAfterSeconds,
+			&i.BucketClaim.ExpireNoncurrentAfterSeconds,
+			&i.BucketClaim.Phase,
+			&i.BucketClaim.CreatedAt,
+			&i.BucketClaim.UpdatedAt,
+			&i.BucketClaim.Cors,
+			&i.BucketClaim.Route,
+			&i.AllocationBucketName,
+			&i.AllocationEndpoint,
+			&i.AllocationCredentialVersion,
+			&i.AllocationOutputVersion,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const publishBucketAllocationOutputs = `-- name: PublishBucketAllocationOutputs :one
 UPDATE bucket_allocations
 SET endpoint = $1,

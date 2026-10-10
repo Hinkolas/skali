@@ -5,6 +5,7 @@
 package observe
 
 import (
+	"reflect"
 	"sort"
 	"sync"
 	"time"
@@ -141,24 +142,62 @@ func NewStore(clock func() time.Time) *Store {
 	}
 }
 
-// Upsert records one observed object and publishes an invalidation for its
-// environment; a platform-scoped shared object fans out to every
-// environment referencing it. The write side is a watch source, a provider
-// observer, or a test fake.
+// Upsert records one observed object and, when its projection changed,
+// publishes an invalidation for its environment; a platform-scoped shared
+// object fans out to every environment referencing it. The write side is a
+// watch source, a provider observer, or a test fake.
 func (s *Store) Upsert(obj Object) {
 	s.mu.Lock()
-	affected := s.upsertLocked(obj)
+	affected, _ := s.upsertLocked(obj)
 	s.mu.Unlock()
 	for _, environment := range affected {
 		s.invalidate(environment)
 	}
 }
 
+// projectionChange classifies what an upsert did to the stored projection.
+type projectionChange int
+
+const (
+	unchanged projectionChange = iota
+	// usageOnly: only a bucket's usage counters moved. They feed nothing but
+	// the usage diagnostic, so subscribers refresh and no pass is due.
+	usageOnly
+	changed
+)
+
+// compareProjection classifies the change from previous (nil when the
+// object is new) to next.
+func compareProjection(previous *Object, next Object) projectionChange {
+	switch {
+	case previous == nil:
+		return changed
+	case reflect.DeepEqual(*previous, next):
+		return unchanged
+	case previous.Bucket != nil && next.Bucket != nil && reflect.DeepEqual(withoutUsage(*previous), withoutUsage(next)):
+		return usageOnly
+	}
+	return changed
+}
+
+// withoutUsage clears a bucket projection's usage counters for comparison.
+func withoutUsage(obj Object) Object {
+	bucket := *obj.Bucket
+	bucket.UsedBytes, bucket.DiskBytes, bucket.EntryCount = 0, 0, 0
+	obj.Bucket = &bucket
+	return obj
+}
+
 // upsertLocked stores one object and returns the environments whose
-// projections changed (owner, previous owner, shared-key referencers).
-func (s *Store) upsertLocked(obj Object) []uuid.UUID {
+// projections changed (owner, previous owner, shared-key referencers) and
+// how. An identical projection is left in place and affects nobody.
+func (s *Store) upsertLocked(obj Object) ([]uuid.UUID, projectionChange) {
 	key := keyOf(obj.Ref)
 	previous := s.objects[key]
+	change := compareProjection(previous, obj)
+	if change == unchanged {
+		return nil, unchanged
+	}
 	if previous != nil {
 		s.unindexLocked(key, previous)
 	}
@@ -172,7 +211,7 @@ func (s *Store) upsertLocked(obj Object) []uuid.UUID {
 	if sharedResource(obj) {
 		affected = append(affected, s.environmentsForSharedKeyLocked(obj.SharedKey)...)
 	}
-	return affected
+	return affected, change
 }
 
 // Remove drops one observed object, if present.
@@ -217,16 +256,24 @@ func sharedResource(obj Object) bool {
 // ReplaceSource reconciles one named source's object set to exactly the
 // given objects: upserts them all and removes anything the source published
 // earlier that vanished from this probe, so a crashed provider leaves no
-// ghosts. It returns the affected environments, deduplicated and sorted,
-// for the caller to enqueue.
+// ghosts. It returns the environments whose projections changed,
+// deduplicated and sorted, for the caller to enqueue: an identical probe
+// returns none, and one that only moved bucket usage refreshes the
+// subscribers of the environments it touched without returning them.
 func (s *Store) ReplaceSource(source string, objects []Object) []uuid.UUID {
 	incoming := make(map[objectKey]struct{}, len(objects))
-	var affected []uuid.UUID
+	var affected, refreshed []uuid.UUID
 	s.mu.Lock()
 	for _, obj := range objects {
 		obj.Source = source
 		incoming[keyOf(obj.Ref)] = struct{}{}
-		affected = append(affected, s.upsertLocked(obj)...)
+		environments, change := s.upsertLocked(obj)
+		switch change {
+		case changed:
+			affected = append(affected, environments...)
+		case usageOnly:
+			refreshed = append(refreshed, environments...)
+		}
 	}
 	for key := range s.bySource[source] {
 		if _, ok := incoming[key]; ok {
@@ -236,25 +283,29 @@ func (s *Store) ReplaceSource(source string, objects []Object) []uuid.UUID {
 	}
 	s.mu.Unlock()
 
-	seen := make(map[uuid.UUID]struct{}, len(affected))
-	environments := make([]uuid.UUID, 0, len(affected))
-	for _, environment := range affected {
-		if environment == uuid.Nil {
-			continue
-		}
-		if _, ok := seen[environment]; ok {
-			continue
-		}
-		seen[environment] = struct{}{}
-		environments = append(environments, environment)
-	}
-	sort.Slice(environments, func(i, j int) bool {
-		return environments[i].String() < environments[j].String()
-	})
-	for _, environment := range environments {
+	for _, environment := range distinct(append(refreshed, affected...)) {
 		s.invalidate(environment)
 	}
-	return environments
+	return distinct(affected)
+}
+
+// distinct deduplicates environment ids, dropping uuid.Nil, in a stable
+// order.
+func distinct(ids []uuid.UUID) []uuid.UUID {
+	seen := make(map[uuid.UUID]struct{}, len(ids))
+	out := make([]uuid.UUID, 0, len(ids))
+	for _, id := range ids {
+		if id == uuid.Nil {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].String() < out[j].String() })
+	return out
 }
 
 func (s *Store) indexLocked(key objectKey, obj *Object) {
@@ -652,11 +703,16 @@ type NodeRecord struct {
 	MemoryAllocatableBytes int64
 }
 
-// SetNodeRecord stores one node's projection, keyed by name.
-func (s *Store) SetNodeRecord(record NodeRecord) {
+// SetNodeRecord stores one node's projection, keyed by name, and reports
+// whether it changed beyond the heartbeat: the kubelet's periodic status
+// reports move only the heartbeat, and nothing downstream acts on it.
+func (s *Store) SetNodeRecord(record NodeRecord) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	previous, known := s.nodeRecords[record.Name]
 	s.nodeRecords[record.Name] = record
+	previous.LastHeartbeat = record.LastHeartbeat
+	return !known || !reflect.DeepEqual(previous, record)
 }
 
 // Nodes lists the observed node records sorted by name.

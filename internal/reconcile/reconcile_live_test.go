@@ -103,8 +103,9 @@ func newLiveFixture(t *testing.T, cfg Config, config *rest.Config) *liveFixture 
 	source := observe.NewKubeSource(client, observed, observe.SourceOptions{
 		Resync:         time.Hour, // watches, not resync, must explain propagation
 		StaleThreshold: staleThreshold,
-		Enqueue:        func(id uuid.UUID) { kernel.Enqueue(id) },
+		Enqueue:        func(id uuid.UUID, reason string) { kernel.EnqueueFor(id, reason) },
 	})
+	client.UseObjectCache(source)
 	kernel = New(Deps{
 		Store: st, Deploy: deploySvc, Values: valueSvc, Journal: journalSvc,
 		Registry: registry, Observed: observed, Source: source, Cluster: client,
@@ -160,6 +161,12 @@ func (f *liveFixture) start(t *testing.T) (stop func()) {
 // deployManifest promotes the manifest; the kernel loop owns the rollout.
 func (f *liveFixture) deployManifest(t *testing.T, manifest string) *deploy.ExecuteResult {
 	t.Helper()
+	return f.deployTo(t, f.environmentID, manifest)
+}
+
+// deployTo promotes the manifest in one of the project's environments.
+func (f *liveFixture) deployTo(t *testing.T, environmentID uuid.UUID, manifest string) *deploy.ExecuteResult {
+	t.Helper()
 	ctx := context.Background()
 	projects := project.New(f.st)
 	draft, err := projects.GetDraft(ctx, f.projectID)
@@ -177,7 +184,7 @@ func (f *liveFixture) deployManifest(t *testing.T, manifest string) *deploy.Exec
 	require.NoError(t, err)
 	result, err := f.deploy.Execute(ctx, deploy.ExecuteInput{
 		ProjectID:           f.projectID,
-		EnvironmentID:       f.environmentID,
+		EnvironmentID:       environmentID,
 		DefinitionVersionID: row.ID,
 		Resolver:            &artifactstore.Fake{Store: artifactstore.New(f.st), ProjectID: f.projectID},
 		Journal:             f.journal,
@@ -202,14 +209,19 @@ func (f *liveFixture) webDeployment(t *testing.T) *appsv1.Deployment {
 
 func (f *liveFixture) waitActive(t *testing.T, revisionID uuid.UUID, timeout time.Duration) {
 	t.Helper()
+	f.waitActiveIn(t, f.environmentID, revisionID, timeout)
+}
+
+func (f *liveFixture) waitActiveIn(t *testing.T, environmentID, revisionID uuid.UUID, timeout time.Duration) {
+	t.Helper()
 	require.Eventually(t, func() bool {
-		target, err := f.st.GetEnvironmentTarget(context.Background(), f.environmentID)
+		target, err := f.st.GetEnvironmentTarget(context.Background(), environmentID)
 		if err != nil || target.ActiveRevisionID == nil || *target.ActiveRevisionID != revisionID {
 			return false
 		}
 		// Activation writes the pointer before concluding the run; a next
 		// deployment needs the running-run slot free, so wait for both.
-		_, err = f.st.GetRunningRunByEnvironment(context.Background(), &f.environmentID)
+		_, err = f.st.GetRunningRunByEnvironment(context.Background(), &environmentID)
 		return errors.Is(err, pgx.ErrNoRows)
 	}, timeout, 500*time.Millisecond, "revision must activate once health passes")
 }

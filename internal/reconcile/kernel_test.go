@@ -230,16 +230,7 @@ func (f *kernelFixture) target(t *testing.T) store.EnvironmentTarget {
 // way the kernel does instead of repeating a hash.
 func (f *kernelFixture) webDeploymentName(t *testing.T) string {
 	t.Helper()
-	ctx := context.Background()
-	target := f.target(t)
-	require.NotNil(t, target.TargetRevisionID, "the fixture has no target revision to name a workload for")
-	rev, err := f.deploy.GetRevision(ctx, *target.TargetRevisionID)
-	require.NoError(t, err)
-	intercepts, err := f.kernel.loadIntercepts(ctx, f.environmentID)
-	require.NoError(t, err)
-	colors, err := f.kernel.desiredColors(ctx, f.environmentID, target, rev, intercepts)
-	require.NoError(t, err)
-	if color, ok := colors["web"]; ok {
+	if color, ok := f.colors(t)["web"]; ok {
 		return rendering.ColoredApplicationName("demo", "web", color)
 	}
 	return rendering.ApplicationName("demo", "web")
@@ -249,16 +240,25 @@ func (f *kernelFixture) webDeploymentName(t *testing.T) string {
 // the web application, empty when it renders an uncolored workload.
 func (f *kernelFixture) webColor(t *testing.T) string {
 	t.Helper()
+	return f.colors(t)["web"]
+}
+
+// colors names the blue-green color the current target revision renders
+// per application, the way the kernel does.
+func (f *kernelFixture) colors(t *testing.T) map[string]string {
+	t.Helper()
 	ctx := context.Background()
-	target := f.target(t)
-	require.NotNil(t, target.TargetRevisionID)
+	state, err := f.st.GetEnvironmentPass(ctx, f.environmentID)
+	require.NoError(t, err)
+	target := state.EnvironmentTarget
+	require.NotNil(t, target.TargetRevisionID, "the fixture has no target revision to name a workload for")
 	rev, err := f.deploy.GetRevision(ctx, *target.TargetRevisionID)
 	require.NoError(t, err)
-	intercepts, err := f.kernel.loadIntercepts(ctx, f.environmentID)
+	intercepts, err := passIntercepts(state)
 	require.NoError(t, err)
-	colors, err := f.kernel.desiredColors(ctx, f.environmentID, target, rev, intercepts)
+	colors, err := f.kernel.desiredColors(ctx, state, rev, intercepts)
 	require.NoError(t, err)
-	return colors["web"]
+	return colors
 }
 
 // setWebWorkload records the web application's Deployment for the current
@@ -483,7 +483,7 @@ func TestWaitStepReasonUpdates(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NoError(t, f.journal.StartRun(ctx, run.ID))
-	attachment := &runAttachment{journal: f.journal, run: run}
+	attachment := &runAttachment{journal: f.journal, run: &attachedRun{ID: run.ID, Kind: run.Kind}}
 
 	attachment.waitStep(ctx, "claim:databases.data", "Provision databases.data", "pool starting")
 	attachment.waitStep(ctx, "claim:databases.data", "Provision databases.data", "pool starting")
@@ -546,4 +546,23 @@ func TestKernelAPIOnlyMode(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("API-only kernel did not stop on context cancel")
 	}
+}
+
+// A pass that cannot finish within its deadline, here because another
+// holder keeps the environment lock, fails as past its deadline and frees
+// its worker; the queue retries it.
+func TestPassEndsAtItsDeadline(t *testing.T) {
+	t.Parallel()
+	f := newKernelFixture(t, Config{PassTimeout: 200 * time.Millisecond})
+	ctx := context.Background()
+	f.executeDeployment(t)
+	unlock, err := f.st.LockEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	defer unlock()
+
+	started := time.Now()
+	_, err = f.kernel.runPass(ctx, f.environmentID)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.ErrorContains(t, err, "past its 200ms deadline")
+	require.Less(t, time.Since(started), 5*time.Second)
 }

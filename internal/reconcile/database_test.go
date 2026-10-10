@@ -36,10 +36,13 @@ type fakeClaims struct {
 	states      []ClaimState
 	generations map[string]string
 	calls       int
+	// repairs records each Ensure's Repair.
+	repairs []bool
 }
 
-func (f *fakeClaims) Ensure(_ context.Context, _ ClaimEnsureInput) ([]ClaimState, error) {
+func (f *fakeClaims) Ensure(_ context.Context, in ClaimEnsureInput) ([]ClaimState, error) {
 	f.calls++
+	f.repairs = append(f.repairs, in.Repair)
 	return f.states, nil
 }
 
@@ -47,12 +50,8 @@ func (f *fakeClaims) Release(_ context.Context, _ uuid.UUID) (bool, []string, er
 	return true, nil, nil
 }
 
-func (f *fakeClaims) BucketNames(_ context.Context, _ uuid.UUID) (map[string]string, error) {
-	return nil, nil
-}
-
-func (f *fakeClaims) Generations(_ context.Context, _ uuid.UUID) (map[string]string, error) {
-	return f.generations, nil
+func (f *fakeClaims) Outputs(_ context.Context, _ uuid.UUID) (ClaimOutputs, error) {
+	return ClaimOutputs{Generations: f.generations}, nil
 }
 
 // A database-bearing revision: the application waits visibly on the claim,
@@ -94,6 +93,41 @@ func TestReconcileUnobservedPoolRefreshesObservation(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, refreshes, "a healed observation must not refresh again")
 	require.NotNil(t, f.target(t).ActiveRevisionID)
+}
+
+// The first pass of a rollout asks for every claim, settled ones too, so
+// a deploy never waits on the repair cadence for a deleted output Secret;
+// later passes do not, until the environment's health turns bad.
+func TestPassesAskForEveryClaimOnRolloutAndHealthDrop(t *testing.T) {
+	t.Parallel()
+	f := newKernelFixture(t, Config{RolloutDeadline: time.Hour})
+	ctx := context.Background()
+	claims := &fakeClaims{states: []ClaimState{{Service: "databases.data", Provisioned: true}}}
+	f.kernel.deps.Claims = claims
+	f.executeDeploymentManifest(t, databaseManifest)
+	f.fake.SetFresh()
+	f.fake.SetDatabaseClaim(f.environmentID, "databases.data", uuid.Must(uuid.NewV7()),
+		module.ClaimStatus{Phase: "provisioned"})
+	f.fake.SetDatabaseTenant(f.environmentID, "databases.data", "pg17-shared", "db_data",
+		module.DatabaseTenantStatus{Applied: true})
+	f.fake.SetDatabasePool("pg17-shared",
+		module.DatabaseClusterStatus{Instances: 1, ReadyInstances: 1, Primary: "pg17-shared-1"})
+	pass := func() bool {
+		t.Helper()
+		_, err := f.kernel.reconcileEnvironment(ctx, f.environmentID)
+		require.NoError(t, err)
+		return claims.repairs[len(claims.repairs)-1]
+	}
+
+	require.True(t, pass(), "the rollout's first pass asks for every claim")
+	require.False(t, pass(), "the rollout's later passes do not")
+	f.markHealthy(t)
+	require.False(t, pass(), "nor does its activation")
+	require.NotNil(t, f.target(t).ActiveRevisionID)
+
+	f.kernel.recordHealth(f.environmentID, []ServiceStatus{{Health: module.HealthUnhealthy}}, time.Now())
+	require.True(t, pass(), "a health drop asks again")
+	require.False(t, pass(), "once")
 }
 
 func TestReconcileDatabaseClaimGatesApplication(t *testing.T) {

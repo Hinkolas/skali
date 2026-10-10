@@ -328,27 +328,27 @@ type Opened struct {
 // and destructive plan without mutating anything (planning never stores
 // values and never moves targets).
 func (s *Service) PlanPreview(ctx context.Context, in PlanInput) (*Preview, error) {
+	env, err := s.environment(ctx, in.EnvironmentID)
+	if err != nil {
+		return nil, err
+	}
 	if in.FromEnvironmentID != uuid.Nil || in.Redeploy {
-		src, err := s.resolveReuseSource(ctx, &in)
+		src, err := s.resolveReuseSource(ctx, env, &in)
 		if err != nil {
 			return nil, err
 		}
-		env, definitionVersion, definition, err := s.loadDefinition(ctx, in.EnvironmentID, in.DefinitionVersionID)
+		definitionVersion, definition, err := s.loadDefinition(ctx, env, in.DefinitionVersionID)
 		if err != nil {
 			return nil, err
 		}
-		changed, err := s.interceptsChanged(ctx, env.ID, in.LocalApplications)
-		if err != nil {
-			return nil, err
-		}
-		preview, err := s.finishPreview(ctx, env, definitionVersion, definition, in.CandidateID, src.Actions, src.Artifacts, true, in.LocalApplications, changed, in.PruneValues)
+		preview, err := s.reusePreview(ctx, env, definitionVersion, definition, in, src)
 		if err != nil {
 			return nil, err
 		}
 		preview.VolumeSizesUnenforced = in.UnenforcedVolumeSizes && declaresVolumes(definition)
 		return preview, nil
 	}
-	env, definitionVersion, definition, err := s.loadDefinition(ctx, in.EnvironmentID, in.DefinitionVersionID)
+	definitionVersion, definition, err := s.loadDefinition(ctx, env, in.DefinitionVersionID)
 	if err != nil {
 		return nil, err
 	}
@@ -380,7 +380,7 @@ func declaresVolumes(definition compiler.ProjectDefinition) bool {
 // intercept set forward (a promotion clears it, stating the whole truth
 // with an empty set). Callers pass in.LocalApplications on to the preview
 // and the deployment row.
-func (s *Service) resolveReuseSource(ctx context.Context, in *PlanInput) (*promotionSource, error) {
+func (s *Service) resolveReuseSource(ctx context.Context, env store.Environment, in *PlanInput) (*promotionSource, error) {
 	if len(in.LocalApplications) > 0 {
 		reason := "cannot be combined with a promotion"
 		if in.Redeploy {
@@ -389,7 +389,7 @@ func (s *Service) resolveReuseSource(ctx context.Context, in *PlanInput) (*promo
 		return nil, &LocalApplicationsUnsupportedError{Reason: reason}
 	}
 	if in.Redeploy {
-		src, err := s.loadSourceRevision(ctx, in.EnvironmentID, in.EnvironmentID)
+		src, err := s.loadSourceRevision(ctx, env, env.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -401,12 +401,30 @@ func (s *Service) resolveReuseSource(ctx context.Context, in *PlanInput) (*promo
 		in.LocalApplications = locals
 		return src, nil
 	}
-	src, err := s.loadPromotionSource(ctx, in.EnvironmentID, in.FromEnvironmentID)
+	src, err := s.loadPromotionSource(ctx, env, in.FromEnvironmentID)
 	if err != nil {
 		return nil, err
 	}
 	in.DefinitionVersionID = src.DefinitionVersionID
 	return src, nil
+}
+
+// reusePreview finishes the preview of a promotion or a redeploy over the
+// source's artifact set. A redeploy carries the environment's stored
+// intercepts forward and re-runs its active revision, both read with the
+// source; a promotion compares the stored intercepts with its empty set.
+func (s *Service) reusePreview(ctx context.Context, env store.Environment, definitionVersion store.DefinitionVersion,
+	definition compiler.ProjectDefinition, in PlanInput, src *promotionSource) (*Preview, error) {
+	changed, active := false, src.Revision
+	if !in.Redeploy {
+		var err error
+		if changed, err = s.interceptsChanged(ctx, env.ID, in.LocalApplications); err != nil {
+			return nil, err
+		}
+		active = nil
+	}
+	return s.finishPreview(ctx, env, definitionVersion, definition, in.CandidateID, src.Actions, src.Artifacts,
+		true, in.LocalApplications, changed, in.PruneValues, active)
 }
 
 // loadLocalApplications reads the environment's stored intercept rows back
@@ -436,14 +454,17 @@ func (s *Service) loadLocalApplications(ctx context.Context, environmentID uuid.
 // list. The environment's values, target, and active revision stay
 // untouched until completion.
 func (s *Service) Open(ctx context.Context, in OpenInput) (*Opened, error) {
+	env, err := s.environment(ctx, in.EnvironmentID)
+	if err != nil {
+		return nil, err
+	}
 	var src *promotionSource
 	if in.FromEnvironmentID != uuid.Nil || in.Redeploy {
-		var err error
-		if src, err = s.resolveReuseSource(ctx, &in.PlanInput); err != nil {
+		if src, err = s.resolveReuseSource(ctx, env, &in.PlanInput); err != nil {
 			return nil, err
 		}
 	}
-	env, definitionVersion, definition, err := s.loadDefinition(ctx, in.EnvironmentID, in.DefinitionVersionID)
+	definitionVersion, definition, err := s.loadDefinition(ctx, env, in.DefinitionVersionID)
 	if err != nil {
 		return nil, err
 	}
@@ -466,10 +487,7 @@ func (s *Service) Open(ctx context.Context, in OpenInput) (*Opened, error) {
 	}
 	var preview *Preview
 	if src != nil {
-		var changed bool
-		if changed, err = s.interceptsChanged(ctx, env.ID, in.LocalApplications); err == nil {
-			preview, err = s.finishPreview(ctx, env, definitionVersion, definition, in.CandidateID, src.Actions, src.Artifacts, true, in.LocalApplications, changed, in.PruneValues)
-		}
+		preview, err = s.reusePreview(ctx, env, definitionVersion, definition, in.PlanInput, src)
 	} else {
 		preview, err = s.preview(ctx, env, definitionVersion, definition, in.PlanInput)
 	}
@@ -496,21 +514,17 @@ func (s *Service) Open(ctx context.Context, in OpenInput) (*Opened, error) {
 		return nil, ErrRegistryDisabled
 	}
 
-	run, err := in.Journal.CreateRun(ctx, journal.RunInput{
+	run, err := in.Journal.BeginRun(ctx, journal.RunInput{
 		Kind:             "deployment",
 		ProjectID:        env.ProjectID,
 		EnvironmentID:    env.ID,
 		Actor:            in.Actor,
 		BypassProtection: in.BypassProtection,
 	})
-	if err != nil {
-		return nil, err
+	if errors.Is(err, journal.ErrRunConflict) {
+		return nil, ErrDeploymentInFlight
 	}
-	if err := in.Journal.StartRun(ctx, run.ID); err != nil {
-		discardUnstartedRun(ctx, in.Journal, run.ID)
-		if errors.Is(err, journal.ErrRunConflict) {
-			return nil, ErrDeploymentInFlight
-		}
+	if err != nil {
 		return nil, err
 	}
 
@@ -583,11 +597,13 @@ func (s *Service) openUnderRun(ctx context.Context, in OpenInput, env store.Envi
 	if err != nil {
 		return nil, err
 	}
+	built := false
 	for index := range actions {
 		action := &actions[index]
 		if action.Action != "build" {
 			continue
 		}
+		built = true
 		build, err := s.builds.CreateLocal(ctx, buildstore.Local{
 			ProjectID:    env.ProjectID,
 			DeploymentID: deployment.ID,
@@ -604,7 +620,8 @@ func (s *Service) openUnderRun(ctx context.Context, in OpenInput, env store.Envi
 		}
 		action.BuildID = build.ID
 	}
-	if len(actions) > 0 {
+	if built {
+		// The build records' ids join the stored work list.
 		encodedActions, err = json.Marshal(actions)
 		if err != nil {
 			return nil, fmt.Errorf("deploy: encode actions: %w", err)
@@ -708,7 +725,7 @@ func (s *Service) prepareCompletion(ctx context.Context, deployment *store.Deplo
 		return nil, fmt.Errorf("deploy: decode actions: %w", err)
 	}
 
-	ids := make(map[string]uuid.UUID, len(actions))
+	records := make(map[string]*store.Artifact, len(actions))
 	var missing []string
 	for _, action := range actions {
 		record, err := s.artifacts.Get(ctx, action.ArtifactID)
@@ -716,7 +733,7 @@ func (s *Service) prepareCompletion(ctx context.Context, deployment *store.Deplo
 			missing = append(missing, action.Application)
 			continue
 		}
-		ids[action.Application] = record.ID
+		records[action.Application] = record
 	}
 	if len(missing) > 0 {
 		return nil, &ArtifactsIncompleteError{Missing: missing}
@@ -728,33 +745,38 @@ func (s *Service) prepareCompletion(ctx context.Context, deployment *store.Deplo
 	} else {
 		// The journal never drives: if its rows were removed mid-window,
 		// the remaining stages still run under a fresh run.
-		run, err := jsvc.CreateRun(ctx, journal.RunInput{
+		input := journal.RunInput{
 			Kind: "deployment", ProjectID: deployment.ProjectID,
 			EnvironmentID: deployment.EnvironmentID, Actor: deployment.Actor,
 			BypassProtection: deployment.BypassProtection,
-		})
+		}
+		run, err := jsvc.BeginRun(ctx, input)
+		if errors.Is(err, journal.ErrRunConflict) {
+			// Another run holds the environment: journal the remaining
+			// stages under it instead of a second row. The journal still
+			// never drives, so a lookup that finds nothing journals them
+			// under a run that never starts.
+			if existing, lookupErr := s.st.GetRunningRunByEnvironment(ctx, &deployment.EnvironmentID); lookupErr == nil {
+				run, err = &existing, nil
+			} else {
+				run, err = jsvc.CreateRun(ctx, input)
+			}
+		}
 		if err != nil {
 			return nil, err
 		}
 		runID = run.ID
-		if err := jsvc.StartRun(ctx, run.ID); err != nil {
-			if !errors.Is(err, journal.ErrRunConflict) {
-				return nil, err
-			}
-			// Another run holds the environment: journal the remaining
-			// stages under it instead of stranding a pending second row.
-			// The journal still never drives, so a lookup that finds
-			// nothing simply keeps the row this call made.
-			if existing, lookupErr := s.st.GetRunningRunByEnvironment(ctx, &deployment.EnvironmentID); lookupErr == nil {
-				discardUnstartedRun(ctx, jsvc, run.ID)
-				runID = existing.ID
-			}
-		}
 	}
 
 	candidateID := uuid.Nil
 	if deployment.CandidateID != nil {
 		candidateID = *deployment.CandidateID
+	}
+	// One redactor serves the artifacts step and every later stage: the
+	// environment's current secrets plus the candidate's staged ones.
+	redactor, err := s.values.Redactor(ctx, deployment.EnvironmentID, candidateID)
+	if err != nil {
+		return nil, err
 	}
 	// The intercept set is re-read from the row, like actions: completion
 	// never trusts the client's view of what was opened.
@@ -773,7 +795,7 @@ func (s *Service) prepareCompletion(ctx context.Context, deployment *store.Deplo
 
 	// Closing the artifacts step is the durable mark that the client's part
 	// is over: from here the daemon owns the deployment (see RecoverOnBoot).
-	if err := s.closeArtifactsStep(ctx, jsvc, runID, deployment, actions); err != nil {
+	if err := s.closeArtifactsStep(ctx, jsvc, runID, redactor, actions); err != nil {
 		return nil, err
 	}
 	return &completion{
@@ -785,7 +807,7 @@ func (s *Service) prepareCompletion(ctx context.Context, deployment *store.Deplo
 			EnvironmentID:       deployment.EnvironmentID,
 			DefinitionVersionID: deployment.DefinitionVersionID,
 			CandidateID:         candidateID,
-			Resolver:            &artifactstore.RecordResolver{Store: s.artifacts, IDs: ids},
+			Resolver:            &artifactstore.RecordResolver{Records: records},
 			Journal:             jsvc,
 			Actor:               deployment.Actor,
 			Restart:             deployment.Restart,
@@ -793,6 +815,7 @@ func (s *Service) prepareCompletion(ctx context.Context, deployment *store.Deplo
 			LocalApplications:   locals,
 			PruneValues:         deployment.PruneValues,
 			ActionPlatforms:     actionPlatforms,
+			redactor:            redactor,
 		},
 	}, nil
 }
@@ -1163,7 +1186,7 @@ func (s *Service) preview(ctx context.Context, env store.Environment, definition
 	if err != nil {
 		return nil, err
 	}
-	return s.finishPreview(ctx, env, definitionVersion, definition, in.CandidateID, actions, artifacts, allReuse, in.LocalApplications, changed, in.PruneValues)
+	return s.finishPreview(ctx, env, definitionVersion, definition, in.CandidateID, actions, artifacts, allReuse, in.LocalApplications, changed, in.PruneValues, nil)
 }
 
 // validateLocalApplications gates a request's local-application set: the
@@ -1219,13 +1242,15 @@ func (s *Service) interceptsChanged(ctx context.Context, environmentID uuid.UUID
 
 // finishPreview resolves the target environment's values, builds the
 // candidate revision over the decided artifact set, and diffs it against
-// the active revision. Shared by the ordinary preview and the promotion
-// path, which substitutes a source revision's artifact set.
+// the active revision: active when the caller already read it, read here
+// when nil. Shared by the ordinary preview and the promotion path, which
+// substitutes a source revision's artifact set.
 func (s *Service) finishPreview(ctx context.Context, env store.Environment,
 	definitionVersion store.DefinitionVersion, definition compiler.ProjectDefinition,
 	candidateID uuid.UUID, actions []ArtifactAction,
 	artifacts map[string]revision.Artifact, allReuse bool,
-	locals map[string]LocalApplication, interceptsChanged, pruneValues bool) (*Preview, error) {
+	locals map[string]LocalApplication, interceptsChanged, pruneValues bool,
+	active *revision.Revision) (*Preview, error) {
 
 	secretVersions, orphaned, err := s.resolveValues(ctx, env.ID, candidateID, definition.RequiredVariables)
 	if err != nil {
@@ -1251,21 +1276,20 @@ func (s *Service) finishPreview(ctx context.Context, env store.Environment,
 		return nil, err
 	}
 
-	var active *revision.Revision
-	activeChecksum := ""
-	target, err := s.st.GetEnvironmentTarget(ctx, env.ID)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return nil, fmt.Errorf("deploy: get target: %w", err)
-	}
-	if err == nil && target.ActiveRevisionID != nil {
-		active, err = s.GetRevision(ctx, *target.ActiveRevisionID)
-		if err != nil {
-			return nil, err
+	if active == nil {
+		target, err := s.st.GetEnvironmentTarget(ctx, env.ID)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("deploy: get target: %w", err)
 		}
-		activeChecksum = active.Checksum
+		if err == nil && target.ActiveRevisionID != nil {
+			if active, err = s.GetRevision(ctx, *target.ActiveRevisionID); err != nil {
+				return nil, err
+			}
+		}
 	}
-
+	activeChecksum := ""
 	if active != nil {
+		activeChecksum = active.Checksum
 		if err := validateVolumeSizes(active.Definition, candidate.Definition); err != nil {
 			return nil, err
 		}
@@ -1333,36 +1357,35 @@ type promotionSource struct {
 	DefinitionVersionID uuid.UUID
 	Actions             []ArtifactAction
 	Artifacts           map[string]revision.Artifact
+	// Revision is the source environment's active revision.
+	Revision *revision.Revision
 }
 
 // loadPromotionSource resolves the source environment and its active
 // revision. Artifact rows are recovered through the revision's leases and
 // matched by reference and digest; reuse queries by context hash are never
 // consulted, so the promotion pins exactly what the source runs.
-func (s *Service) loadPromotionSource(ctx context.Context, environmentID, fromEnvironmentID uuid.UUID) (*promotionSource, error) {
-	if fromEnvironmentID == environmentID {
+func (s *Service) loadPromotionSource(ctx context.Context, env store.Environment, fromEnvironmentID uuid.UUID) (*promotionSource, error) {
+	if fromEnvironmentID == env.ID {
 		return nil, ErrSameEnvironment
 	}
-	return s.loadSourceRevision(ctx, environmentID, fromEnvironmentID)
+	return s.loadSourceRevision(ctx, env, fromEnvironmentID)
 }
 
 // loadSourceRevision is the guard-free body shared by promotions and
 // redeploys (where source and target are deliberately the same
 // environment).
-func (s *Service) loadSourceRevision(ctx context.Context, environmentID, fromEnvironmentID uuid.UUID) (*promotionSource, error) {
-	env, err := s.st.GetEnvironmentByID(ctx, environmentID)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrEnvironmentNotFound
+func (s *Service) loadSourceRevision(ctx context.Context, env store.Environment, fromEnvironmentID uuid.UUID) (*promotionSource, error) {
+	source := env
+	if fromEnvironmentID != env.ID {
+		var err error
+		source, err = s.st.GetEnvironmentByID(ctx, fromEnvironmentID)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, ErrSourceEnvironmentNotFound
+			}
+			return nil, fmt.Errorf("deploy: get source environment: %w", err)
 		}
-		return nil, fmt.Errorf("deploy: get environment: %w", err)
-	}
-	source, err := s.st.GetEnvironmentByID(ctx, fromEnvironmentID)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrSourceEnvironmentNotFound
-		}
-		return nil, fmt.Errorf("deploy: get source environment: %w", err)
 	}
 	if source.ProjectID != env.ProjectID {
 		return nil, ErrSourceProjectMismatch
@@ -1386,16 +1409,12 @@ func (s *Service) loadSourceRevision(ctx context.Context, environmentID, fromEnv
 		return nil, err
 	}
 
-	leases, err := s.st.ListArtifactLeasesByRevision(ctx, row.ID)
+	leased, err := s.st.ListLeasedArtifacts(ctx, row.ID)
 	if err != nil {
-		return nil, fmt.Errorf("deploy: list source artifact leases: %w", err)
+		return nil, fmt.Errorf("deploy: list source artifacts: %w", err)
 	}
-	byIdentity := make(map[string]store.Artifact, len(leases))
-	for _, lease := range leases {
-		art, err := s.st.GetArtifactByID(ctx, lease.ArtifactID)
-		if err != nil {
-			return nil, fmt.Errorf("deploy: get leased artifact: %w", err)
-		}
+	byIdentity := make(map[string]store.Artifact, len(leased))
+	for _, art := range leased {
 		if art.Digest != nil {
 			byIdentity[art.Reference+"@"+*art.Digest] = art
 		}
@@ -1418,86 +1437,69 @@ func (s *Service) loadSourceRevision(ctx context.Context, environmentID, fromEnv
 		DefinitionVersionID: row.DefinitionVersionID,
 		Actions:             actions,
 		Artifacts:           document.Artifacts,
+		Revision:            document,
 	}, nil
 }
 
-// loadDefinition loads and cross-checks the environment and definition
-// version, and decodes the stored definition.
-func (s *Service) loadDefinition(ctx context.Context, environmentID, definitionVersionID uuid.UUID) (store.Environment, store.DefinitionVersion, compiler.ProjectDefinition, error) {
-	var definition compiler.ProjectDefinition
-	env, err := s.st.GetEnvironmentByID(ctx, environmentID)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return env, store.DefinitionVersion{}, definition, ErrEnvironmentNotFound
-		}
-		return env, store.DefinitionVersion{}, definition, fmt.Errorf("deploy: get environment: %w", err)
+// environment reads the environment a deployment targets.
+func (s *Service) environment(ctx context.Context, id uuid.UUID) (store.Environment, error) {
+	env, err := s.st.GetEnvironmentByID(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return env, ErrEnvironmentNotFound
 	}
+	if err != nil {
+		return env, fmt.Errorf("deploy: get environment: %w", err)
+	}
+	return env, nil
+}
+
+// loadDefinition loads the definition version, checks that it belongs to
+// the environment's project, and decodes the stored definition.
+func (s *Service) loadDefinition(ctx context.Context, env store.Environment, definitionVersionID uuid.UUID) (store.DefinitionVersion, compiler.ProjectDefinition, error) {
+	var definition compiler.ProjectDefinition
 	definitionVersion, err := s.st.GetDefinitionVersionByID(ctx, definitionVersionID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return env, definitionVersion, definition, fmt.Errorf("deploy: definition version not found")
+			return definitionVersion, definition, fmt.Errorf("deploy: definition version not found")
 		}
-		return env, definitionVersion, definition, fmt.Errorf("deploy: get definition version: %w", err)
+		return definitionVersion, definition, fmt.Errorf("deploy: get definition version: %w", err)
 	}
 	if definitionVersion.ProjectID != env.ProjectID {
-		return env, definitionVersion, definition, ErrDefinitionMismatch
+		return definitionVersion, definition, ErrDefinitionMismatch
 	}
 	definition, err = compiler.DecodeDefinition(definitionVersion.Definition)
 	if err != nil {
-		return env, definitionVersion, definition, err
+		return definitionVersion, definition, err
 	}
-	return env, definitionVersion, definition, nil
+	return definitionVersion, definition, nil
 }
 
 // instantStep journals one server-owned step that begins and succeeds
 // within the open request.
 func (s *Service) instantStep(ctx context.Context, jsvc *journal.Service, runID uuid.UUID,
 	redactor *redact.Redactor, key, title, message string) error {
-	step, err := jsvc.EnsureStep(ctx, runID, nil, key, title)
-	if err != nil {
-		return err
-	}
-	if err := jsvc.SetStepStatus(ctx, step.ID, journal.StepRunning); err != nil {
-		return err
-	}
-	attempt, err := jsvc.StartAttempt(ctx, step.ID)
-	if err != nil {
-		return err
-	}
-	_ = jsvc.Writer(attempt.ID, redactor).Info(ctx, message)
-	if err := jsvc.FinishAttempt(ctx, attempt.ID, journal.AttemptSucceeded); err != nil {
-		return err
-	}
-	return jsvc.SetStepStatus(ctx, step.ID, journal.StepSucceeded)
+	_, err := jsvc.RecordStep(ctx, journal.StepRecord{RunID: runID, Key: key, Title: title, To: journal.StepSucceeded,
+		Entries: []journal.LogEntry{{Level: "info", Message: message}}}, redactor)
+	return err
 }
 
 // closeArtifactsStep concludes the artifacts parent step once every
 // artifact verified.
 func (s *Service) closeArtifactsStep(ctx context.Context, jsvc *journal.Service, runID uuid.UUID,
-	deployment *store.Deployment, actions []ArtifactAction) error {
-	redactor, err := s.values.Redactor(ctx, deployment.EnvironmentID, uuid.Nil)
-	if err != nil {
+	redactor *redact.Redactor, actions []ArtifactAction) error {
+	entries := make([]journal.LogEntry, 0, len(actions))
+	for _, action := range actions {
+		entries = append(entries, journal.LogEntry{Level: "info", Message: action.Application + ": " + action.Action + " verified"})
+	}
+	step, err := jsvc.RecordStep(ctx, journal.StepRecord{RunID: runID, Key: "artifacts", Title: "Prepare artifacts",
+		To: journal.StepSucceeded, Entries: entries}, redactor)
+	if !errors.Is(err, journal.ErrAttemptConflict) {
 		return err
 	}
-	step, err := jsvc.EnsureStep(ctx, runID, nil, "artifacts", "Prepare artifacts")
-	if err != nil {
-		return err
-	}
-	if step.Status == string(journal.StepPending) || step.Status == string(journal.StepWaiting) {
+	// An attempt the client still holds open stays as it is; the step
+	// closes without the summary.
+	if step.Status == journal.StepPending || step.Status == journal.StepWaiting {
 		if err := jsvc.SetStepStatus(ctx, step.ID, journal.StepRunning); err != nil {
-			return err
-		}
-	}
-	attempt, err := jsvc.StartAttempt(ctx, step.ID)
-	if err != nil && !errors.Is(err, journal.ErrAttemptConflict) {
-		return err
-	}
-	if attempt != nil {
-		writer := jsvc.Writer(attempt.ID, redactor)
-		for _, action := range actions {
-			_ = writer.Info(ctx, action.Application+": "+action.Action+" verified")
-		}
-		if err := jsvc.FinishAttempt(ctx, attempt.ID, journal.AttemptSucceeded); err != nil {
 			return err
 		}
 	}

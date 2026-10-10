@@ -13,6 +13,7 @@ import (
 	"maps"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -68,6 +69,9 @@ type Service struct {
 	// request that started it (deployment completion). nil means
 	// context.Background(), which is what tests and API-only mode want.
 	lifetimeCtx context.Context
+	// requestWait and promotionWait bound how long a change waits on the
+	// environment lock (lock.go).
+	requestWait, promotionWait time.Duration
 
 	mu sync.Mutex
 	// completing holds the deployments whose completion runs in a
@@ -81,6 +85,7 @@ func New(st *store.Store, valueSvc *valuestore.Service, artifactSvc *artifactsto
 	return &Service{
 		st: st, values: valueSvc, artifacts: artifactSvc,
 		builds: buildstore.New(st), version: compilerVersion,
+		requestWait: requestLockWait, promotionWait: promotionLockWait,
 		completing: make(map[uuid.UUID]struct{}),
 	}
 }
@@ -251,12 +256,15 @@ func (s *Service) Prepare(ctx context.Context, in PrepareInput) (*Prepared, erro
 	if in.PruneValues {
 		prepared.Orphaned, prepared.Pruned = nil, orphaned
 	}
-	err = s.st.WithTx(ctx, func(q *store.Queries) error {
+	// Identical inputs reuse the stored row. One stored by another writer
+	// after the statement's snapshot is neither inserted nor found; the
+	// second statement finds it.
+	for range 2 {
 		id, err := uuid.NewV7()
 		if err != nil {
-			return fmt.Errorf("deploy: generate id: %w", err)
+			return nil, fmt.Errorf("deploy: generate id: %w", err)
 		}
-		if _, err := q.InsertRevision(ctx, store.InsertRevisionParams{
+		prepared.RevisionID, err = s.st.StoreRevision(ctx, store.StoreRevisionParams{
 			ID:                  id,
 			ProjectID:           env.ProjectID,
 			EnvironmentID:       env.ID,
@@ -267,24 +275,17 @@ func (s *Service) Prepare(ctx context.Context, in PrepareInput) (*Prepared, erro
 			ValuesHash:          built.ValuesHash,
 			CompilerVersion:     built.CompilerVersion,
 			Document:            document,
-		}); err != nil {
-			return fmt.Errorf("deploy: insert revision: %w", err)
-		}
-		// Identical inputs reuse the stored row; read back the canonical id.
-		row, err := q.GetRevisionByChecksum(ctx, store.GetRevisionByChecksumParams{
-			EnvironmentID: env.ID,
-			Checksum:      built.Checksum,
+			ArtifactIds:         artifactIDs,
 		})
-		if err != nil {
-			return fmt.Errorf("deploy: read revision: %w", err)
+		if errors.Is(err, pgx.ErrNoRows) {
+			continue
 		}
-		prepared.RevisionID = row.ID
-		return s.artifacts.LeaseTx(ctx, q, row.ID, artifactIDs)
-	})
-	if err != nil {
-		return nil, err
+		if err != nil {
+			return nil, fmt.Errorf("deploy: store revision: %w", err)
+		}
+		return prepared, nil
 	}
-	return prepared, nil
+	return nil, fmt.Errorf("deploy: store revision: %s neither stored nor found", built.Checksum)
 }
 
 // Promote is the single atomic transaction of a deployment: move the target
@@ -299,15 +300,17 @@ func (s *Service) Prepare(ctx context.Context, in PrepareInput) (*Prepared, erro
 // see a window where the target has already moved but the row still claims
 // the client owns it.
 func (s *Service) Promote(ctx context.Context, p *Prepared) error {
-	unlock, err := s.st.LockEnvironment(ctx, p.EnvironmentID)
-	if err != nil {
-		return err
-	}
-	defer unlock()
+	// The routes resolve from the revision's pinned values, which never
+	// change, so they are read before the environment is locked.
 	routes, err := s.revisionRoutes(ctx, p.EnvironmentID, p.Revision)
 	if err != nil {
 		return err
 	}
+	unlock, err := s.st.LockEnvironmentWithin(ctx, p.EnvironmentID, s.promotionWait)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	return s.st.WithTx(ctx, func(q *store.Queries) error {
 		if err := s.claimRoutesTx(ctx, q, p.EnvironmentID, p.RevisionID, routes); err != nil {
 			return err
@@ -315,17 +318,13 @@ func (s *Service) Promote(ctx context.Context, p *Prepared) error {
 		rows, err := q.SetEnvironmentTarget(ctx, store.SetEnvironmentTargetParams{
 			EnvironmentID:    p.EnvironmentID,
 			TargetRevisionID: &p.RevisionID,
+			Restart:          p.Restart,
 		})
 		if err != nil {
 			return fmt.Errorf("deploy: set target: %w", err)
 		}
 		if rows == 0 {
 			return ErrEnvironmentNotFound
-		}
-		if p.Restart {
-			if _, err := q.StampEnvironmentRestart(ctx, p.EnvironmentID); err != nil {
-				return fmt.Errorf("deploy: stamp restart: %w", err)
-			}
 		}
 		if err := s.values.PromoteTx(ctx, q, p.EnvironmentID, p.CandidateID); err != nil {
 			return err
@@ -386,7 +385,7 @@ type RollbackResult struct {
 // untouched target; the unique running-run index serializes rollbacks
 // against deployments.
 func (s *Service) Rollback(ctx context.Context, in RollbackInput) (*RollbackResult, error) {
-	unlock, err := s.st.LockEnvironment(ctx, in.EnvironmentID)
+	unlock, err := s.st.LockEnvironmentWithin(ctx, in.EnvironmentID, s.requestWait)
 	if err != nil {
 		return nil, err
 	}
@@ -426,20 +425,16 @@ func (s *Service) Rollback(ctx context.Context, in RollbackInput) (*RollbackResu
 		return nil, fmt.Errorf("deploy: check in-flight deployment: %w", err)
 	}
 
-	run, err := in.Journal.CreateRun(ctx, journal.RunInput{
+	run, err := in.Journal.BeginRun(ctx, journal.RunInput{
 		Kind:          "rollback",
 		ProjectID:     row.ProjectID,
 		EnvironmentID: in.EnvironmentID,
 		Actor:         in.Actor,
 	})
-	if err != nil {
-		return nil, err
+	if errors.Is(err, journal.ErrRunConflict) {
+		return nil, ErrDeploymentInFlight
 	}
-	if err := in.Journal.StartRun(ctx, run.ID); err != nil {
-		discardUnstartedRun(ctx, in.Journal, run.ID)
-		if errors.Is(err, journal.ErrRunConflict) {
-			return nil, ErrDeploymentInFlight
-		}
+	if err != nil {
 		return nil, err
 	}
 	// From here on a run exists that only this call can conclude: a client
@@ -481,16 +476,16 @@ func (s *Service) Rollback(ctx context.Context, in RollbackInput) (*RollbackResu
 		return nil, finishRunFailed(ctx, in.Journal, run.ID, err)
 	}
 	for _, warning := range compiler.Warnings(rev.Definition) {
-		if err := s.instantStep(ctx, in.Journal, run.ID, redactor, warning.Code, "Backup policy warning", warning.Message); err != nil {
+		if err := unlessConcluded(s.instantStep(ctx, in.Journal, run.ID, redactor, warning.Code, "Backup policy warning", warning.Message)); err != nil {
 			return nil, finishRunFailed(ctx, in.Journal, run.ID, err)
 		}
 	}
-	if err := s.instantStep(ctx, in.Journal, run.ID, redactor, "promote", "Promote revision",
-		"target set to revision "+row.Checksum); err != nil {
+	if err := unlessConcluded(s.instantStep(ctx, in.Journal, run.ID, redactor, "promote", "Promote revision",
+		"target set to revision "+row.Checksum)); err != nil {
 		return nil, finishRunFailed(ctx, in.Journal, run.ID, err)
 	}
 	if s.enqueuer != nil {
-		if _, err := in.Journal.EnsureStep(ctx, run.ID, nil, "rollout", "Roll out revision"); err != nil {
+		if _, err := in.Journal.EnsureStep(ctx, run.ID, nil, "rollout", "Roll out revision"); unlessConcluded(err) != nil {
 			return nil, finishRunFailed(ctx, in.Journal, run.ID, err)
 		}
 		s.enqueuer.Enqueue(in.EnvironmentID)
@@ -554,20 +549,16 @@ func (s *Service) Restart(ctx context.Context, in RestartInput) (*RestartResult,
 		return nil, fmt.Errorf("deploy: get environment: %w", err)
 	}
 
-	run, err := in.Journal.CreateRun(ctx, journal.RunInput{
+	run, err := in.Journal.BeginRun(ctx, journal.RunInput{
 		Kind:          "restart",
 		ProjectID:     env.ProjectID,
 		EnvironmentID: in.EnvironmentID,
 		Actor:         in.Actor,
 	})
-	if err != nil {
-		return nil, err
+	if errors.Is(err, journal.ErrRunConflict) {
+		return nil, ErrDeploymentInFlight
 	}
-	if err := in.Journal.StartRun(ctx, run.ID); err != nil {
-		discardUnstartedRun(ctx, in.Journal, run.ID)
-		if errors.Is(err, journal.ErrRunConflict) {
-			return nil, ErrDeploymentInFlight
-		}
+	if err != nil {
 		return nil, err
 	}
 
@@ -607,12 +598,12 @@ func (s *Service) Restart(ctx context.Context, in RestartInput) (*RestartResult,
 	if in.ApplicationKey == "" {
 		stamped = "restart stamped for every application"
 	}
-	if err := s.instantStep(ctx, in.Journal, run.ID, redactor, "restart", "Restart application",
-		stamped); err != nil {
+	if err := unlessConcluded(s.instantStep(ctx, in.Journal, run.ID, redactor, "restart", "Restart application",
+		stamped)); err != nil {
 		return nil, finishRunFailed(ctx, in.Journal, run.ID, err)
 	}
 	if s.enqueuer != nil {
-		if _, err := in.Journal.EnsureStep(ctx, run.ID, nil, "rollout", "Roll out revision"); err != nil {
+		if _, err := in.Journal.EnsureStep(ctx, run.ID, nil, "rollout", "Roll out revision"); unlessConcluded(err) != nil {
 			return nil, finishRunFailed(ctx, in.Journal, run.ID, err)
 		}
 		s.enqueuer.Enqueue(in.EnvironmentID)
@@ -622,6 +613,17 @@ func (s *Service) Restart(ctx context.Context, in RestartInput) (*RestartResult,
 		return nil, err
 	}
 	return &RestartResult{RunID: run.ID}, nil
+}
+
+// unlessConcluded passes err on unless the run had already finished. Once
+// a change is promoted or stamped, the kernel owns its run, and a pass may
+// conclude the run before the change journals its last steps; the change
+// stands, and the steps have nothing left to explain.
+func unlessConcluded(err error) error {
+	if errors.Is(err, journal.ErrRunFinished) {
+		return nil
+	}
+	return err
 }
 
 // finishRunFailed concludes a run after a failure and returns the original

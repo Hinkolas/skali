@@ -83,6 +83,13 @@ type API struct {
 	// silently attach to whatever cluster the developer's shell points at.
 	KubeconfigPath string `env:"SKALI_KUBECONFIG,default="`
 
+	// KubeQPS and KubeBurst are the Kubernetes client's request budget,
+	// shared by the kernel, the substrate, and observation: requests per
+	// second sustained, and momentarily. Zero QPS keeps client-go's default
+	// of 5 per second with a burst of 10, whatever KubeBurst says.
+	KubeQPS   float32 `env:"SKALI_KUBE_QPS,default=50"`
+	KubeBurst int     `env:"SKALI_KUBE_BURST,default=100"`
+
 	// UpdateScan enables the daily release scan behind the Studio's Updates
 	// page; false keeps the daemon free of any outbound request to the
 	// release feed (air-gapped installations).
@@ -95,12 +102,15 @@ type API struct {
 	// for its downloads. Mirrors point it elsewhere.
 	ReleaseBase string `env:"SKALI_RELEASE_BASE,default=https://github.com"`
 
-	// ReconcileResync re-fires informer updates for every cached object as the
-	// correctness backstop against missed watch edits.
+	// ReconcileResync is the cadence of the kernel's sweep of environments not
+	// yet at their target and the substrate's sweep of unsettled work: the
+	// correctness backstop against missed watch events.
 	ReconcileResync time.Duration `env:"RECONCILE_RESYNC_INTERVAL,default=5m"`
 
 	// ReconcileAudit lists all environment targets from the database and
 	// enqueues them, catching divergence with no cluster object to fire on.
+	// Each environment's pass lands at a fixed point of the interval, so
+	// every environment is audited once per interval without a burst.
 	ReconcileAudit time.Duration `env:"RECONCILE_AUDIT_INTERVAL,default=30m"`
 
 	// RolloutDeadline bounds how long a promoted revision may stay unhealthy
@@ -224,6 +234,12 @@ func (a *API) Validate() error {
 	}
 	if a.ReauthWindow <= 0 {
 		return fmt.Errorf("REAUTH_WINDOW: must be positive")
+	}
+	if a.KubeQPS < 0 {
+		return fmt.Errorf("SKALI_KUBE_QPS: must not be negative")
+	}
+	if a.KubeQPS > 0 && a.KubeBurst < 1 {
+		return fmt.Errorf("SKALI_KUBE_BURST: must be at least 1 when SKALI_KUBE_QPS is set")
 	}
 	if a.ReconcileResync <= 0 {
 		return fmt.Errorf("RECONCILE_RESYNC_INTERVAL: must be positive")

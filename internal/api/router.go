@@ -207,7 +207,7 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 
 	h := &authHandlers{auth: d.Auth}
 	jh := &runsHandlers{journal: d.Journal}
-	sh := &statusHandlers{reconcile: d.Reconcile}
+	sh := &statusHandlers{reconcile: d.Reconcile, feeds: newStatusFeeds(d.Reconcile)}
 	lh := &logsHandlers{logs: d.RuntimeLogs}
 	dh := &deploymentsHandlers{
 		st: d.Store, deploy: d.Deploy, artifacts: d.Artifacts, builds: d.Builds,

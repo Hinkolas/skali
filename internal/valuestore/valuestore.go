@@ -281,23 +281,34 @@ func (s *Service) Redactor(ctx context.Context, environmentID, candidateID uuid.
 // the applied cluster Secret; callers must never log or persist them.
 func (s *Service) Plaintexts(ctx context.Context, environmentID uuid.UUID, refs map[string]int) (map[string]string, error) {
 	plaintexts := make(map[string]string, len(refs))
-	for _, name := range utils.SortedKeys(refs) {
-		ciphertext, err := s.st.GetEnvironmentSecretCiphertext(ctx, store.GetEnvironmentSecretCiphertextParams{
-			EnvironmentID: environmentID,
-			Name:          name,
-			Version:       int64(refs[name]),
-		})
+	if len(refs) == 0 {
+		return plaintexts, nil
+	}
+	names := utils.SortedKeys(refs)
+	versions := make([]int64, len(names))
+	for i, name := range names {
+		versions[i] = int64(refs[name])
+	}
+	// One round trip for every pinned version.
+	rows, err := s.st.ListPinnedEnvironmentSecretCiphertexts(ctx, store.ListPinnedEnvironmentSecretCiphertextsParams{
+		EnvironmentID: environmentID,
+		Names:         names,
+		Versions:      versions,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("valuestore: get values: %w", err)
+	}
+	for _, row := range rows {
+		plaintext, err := crypt.Decrypt(s.key, row.Ciphertext)
 		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return nil, fmt.Errorf("valuestore: value %s version %d not found", name, refs[name])
-			}
-			return nil, fmt.Errorf("valuestore: get value %s: %w", name, err)
+			return nil, fmt.Errorf("valuestore: decrypt %s: %w", row.Name, err)
 		}
-		plaintext, err := crypt.Decrypt(s.key, ciphertext)
-		if err != nil {
-			return nil, fmt.Errorf("valuestore: decrypt %s: %w", name, err)
+		plaintexts[row.Name] = string(plaintext)
+	}
+	for _, name := range names {
+		if _, ok := plaintexts[name]; !ok {
+			return nil, fmt.Errorf("valuestore: value %s version %d not found", name, refs[name])
 		}
-		plaintexts[name] = string(plaintext)
 	}
 	return plaintexts, nil
 }

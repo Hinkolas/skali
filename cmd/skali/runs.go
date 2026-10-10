@@ -181,13 +181,18 @@ func newRunCommand() *cobra.Command {
 					return errors.New("aborted")
 				}
 			}
-			fallback, err := api.CancelRun(ctx, run.ID)
+			outcome, err := api.CancelRun(ctx, run.ID)
 			if err != nil {
 				return err
 			}
 			fmt.Fprintf(out, "run %s cancelled\n", run.ID)
-			if fallback {
+			switch {
+			case outcome.Fallback:
 				fmt.Fprintln(out, "the target returned to the prior active revision")
+			case outcome.Continues:
+				fmt.Fprintln(out, "this was the environment's first deployment, so there is no earlier revision "+
+					"to return to: its revision keeps rolling out until the next deployment or the "+
+					"environment's removal")
 			}
 			return nil
 		},

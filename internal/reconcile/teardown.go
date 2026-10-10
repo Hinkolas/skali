@@ -2,7 +2,6 @@ package reconcile
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -10,7 +9,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/Hinkolas/skali/internal/deploy"
@@ -19,6 +17,7 @@ import (
 	rendering "github.com/Hinkolas/skali/internal/kubernetes"
 	"github.com/Hinkolas/skali/internal/module"
 	"github.com/Hinkolas/skali/internal/observe"
+	"github.com/Hinkolas/skali/internal/redact"
 	"github.com/Hinkolas/skali/internal/store"
 )
 
@@ -40,21 +39,17 @@ var workloadKinds = []string{
 // releasing removes everything and ends by deleting the environment row
 // itself. Deletes carry the observed UID as precondition, absence counts as
 // done, and watch delete events drive the pass to completion.
-func (k *Kernel) teardownEnvironment(ctx context.Context, environmentID uuid.UUID, target store.EnvironmentTarget) (time.Duration, error) {
-	env, err := k.deps.Store.GetEnvironmentByID(ctx, environmentID)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return 0, nil // the row is already gone; nothing left to explain
-		}
-		return 0, fmt.Errorf("reconcile: get environment: %w", err)
-	}
-	releasing := target.State == deploy.EnvironmentStateReleasing
-	attachment := k.attachRun(ctx, environmentID, env.ProjectID, k.redactor(ctx, environmentID, nil))
+func (k *Kernel) teardownEnvironment(ctx context.Context, state store.GetEnvironmentPassRow) (time.Duration, error) {
+	environmentID := state.Environment.ID
+	releasing := state.EnvironmentTarget.State == deploy.EnvironmentStateReleasing
+	attachment := k.attachRun(ctx, state, func(ctx context.Context) *redact.Redactor {
+		return k.redactor(ctx, environmentID, nil, nil)
+	})
 	attachment.ensureKind = "teardown"
 
 	snapshot := k.deps.Observed.Snapshot(environmentID)
 	if teardownSettled(snapshot, releasing) {
-		if err := k.releaseAbsentHostnames(ctx, environmentID); err != nil {
+		if err := k.releaseAbsentHostnames(ctx, state); err != nil {
 			return 0, err
 		}
 		if !releasing {

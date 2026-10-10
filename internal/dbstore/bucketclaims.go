@@ -21,7 +21,16 @@ import (
 // the bucket's externally observable contract, and replacing it is a
 // destructive decision that belongs to plan/deploy, not to reconciliation.
 func (s *Service) EnsureBucketClaim(ctx context.Context, owner Owner, spec BucketSpec) (*store.BucketClaim, error) {
+	row, _, err := s.EnsureBucketClaimChanged(ctx, owner, spec)
+	return row, err
+}
+
+// EnsureBucketClaimChanged is EnsureBucketClaim that also reports whether
+// the call created the claim or folded a spec change into it: a settled
+// claim needs a reconciliation pass only then.
+func (s *Service) EnsureBucketClaimChanged(ctx context.Context, owner Owner, spec BucketSpec) (*store.BucketClaim, bool, error) {
 	var row store.BucketClaim
+	changed := false
 	err := s.st.WithTx(ctx, func(q *store.Queries) error {
 		existing, err := s.liveBucketClaim(ctx, q, owner)
 		switch {
@@ -51,23 +60,17 @@ func (s *Service) EnsureBucketClaim(ctx context.Context, owner Owner, spec Bucke
 			if err != nil {
 				return fmt.Errorf("dbstore: create bucket claim: %w", err)
 			}
+			changed = true
 			return nil
 		case err != nil:
 			return fmt.Errorf("dbstore: lookup bucket claim: %w", err)
 		}
 
-		if existing.Visibility != spec.Visibility || existing.Versioning != spec.Versioning {
-			return fmt.Errorf("%w: %s/%s -> %s/%s", ErrSpecConflict,
-				existing.Visibility, existing.Versioning,
-				spec.Visibility, spec.Versioning)
+		differs, err := bucketSpecDiffers(existing, spec)
+		if err != nil {
+			return err
 		}
-		if existing.StorageQuotaBytes != spec.StorageQuotaBytes ||
-			existing.ObjectQuota != spec.ObjectQuota ||
-			existing.MaxObjectBytes != spec.MaxObjectBytes ||
-			existing.AbortUploadsAfterSeconds != spec.AbortUploadsAfterSeconds ||
-			existing.ExpireNoncurrentAfterSeconds != spec.ExpireNoncurrentAfterSeconds ||
-			!bytes.Equal(existing.Cors, spec.CORS) ||
-			!bytes.Equal(existing.Route, spec.Route) {
+		if differs {
 			if _, err := q.SetBucketClaimSpec(ctx, store.SetBucketClaimSpecParams{
 				ID:                           existing.ID,
 				StorageQuotaBytes:            spec.StorageQuotaBytes,
@@ -84,14 +87,46 @@ func (s *Service) EnsureBucketClaim(ctx context.Context, owner Owner, spec Bucke
 			if err != nil {
 				return fmt.Errorf("dbstore: reload bucket claim: %w", err)
 			}
+			changed = true
 		}
 		row = existing
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return &row, nil
+	return &row, changed, nil
+}
+
+// EnsureBucketClaimFrom is EnsureBucketClaimChanged for a caller that
+// already read the owner's live claim (nil when there was none): when live
+// already carries spec, it is returned as is without a transaction.
+// Anything else takes EnsureBucketClaimChanged, which reads the claim again.
+func (s *Service) EnsureBucketClaimFrom(ctx context.Context, owner Owner, spec BucketSpec, live *store.BucketClaim) (*store.BucketClaim, bool, error) {
+	if live != nil {
+		if differs, err := bucketSpecDiffers(*live, spec); err == nil && !differs {
+			return live, false, nil
+		}
+	}
+	return s.EnsureBucketClaimChanged(ctx, owner, spec)
+}
+
+// bucketSpecDiffers reports whether spec changes a mutable field of the
+// existing claim, or ErrSpecConflict when it changes the bucket's
+// externally observable contract.
+func bucketSpecDiffers(existing store.BucketClaim, spec BucketSpec) (bool, error) {
+	if existing.Visibility != spec.Visibility || existing.Versioning != spec.Versioning {
+		return false, fmt.Errorf("%w: %s/%s -> %s/%s", ErrSpecConflict,
+			existing.Visibility, existing.Versioning,
+			spec.Visibility, spec.Versioning)
+	}
+	return existing.StorageQuotaBytes != spec.StorageQuotaBytes ||
+		existing.ObjectQuota != spec.ObjectQuota ||
+		existing.MaxObjectBytes != spec.MaxObjectBytes ||
+		existing.AbortUploadsAfterSeconds != spec.AbortUploadsAfterSeconds ||
+		existing.ExpireNoncurrentAfterSeconds != spec.ExpireNoncurrentAfterSeconds ||
+		!bytes.Equal(existing.Cors, spec.CORS) ||
+		!bytes.Equal(existing.Route, spec.Route), nil
 }
 
 func (s *Service) liveBucketClaim(ctx context.Context, q *store.Queries, owner Owner) (store.BucketClaim, error) {

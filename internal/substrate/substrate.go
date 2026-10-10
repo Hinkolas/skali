@@ -36,6 +36,7 @@ import (
 	"github.com/Hinkolas/skali/internal/platform"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/substrate/seaweed"
+	"github.com/Hinkolas/skali/internal/workstats"
 )
 
 // Namespace is the skalid-owned platform namespace holding every substrate
@@ -164,8 +165,11 @@ type Config struct {
 	Capabilities []string
 	// Resync re-enqueues unsettled claims and live pools periodically as the
 	// audit backstop.
-	Resync  time.Duration
-	Workers int
+	Resync time.Duration
+	// PassTimeout bounds one work item's pass: a call that hangs fails the
+	// pass, which retries, instead of holding a worker.
+	PassTimeout time.Duration
+	Workers     int
 }
 
 type workKind string
@@ -183,11 +187,30 @@ type workKey struct {
 	id   uuid.UUID
 }
 
+// Reasons work enters the queue, counted per arrival by the system
+// observation endpoint.
+const (
+	reasonEnsure      = "ensure"       // an environment pass recorded the claim
+	reasonRelease     = "release"      // a revision, or the object store, dropped the claim
+	reasonBucket      = "bucket"       // a bucket claim's pass needs the object store
+	reasonObjectStore = "object-store" // the object store's pass needs its metadata claim
+	reasonRotation    = "rotation"     // a credential rotation committed or retires
+	reasonMaintenance = "maintenance"  // storage upkeep found a passed retirement
+	reasonTeardown    = "teardown"     // an environment's removal releases its claims
+	reasonBoot        = "boot"         // startup, or the default pool's creation
+	reasonResync      = "resync"       // the periodic sweep of unsettled work
+	reasonRepair      = "repair"       // a settled claim's drift repair, at its slot
+	reasonCheck       = "check"        // an environment pass asked for every claim: a rollout began, or health turned
+	reasonAPI         = "api"          // an API handler's request
+	reasonRequeue     = "requeue"      // a pass asked to run again after a delay
+	reasonRetry       = "retry"        // a failed pass, after its backoff
+)
+
 // Controller drives the substrate. Create with New, start with Run.
 type Controller struct {
 	deps  Deps
 	cfg   Config
-	queue workqueue.TypedRateLimitingInterface[workKey]
+	queue *workstats.Queue[workKey]
 
 	mu        sync.Mutex
 	waiting   map[uuid.UUID]string // claim id -> current waiting reason
@@ -218,26 +241,27 @@ type Controller struct {
 
 // accessPeers completes the peers a platform port admits beyond its claim
 // holders: skalid's service-proxy sources, and on a local platform the host
-// behind the loopback NodePorts. Either derivation failing is logged and
-// leaves that peer out: the holders still converge, and the next pass
-// retries.
-func (c *Controller) accessPeers(ctx context.Context, environmentIDs []string) platform.AccessPeers {
+// behind the loopback NodePorts. Either derivation failing fails it: a
+// policy applied without that peer would cut skalid's own access off until
+// the next pass put it back, so the caller keeps the policy it has and its
+// pass retries.
+func (c *Controller) accessPeers(ctx context.Context, environmentIDs []string) (platform.AccessPeers, error) {
 	peers := platform.AccessPeers{Environments: environmentIDs}
-	if cidrs, err := c.deps.Cluster.ProxyCIDRs(ctx); err != nil {
-		slog.Warn("substrate: derive proxy cidrs", "error", err)
-	} else {
-		peers.ProxyCIDRs = cidrs
+	cidrs, err := c.deps.Cluster.ProxyCIDRs(ctx)
+	if err != nil {
+		return peers, fmt.Errorf("substrate: derive proxy cidrs: %w", err)
 	}
+	peers.ProxyCIDRs = cidrs
 	if !c.cfg.Managed {
-		if cidrs, err := c.deps.Cluster.PodCIDRs(ctx); err != nil {
-			slog.Warn("substrate: derive pod cidrs", "error", err)
-		} else {
-			// Non-nil even without nodes: a local platform always admits
-			// the host.
-			peers.HostExcept = append([]string{}, cidrs...)
+		cidrs, err := c.deps.Cluster.PodCIDRs(ctx)
+		if err != nil {
+			return peers, fmt.Errorf("substrate: derive pod cidrs: %w", err)
 		}
+		// Non-nil even without nodes: a local platform always admits the
+		// host.
+		peers.HostExcept = append([]string{}, cidrs...)
 	}
-	return peers
+	return peers, nil
 }
 
 // holderEnvironments collects the distinct environment ids of claim rows;
@@ -282,14 +306,18 @@ func New(deps Deps, cfg Config) *Controller {
 	if cfg.Resync <= 0 {
 		cfg.Resync = 5 * time.Minute
 	}
+	if cfg.PassTimeout <= 0 {
+		cfg.PassTimeout = defaultPassTimeout
+	}
 	// The failure backoff is capped at the waiting cadence: a transient
 	// error must never park in-flight claim work longer than an ordinary
 	// waiting pass.
 	c := &Controller{
 		deps: deps,
 		cfg:  cfg,
-		queue: workqueue.NewTypedRateLimitingQueue(workqueue.NewTypedWithMaxWaitRateLimiter(
-			workqueue.DefaultTypedControllerRateLimiter[workKey](), requeueWait)),
+		queue: workstats.NewQueue(workqueue.NewTypedWithMaxWaitRateLimiter(
+			workqueue.DefaultTypedControllerRateLimiter[workKey](), requeueWait),
+			func(key workKey) string { return string(key.kind) }),
 		waiting:           make(map[uuid.UUID]string),
 		pendingExtensions: make(map[uuid.UUID][]byte),
 	}
@@ -298,24 +326,37 @@ func New(deps Deps, cfg Config) *Controller {
 }
 
 // EnqueueClaim schedules one claim's reconciliation.
-func (c *Controller) EnqueueClaim(id uuid.UUID) {
-	c.queue.Add(workKey{kind: workClaim, id: id})
+func (c *Controller) EnqueueClaim(id uuid.UUID, reason string) {
+	c.queue.Add(workKey{kind: workClaim, id: id}, reason)
 }
 
-// EnqueuePool schedules one pool's reconciliation.
+// EnqueuePool schedules one pool's reconciliation; the API's re-apply
+// request.
 func (c *Controller) EnqueuePool(id uuid.UUID) {
-	c.queue.Add(workKey{kind: workPool, id: id})
+	c.enqueuePool(id, reasonAPI)
+}
+
+func (c *Controller) enqueuePool(id uuid.UUID, reason string) {
+	c.queue.Add(workKey{kind: workPool, id: id}, reason)
 }
 
 // EnqueueBucketClaim schedules one bucket claim's reconciliation.
-func (c *Controller) EnqueueBucketClaim(id uuid.UUID) {
-	c.queue.Add(workKey{kind: workBucket, id: id})
+func (c *Controller) EnqueueBucketClaim(id uuid.UUID, reason string) {
+	c.queue.Add(workKey{kind: workBucket, id: id}, reason)
 }
 
 // EnqueueObjectStore schedules the physical system's reconciliation; with
 // one live store per installation the key carries no id.
-func (c *Controller) EnqueueObjectStore() {
-	c.queue.Add(workKey{kind: workStore})
+func (c *Controller) EnqueueObjectStore(reason string) {
+	c.queue.Add(workKey{kind: workStore}, reason)
+}
+
+// QueueStats reads the queue's accounting for the system observation
+// endpoint.
+func (c *Controller) QueueStats() workstats.QueueStats {
+	stats := c.queue.Stats()
+	stats.Workers = c.cfg.Workers
+	return stats
 }
 
 // WaitingReason reports why a claim is not progressing, empty when it is.
@@ -385,8 +426,9 @@ func (c *Controller) clearExtensions(claimID uuid.UUID) {
 func (c *Controller) Run(ctx context.Context) {
 	defer c.queue.ShutDown()
 
-	c.queue.Add(workKey{kind: workBoot})
+	c.queue.Add(workKey{kind: workBoot}, reasonBoot)
 	c.resyncEnqueue(ctx)
+	c.repairEnqueue(ctx)
 
 	var wg sync.WaitGroup
 	for range c.cfg.Workers {
@@ -413,23 +455,88 @@ func (c *Controller) Run(ctx context.Context) {
 	}
 }
 
+// repairInterval bounds how long drift on a settled claim goes unrepaired
+// (a deleted output Secret or credential Secret, a removed bucket
+// identity): environment passes reconcile only new, changed, and unsettled
+// claims, unless a rollout begins or the environment's health turns, so
+// every live claim gets a pass once per interval instead. Bucket settings
+// (policy, CORS, lifecycle, versioning) are reset by storage maintenance
+// on its own 15-second cadence.
+const repairInterval = 10 * time.Minute
+
+// repairEnqueue schedules every live claim's first drift repair after a
+// start; from then on each settled claim's pass books its next one.
+func (c *Controller) repairEnqueue(ctx context.Context) {
+	claims, err := c.deps.DB.ListLiveClaims(ctx)
+	if err != nil {
+		slog.Warn("substrate: list live claims", "error", err)
+	}
+	for _, row := range claims {
+		c.scheduleRepair(workKey{kind: workClaim, id: row.ID})
+	}
+	buckets, err := c.deps.DB.ListLiveBucketClaims(ctx)
+	if err != nil {
+		slog.Warn("substrate: list live bucket claims", "error", err)
+	}
+	for _, row := range buckets {
+		c.scheduleRepair(workKey{kind: workBucket, id: row.ID})
+	}
+}
+
+// scheduleRepair books a claim's next drift repair at its slot.
+func (c *Controller) scheduleRepair(key workKey) {
+	c.queue.AddAfter(key, repairDelay(key.id, time.Now()), reasonRepair)
+}
+
+// repairDelay is how long from now until id's next repair slot. The slots
+// sit at id's fixed phase of a repairInterval grid on the wall clock, so
+// the claims' repairs spread across the interval, a claim is repaired
+// once per interval however often it is scheduled, and one that settles
+// at any moment waits at most an interval for its first repair.
+func repairDelay(id uuid.UUID, now time.Time) time.Duration {
+	into := time.Duration(now.UnixNano() % int64(repairInterval))
+	delay := (workstats.Phase(id, repairInterval) - into + repairInterval) % repairInterval
+	if delay == 0 {
+		delay = repairInterval
+	}
+	return delay
+}
+
+// defaultPassTimeout leaves room for the slowest item, a bucket's pass:
+// a few admin shell execs of up to a minute each.
+const defaultPassTimeout = 5 * time.Minute
+
+// runPass runs one work item's pass under the pass deadline.
+func (c *Controller) runPass(ctx context.Context, key workKey) (time.Duration, error) {
+	ctx, cancel := context.WithTimeout(ctx, c.cfg.PassTimeout)
+	defer cancel()
+	requeue, err := c.process(ctx, key)
+	if err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return 0, fmt.Errorf("substrate: the pass ran past its %s deadline: %w", c.cfg.PassTimeout, err)
+	}
+	return requeue, err
+}
+
 func (c *Controller) processNext(ctx context.Context) bool {
-	key, shutdown := c.queue.Get()
+	key, waited, shutdown := c.queue.Take()
 	if shutdown {
 		return false
 	}
 	defer c.queue.Done(key)
 
-	requeue, err := c.process(ctx, key)
+	pass := workstats.NewPass("substrate")
+	requeue, err := c.runPass(workstats.WithPass(ctx, pass), key)
+	pass.Log(ctx, "substrate: pass", waited, "kind", key.kind, "id", key.id,
+		"requeue", requeue, "error", err != nil)
 	switch {
 	case ctx.Err() != nil:
 		return false
 	case err != nil:
 		slog.Warn("substrate: reconcile failed", "kind", key.kind, "id", key.id, "error", err)
-		c.queue.AddRateLimited(key)
+		c.queue.AddRateLimited(key, reasonRetry)
 	case requeue > 0:
 		c.queue.Forget(key)
-		c.queue.AddAfter(key, requeue)
+		c.queue.AddAfter(key, requeue, reasonRequeue)
 	default:
 		c.queue.Forget(key)
 	}
@@ -473,9 +580,9 @@ func (c *Controller) boot(ctx context.Context) (time.Duration, error) {
 	// (owner decision 2026-07-31: the dev substrate is always on); an
 	// existing store row resumes its reconciliation here either way.
 	if hasCapability(c.cfg.Capabilities, layout.CapabilityObjectStorage) {
-		c.EnqueueObjectStore()
+		c.EnqueueObjectStore(reasonBoot)
 	} else if _, err := c.deps.DB.LiveObjectStore(ctx); err == nil {
-		c.EnqueueObjectStore()
+		c.EnqueueObjectStore(reasonBoot)
 	}
 	return 0, nil
 }
@@ -486,24 +593,24 @@ func (c *Controller) resyncEnqueue(ctx context.Context) {
 		slog.Warn("substrate: list unsettled claims", "error", err)
 	}
 	for _, row := range claims {
-		c.EnqueueClaim(row.ID)
+		c.EnqueueClaim(row.ID, reasonResync)
 	}
 	pools, err := c.deps.DB.ListLiveClusters(ctx)
 	if err != nil {
 		slog.Warn("substrate: list live pools", "error", err)
 	}
 	for _, pool := range pools {
-		c.EnqueuePool(pool.ID)
+		c.enqueuePool(pool.ID, reasonResync)
 	}
 	buckets, err := c.deps.DB.ListUnsettledBucketClaims(ctx)
 	if err != nil {
 		slog.Warn("substrate: list unsettled bucket claims", "error", err)
 	}
 	for _, row := range buckets {
-		c.EnqueueBucketClaim(row.ID)
+		c.EnqueueBucketClaim(row.ID, reasonResync)
 	}
 	if _, err := c.deps.DB.LiveObjectStore(ctx); err == nil {
-		c.EnqueueObjectStore()
+		c.EnqueueObjectStore(reasonResync)
 	} else if !errors.Is(err, dbstore.ErrNotFound) {
 		slog.Warn("substrate: live object store", "error", err)
 	}
@@ -561,7 +668,7 @@ func (c *Controller) ensureDefaultSharedPool(ctx context.Context) (time.Duration
 		return 0, err
 	}
 	slog.Info("substrate: default shared pool created", "pool", pool.Name, "instances", pool.Instances)
-	c.EnqueuePool(pool.ID)
+	c.enqueuePool(pool.ID, reasonBoot)
 	return 0, nil
 }
 

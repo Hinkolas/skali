@@ -22,10 +22,29 @@ import (
 )
 
 // Ensure implements reconcile.ClaimManager: it records the revision's
-// database claims, enqueues their reconciliation, and reports readiness.
+// database claims, enqueues the reconciliation of new, changed, and
+// unsettled ones, and reports readiness. A settled claim is repaired on the
+// substrate's own cadence (scheduleRepair), not on every environment pass,
+// unless the pass asks for every claim (ClaimEnsureInput.Repair).
 // The kernel never sees claim mechanics; the substrate never sees the
-// deployment state machine.
+// deployment state machine. One read of each claim list, the one behind
+// the pass's Outputs when it hands it on, serves the comparisons and the
+// release of the claims the revision dropped, so a pass that changes no
+// claim reads nothing more and writes nothing.
 func (c *Controller) Ensure(ctx context.Context, in reconcile.ClaimEnsureInput) ([]reconcile.ClaimState, error) {
+	read, ok := in.Live.(*liveClaims)
+	if !ok {
+		var err error
+		if read, err = c.readLiveClaims(ctx, in.EnvironmentID); err != nil {
+			return nil, err
+		}
+	}
+	live, liveBuckets := read.claims()
+	liveByKey := make(map[string]*store.DatabaseClaim, len(live))
+	for i := range live {
+		liveByKey[live[i].ServiceKey] = &live[i]
+	}
+
 	keys := make([]string, 0, len(in.Revision.Definition.Databases))
 	for key := range in.Revision.Definition.Databases {
 		keys = append(keys, key)
@@ -50,14 +69,10 @@ func (c *Controller) Ensure(ctx context.Context, in reconcile.ClaimEnsureInput) 
 		// marker is set only once the fold succeeded, so a spec conflict
 		// never leaves a request behind that no pass could ever apply.
 		desiredExtensions := dbstore.MarshalExtensions(database.Extensions)
-		extensionsChanged := false
-		if live, err := c.deps.DB.LiveServiceClaim(ctx, in.EnvironmentID, key); err == nil {
-			extensionsChanged = claim.Phase(live.Phase) == claim.PhaseProvisioned &&
-				!bytes.Equal(live.Extensions, desiredExtensions)
-		} else if !errors.Is(err, dbstore.ErrNotFound) {
-			return nil, err
-		}
-		row, err := c.deps.DB.EnsureClaim(ctx, owner, dbstore.ClaimSpec{
+		current := liveByKey[key]
+		extensionsChanged := current != nil && claim.Phase(current.Phase) == claim.PhaseProvisioned &&
+			!bytes.Equal(current.Extensions, desiredExtensions)
+		row, changed, err := c.deps.DB.EnsureClaimFrom(ctx, owner, dbstore.ClaimSpec{
 			Engine:       database.Engine,
 			Major:        major,
 			Isolation:    database.Isolation,
@@ -65,7 +80,7 @@ func (c *Controller) Ensure(ctx context.Context, in reconcile.ClaimEnsureInput) 
 			StorageBytes: database.StorageBytes,
 			Extensions:   database.Extensions,
 			PITRSeconds:  database.PointInTimeRecoverySec,
-		})
+		}, current)
 		if errors.Is(err, dbstore.ErrSpecConflict) {
 			states = append(states, reconcile.ClaimState{Service: dotted,
 				Waiting: "the requested engine, version, or isolation differs from the live database; replacing it is a destructive change"})
@@ -77,7 +92,12 @@ func (c *Controller) Ensure(ctx context.Context, in reconcile.ClaimEnsureInput) 
 		if extensionsChanged {
 			c.markExtensionsPending(row.ID, desiredExtensions)
 		}
-		c.EnqueueClaim(row.ID)
+		switch {
+		case changed || claim.Phase(row.Phase) != claim.PhaseProvisioned || c.extensionsPending(row.ID):
+			c.EnqueueClaim(row.ID, reasonEnsure)
+		case in.Repair:
+			c.EnqueueClaim(row.ID, reasonCheck)
+		}
 		c.publishClaim(*row)
 
 		state := reconcile.ClaimState{Service: dotted,
@@ -95,7 +115,7 @@ func (c *Controller) Ensure(ctx context.Context, in reconcile.ClaimEnsureInput) 
 		states = append(states, state)
 	}
 
-	bucketStates, err := c.ensureBucketClaims(ctx, in)
+	bucketStates, err := c.ensureBucketClaims(ctx, in, liveBuckets)
 	if err != nil {
 		return nil, err
 	}
@@ -104,10 +124,6 @@ func (c *Controller) Ensure(ctx context.Context, in reconcile.ClaimEnsureInput) 
 	// Claims whose service left the promoted revision release now: the
 	// destructive gate already ran at deploy open, and the promoted
 	// revision is the persisted decision.
-	live, err := c.deps.DB.ListEnvironmentClaims(ctx, in.EnvironmentID)
-	if err != nil {
-		return nil, err
-	}
 	for _, row := range live {
 		if _, kept := in.Revision.Definition.Databases[row.ServiceKey]; kept {
 			continue
@@ -116,12 +132,8 @@ func (c *Controller) Ensure(ctx context.Context, in reconcile.ClaimEnsureInput) 
 		if err != nil {
 			return nil, err
 		}
-		c.EnqueueClaim(row.ID)
+		c.EnqueueClaim(row.ID, reasonRelease)
 		c.publishClaim(*released)
-	}
-	liveBuckets, err := c.deps.DB.ListEnvironmentBucketClaims(ctx, in.EnvironmentID)
-	if err != nil {
-		return nil, err
 	}
 	for _, row := range liveBuckets {
 		if _, kept := in.Revision.Definition.Buckets[row.ServiceKey]; kept {
@@ -131,15 +143,19 @@ func (c *Controller) Ensure(ctx context.Context, in reconcile.ClaimEnsureInput) 
 		if err != nil {
 			return nil, err
 		}
-		c.EnqueueBucketClaim(row.ID)
+		c.EnqueueBucketClaim(row.ID, reasonRelease)
 		c.publishBucketClaim(*released)
 	}
 	return states, nil
 }
 
-// ensureBucketClaims records the revision's bucket claims, mirroring the
-// database loop above.
-func (c *Controller) ensureBucketClaims(ctx context.Context, in reconcile.ClaimEnsureInput) ([]reconcile.ClaimState, error) {
+// ensureBucketClaims records the revision's bucket claims against the live
+// ones, mirroring the database loop above.
+func (c *Controller) ensureBucketClaims(ctx context.Context, in reconcile.ClaimEnsureInput, live []store.BucketClaim) ([]reconcile.ClaimState, error) {
+	liveByKey := make(map[string]*store.BucketClaim, len(live))
+	for i := range live {
+		liveByKey[live[i].ServiceKey] = &live[i]
+	}
 	keys := make([]string, 0, len(in.Revision.Definition.Buckets))
 	for key := range in.Revision.Definition.Buckets {
 		keys = append(keys, key)
@@ -167,7 +183,7 @@ func (c *Controller) ensureBucketClaims(ctx context.Context, in reconcile.ClaimE
 				return nil, fmt.Errorf("substrate: encode route for %s: %w", dotted, err)
 			}
 		}
-		row, err := c.deps.DB.EnsureBucketClaim(ctx, owner, dbstore.BucketSpec{
+		row, changed, err := c.deps.DB.EnsureBucketClaimFrom(ctx, owner, dbstore.BucketSpec{
 			Visibility:                   bucket.Visibility,
 			StorageQuotaBytes:            bucket.StorageQuotaBytes,
 			ObjectQuota:                  int64(bucket.ObjectQuota),
@@ -177,7 +193,7 @@ func (c *Controller) ensureBucketClaims(ctx context.Context, in reconcile.ClaimE
 			ExpireNoncurrentAfterSeconds: bucket.ExpireNoncurrentVersionsAfterSec,
 			CORS:                         corsSpec,
 			Route:                        routeSpec,
-		})
+		}, liveByKey[key])
 		if errors.Is(err, dbstore.ErrSpecConflict) {
 			states = append(states, reconcile.ClaimState{Service: dotted,
 				Waiting: "the requested visibility or versioning differs from the live bucket; replacing it is a destructive change"})
@@ -186,7 +202,12 @@ func (c *Controller) ensureBucketClaims(ctx context.Context, in reconcile.ClaimE
 		if err != nil {
 			return nil, err
 		}
-		c.EnqueueBucketClaim(row.ID)
+		switch {
+		case changed || claim.Phase(row.Phase) != claim.PhaseProvisioned:
+			c.EnqueueBucketClaim(row.ID, reasonEnsure)
+		case in.Repair:
+			c.EnqueueBucketClaim(row.ID, reasonCheck)
+		}
 		c.publishBucketClaim(*row)
 
 		state := reconcile.ClaimState{Service: dotted,
@@ -243,80 +264,88 @@ func (c *Controller) publishLiveClaims(ctx context.Context) error {
 	return nil
 }
 
-// Generations reports, per provisioned service claim of an environment
-// ("databases.data", "buckets.files"), a short non-secret identity of its
-// connection outputs: the endpoint(s) and the credential version. The
-// kernel folds it into the pod-template identity of every application
-// referencing the service, so a republished endpoint or a rotated
-// credential rolls exactly those consumers; the plaintext credentials
-// never enter it.
-func (c *Controller) Generations(ctx context.Context, environmentID uuid.UUID) (map[string]string, error) {
-	generations := map[string]string{}
-	databases, err := c.deps.DB.ListEnvironmentClaims(ctx, environmentID)
+// Outputs implements reconcile.ClaimManager in two reads: the
+// environment's live service claims with their live tenants, and with their
+// live allocations.
+//
+// Generations get, per provisioned claim ("databases.data",
+// "buckets.files"), a short non-secret identity of its connection outputs:
+// the endpoint(s) and the credential version. The kernel folds it into the
+// pod-template identity of every application referencing the service, so a
+// republished endpoint or a rotated credential rolls exactly those
+// consumers; the plaintext credentials never enter it.
+//
+// BucketNames get the store bucket name of every live bucket claim with an
+// allocation, keyed by bucket key. Phase does not matter there: the name is
+// fixed the moment the allocation is recorded, and a route may render
+// before the bucket finishes provisioning.
+//
+// The read behind the outputs travels on as their Live value, so the
+// pass's Ensure compares the revision with the same claims instead of
+// reading them again.
+func (c *Controller) Outputs(ctx context.Context, environmentID uuid.UUID) (reconcile.ClaimOutputs, error) {
+	read, err := c.readLiveClaims(ctx, environmentID)
 	if err != nil {
-		return nil, err
+		return reconcile.ClaimOutputs{}, err
 	}
-	for _, row := range databases {
-		if claim.Phase(row.Phase) != claim.PhaseProvisioned {
+	outputs := reconcile.ClaimOutputs{Generations: map[string]string{}, BucketNames: map[string]string{}, Live: read}
+	for _, row := range read.databases {
+		if claim.Phase(row.DatabaseClaim.Phase) != claim.PhaseProvisioned || row.TenantHost == nil {
 			continue
 		}
-		tenant, err := c.deps.DB.LiveTenant(ctx, row.ID)
-		if err != nil {
-			if errors.Is(err, dbstore.ErrNotFound) {
-				continue
-			}
-			return nil, err
-		}
-		generations["databases."+row.ServiceKey] = outputGeneration(
-			"host="+tenant.Host, fmt.Sprintf("port=%d", tenant.Port), fmt.Sprintf("credential=v%d", tenant.CredentialVersion))
+		outputs.Generations["databases."+row.DatabaseClaim.ServiceKey] = outputGeneration(
+			"host="+*row.TenantHost, fmt.Sprintf("port=%d", *row.TenantPort),
+			fmt.Sprintf("credential=v%d", *row.TenantCredentialVersion))
 	}
-	buckets, err := c.deps.DB.ListEnvironmentBucketClaims(ctx, environmentID)
-	if err != nil {
-		return nil, err
-	}
-	for _, row := range buckets {
-		if claim.Phase(row.Phase) != claim.PhaseProvisioned {
+	for _, row := range read.buckets {
+		if row.AllocationBucketName == nil {
 			continue
 		}
-		allocation, err := c.deps.DB.LiveAllocation(ctx, row.ID)
-		if err != nil {
-			if errors.Is(err, dbstore.ErrNotFound) {
-				continue
-			}
-			return nil, err
+		outputs.BucketNames[row.BucketClaim.ServiceKey] = *row.AllocationBucketName
+		if claim.Phase(row.BucketClaim.Phase) != claim.PhaseProvisioned {
+			continue
 		}
 		// The output version advances only once the mirror Secret holds
 		// new values (publishBucketOutputs), so consumers never roll ahead
 		// of what they read.
-		generations["buckets."+row.ServiceKey] = outputGeneration(
-			"endpoint="+allocation.Endpoint, "internal_endpoint="+InternalBucketEndpoint(),
-			fmt.Sprintf("credential=v%d", allocation.CredentialVersion),
-			fmt.Sprintf("outputs=v%d", allocation.OutputVersion))
+		outputs.Generations["buckets."+row.BucketClaim.ServiceKey] = outputGeneration(
+			"endpoint="+*row.AllocationEndpoint, "internal_endpoint="+InternalBucketEndpoint(),
+			fmt.Sprintf("credential=v%d", *row.AllocationCredentialVersion),
+			fmt.Sprintf("outputs=v%d", *row.AllocationOutputVersion))
 	}
-	return generations, nil
+	return outputs, nil
 }
 
-// BucketNames reports the store bucket name of every live bucket claim of
-// the environment that has an allocation, keyed by bucket key. Phase does
-// not matter: the name is fixed the moment the allocation is recorded, and
-// a route may render before the bucket finishes provisioning.
-func (c *Controller) BucketNames(ctx context.Context, environmentID uuid.UUID) (map[string]string, error) {
-	rows, err := c.deps.DB.ListEnvironmentBucketClaims(ctx, environmentID)
+// liveClaims is one read of an environment's live service claims, each
+// with its live tenant or allocation when it has one.
+type liveClaims struct {
+	databases []store.ListLiveDatabaseClaimOutputsByEnvironmentRow
+	buckets   []store.ListLiveBucketClaimOutputsByEnvironmentRow
+}
+
+func (c *Controller) readLiveClaims(ctx context.Context, environmentID uuid.UUID) (*liveClaims, error) {
+	databases, err := c.deps.DB.EnvironmentClaimOutputs(ctx, environmentID)
 	if err != nil {
 		return nil, err
 	}
-	names := make(map[string]string, len(rows))
-	for _, row := range rows {
-		allocation, err := c.deps.DB.LiveAllocation(ctx, row.ID)
-		if err != nil {
-			if errors.Is(err, dbstore.ErrNotFound) {
-				continue
-			}
-			return nil, err
-		}
-		names[row.ServiceKey] = allocation.BucketName
+	buckets, err := c.deps.DB.EnvironmentBucketClaimOutputs(ctx, environmentID)
+	if err != nil {
+		return nil, err
 	}
-	return names, nil
+	return &liveClaims{databases: databases, buckets: buckets}, nil
+}
+
+// claims returns the claim rows of the read.
+func (l *liveClaims) claims() ([]store.DatabaseClaim, []store.BucketClaim) {
+	databases := make([]store.DatabaseClaim, len(l.databases))
+	for i, row := range l.databases {
+		databases[i] = row.DatabaseClaim
+	}
+	buckets := make([]store.BucketClaim, len(l.buckets))
+	for i, row := range l.buckets {
+		buckets[i] = row.BucketClaim
+	}
+	return databases, buckets
 }
 
 // outputGeneration hashes the non-secret facts of a service's outputs into

@@ -62,12 +62,12 @@ cluster. Cluster restart has a separate opt-in described below.
 | `task test:live` | All four live package families below. |
 | `task test:live:kube` | Apply/prune, ownership, and actual NetworkPolicy enforcement. |
 | `task test:live:observe` | Kubernetes list/watch propagation, stale state, and recovery. |
-| `task test:live:reconcile` | Environment deployment, healing, isolation, ownership, and rollout behavior. |
+| `task test:live:reconcile` | Environment deployment, healing, isolation, ownership, and rollout behavior, including prompt rollout handoffs while other environments keep the workers busy. |
 | `task test:live:substrate` | All substrate scenarios, including all six bucket contracts. |
 | `task test:live:substrate:database` | User claims, system claims, pgvector, and database credential rotation. |
 | `task test:live:substrate:bootstrap` | Cold object-store bootstrap and cold bucket provisioning. |
 | `task test:live:substrate:buckets` | Permissions, CORS/uploads, quota, restore fence, rotation, and destructive removal on one store. |
-| `task test:live:substrate:observation` | SeaweedFS usage, outage/staleness, and recovery on its own store. |
+| `task test:live:substrate:observation` | SeaweedFS usage, outage/staleness, and recovery on its own store; idle bucket environments whose identical storage polls queue no environment pass and no substrate work. |
 | `task test:live:substrate:network` | Platform claim-holder access, denied bystanders, host NodePorts, and revocation. |
 | `task test:live:substrate:legacy` | Removal of legacy public S3 edge resources; lazily installs cert-manager. |
 
@@ -81,7 +81,8 @@ The database suite keeps four independently selectable fresh-fixture tests:
 | `^TestLiveDatabaseCredentialRotation$` | Two credential rotations, overlap/retirement, actual SQL login/ownership, stable instances, leak audit, and role cleanup. |
 
 All live tasks disable Go's result cache with `-count=1`. The full command keeps
-its 90-minute watchdog; focused commands default to 30 minutes. Override with
+its 90-minute watchdog and the full substrate command 45 minutes; focused
+commands default to 30 minutes. Override with
 `TIMEOUT=45m` when diagnosing a loaded machine. These are failure ceilings, not
 expected runtimes. Raising one does not fix a stuck controller or cleanup.
 

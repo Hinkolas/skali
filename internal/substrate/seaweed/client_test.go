@@ -12,6 +12,8 @@ import (
 type fakeDoer struct {
 	body   []byte
 	status int
+	// address answers ServiceAddress; empty is a fixed loopback address.
+	address string
 }
 
 func (f *fakeDoer) ServiceProxyDo(_ context.Context, _, _, _ string, _ int, _ string, _ url.Values, _ []byte) ([]byte, int, error) {
@@ -23,10 +25,38 @@ func (f *fakeDoer) ExecInPod(context.Context, string, string, string, []string) 
 }
 
 func (f *fakeDoer) ServiceAddress(context.Context, string, string, int) (string, error) {
+	if f.address != "" {
+		return f.address, nil
+	}
 	return "127.0.0.1:0", nil
 }
 
 func (f *fakeDoer) ForgetServiceAddress(string, string, int) {}
+
+// One S3 client serves every call for an address and keypair, so the
+// calls share its connections; a new keypair or address builds another.
+func TestS3ClientIsBuiltOncePerBinding(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	doer := &fakeDoer{}
+	client := NewClient(doer, "skali-platform")
+	client.SetPlatformCredentials("access", "secret")
+	first, err := client.s3(ctx)
+	require.NoError(t, err)
+	again, err := client.s3(ctx)
+	require.NoError(t, err)
+	require.Same(t, first, again)
+
+	client.SetPlatformCredentials("access", "rotated")
+	rotated, err := client.s3(ctx)
+	require.NoError(t, err)
+	require.NotSame(t, first, rotated)
+
+	doer.address = "127.0.0.1:1"
+	moved, err := client.s3(ctx)
+	require.NoError(t, err)
+	require.NotSame(t, rotated, moved)
+}
 
 // The fixture mirrors the master /vol/status shape: two volume servers, one
 // bucket volume replicated on both (same id), plus a default-collection

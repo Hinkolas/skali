@@ -65,9 +65,9 @@ func TestEvictBlockedByLeaseAndSafetyWindow(t *testing.T) {
 	// Fabricate a revision row to lease against (deploy owns real ones).
 	projectID, environmentID := seedEnvironment(t, st)
 	revisionID := seedRevision(t, st, projectID, environmentID)
-	require.NoError(t, st.WithTx(ctx, func(q *store.Queries) error {
-		return svc.LeaseTx(ctx, q, revisionID, []uuid.UUID{imported.ID})
-	}))
+	_, err = st.Pool.Exec(ctx, "INSERT INTO artifact_leases (revision_id, artifact_id) VALUES ($1, $2)",
+		revisionID, imported.ID)
+	require.NoError(t, err)
 	require.ErrorIs(t, svc.Evict(ctx, imported.ID), ErrLeased)
 
 	_, err = st.Pool.Exec(ctx, "DELETE FROM artifact_leases WHERE artifact_id = $1", imported.ID)

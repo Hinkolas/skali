@@ -147,7 +147,7 @@ func TestLiveOwnershipProtection(t *testing.T) {
 		for _, obj := range objects {
 			applied, err := client.Apply(ctx, obj, false)
 			require.NoError(t, err)
-			resource, err := client.resource(applied.Live.GroupVersionKind(), applied.Live.GetNamespace())
+			resource, _, err := client.resource(applied.Live.GroupVersionKind(), applied.Live.GetNamespace())
 			require.NoError(t, err)
 			for _, key := range []string{"skali.dev/managed", "skali.dev/environment", identityAnnotation} {
 				for _, remove := range []bool{false, true} {
@@ -210,7 +210,7 @@ func TestLiveOwnershipProtection(t *testing.T) {
 		require.NoError(t, client.Clientset.CoreV1().ConfigMaps(ns).Delete(ctx, want.Name, metav1.DeleteOptions{}))
 		_, err = client.Apply(ctx, want, false)
 		require.NoError(t, err)
-		intended, resource, err := client.prepare(want)
+		intended, resource, _, err := client.prepare(want)
 		require.NoError(t, err)
 		stampIdentity(intended)
 		intended.SetUID(old.Live.GetUID())

@@ -4,9 +4,13 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/Hinkolas/skali/internal/workstats"
 )
 
 // NewPool connects a pgx pool and verifies the database is reachable.
@@ -15,6 +19,8 @@ func NewPool(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
 	if err != nil {
 		return nil, fmt.Errorf("store: parse DATABASE_URL: %w", err)
 	}
+	// Background passes are charged their round trips (see workstats).
+	cfg.ConnConfig.Tracer = workstats.DBTracer{}
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("store: connect: %w", err)
@@ -30,6 +36,19 @@ func NewPool(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
 type Store struct {
 	Pool *pgxpool.Pool
 	*Queries
+
+	locksOnce sync.Once
+	locks     *pgxpool.Pool // see lockPool
+	locksErr  error
+}
+
+// Close closes the environment lock connections. The query pool belongs to
+// the caller that opened it.
+func (s *Store) Close() {
+	s.locksOnce.Do(func() { s.locksErr = errors.New("store: closed") })
+	if s.locks != nil {
+		s.locks.Close()
+	}
 }
 
 func NewStore(pool *pgxpool.Pool) *Store {

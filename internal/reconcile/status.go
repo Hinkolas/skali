@@ -124,13 +124,14 @@ type PodInfo struct {
 // Status projects one environment. The single database read resolves the
 // pointers; everything else comes from the observed store.
 func (k *Kernel) Status(ctx context.Context, environmentID uuid.UUID) (*Status, error) {
-	target, err := k.deps.Store.GetEnvironmentTarget(ctx, environmentID)
+	state, err := k.deps.Store.GetEnvironmentPass(ctx, environmentID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrEnvironmentNotFound
 		}
 		return nil, fmt.Errorf("reconcile: get target: %w", err)
 	}
+	target := state.EnvironmentTarget
 	status := &Status{
 		EnvironmentID:      environmentID,
 		State:              target.State,
@@ -162,7 +163,7 @@ func (k *Kernel) Status(ctx context.Context, environmentID uuid.UUID) (*Status, 
 		}
 	}
 	if targetRevision != nil {
-		intercepts, err := k.loadIntercepts(ctx, environmentID)
+		intercepts, err := passIntercepts(state)
 		if err != nil {
 			return nil, err
 		}
@@ -170,7 +171,7 @@ func (k *Kernel) Status(ctx context.Context, environmentID uuid.UUID) (*Status, 
 		if err != nil {
 			return nil, err
 		}
-		colors, err := k.desiredColors(ctx, environmentID, target, targetRevision, intercepts)
+		colors, err := k.desiredColors(ctx, state, targetRevision, intercepts)
 		if err != nil {
 			return nil, err
 		}
@@ -183,21 +184,19 @@ func (k *Kernel) Status(ctx context.Context, environmentID uuid.UUID) (*Status, 
 // desiredColors names the blue-green color the target revision renders per
 // application, from the same inputs the reconcile pass uses, so the status
 // projection judges the same Deployment the kernel is switching to.
-func (k *Kernel) desiredColors(ctx context.Context, environmentID uuid.UUID, target store.EnvironmentTarget,
+func (k *Kernel) desiredColors(ctx context.Context, state store.GetEnvironmentPassRow,
 	rev *revision.Revision, intercepts map[string]map[string]int32) (map[string]string, error) {
-	env, err := k.deps.Store.GetEnvironmentByID(ctx, environmentID)
-	if err != nil {
-		return nil, fmt.Errorf("reconcile: get environment: %w", err)
-	}
-	appRestarts, err := k.loadAppRestarts(ctx, environmentID)
+	environmentID := state.Environment.ID
+	appRestarts, err := passRestarts(state)
 	if err != nil {
 		return nil, err
 	}
-	generations, err := k.claimGenerations(ctx, environmentID)
+	outputs, err := k.claimOutputs(ctx, environmentID)
 	if err != nil {
 		return nil, err
 	}
-	options, err := k.renderInputs(environmentID, rev, target.RestartedAt, appRestarts, generations, intercepts, env.Priority)
+	options, err := k.renderInputs(environmentID, rev, state.EnvironmentTarget.RestartedAt, appRestarts,
+		outputs.Generations, intercepts, state.Environment.Priority)
 	if err != nil {
 		return nil, err
 	}

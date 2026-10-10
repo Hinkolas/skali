@@ -39,10 +39,7 @@ func (s *Service) Append(ctx context.Context, attemptID uuid.UUID, redactor *red
 	if !validLevel(level) {
 		return fmt.Errorf("journal: invalid log level %q", level)
 	}
-	message = redactor.Redact(message)
-	if len(message) > MaxEntryBytes {
-		message = message[:MaxEntryBytes-len(truncationSuffix)] + truncationSuffix
-	}
+	message = boundEntry(redactor.Redact(message))
 	encodedFields, err := encodeFields(redactor, fields)
 	if err != nil {
 		return err
@@ -105,6 +102,15 @@ func (s *Service) Append(ctx context.Context, attemptID uuid.UUID, redactor *red
 		s.broadcast.Publish(event.StepID, *event)
 	}
 	return nil
+}
+
+// boundEntry cuts a message longer than MaxEntryBytes with the truncation
+// suffix.
+func boundEntry(message string) string {
+	if len(message) > MaxEntryBytes {
+		message = message[:MaxEntryBytes-len(truncationSuffix)] + truncationSuffix
+	}
+	return message
 }
 
 // encodeFields redacts every string field value and encodes the map.

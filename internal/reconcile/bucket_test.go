@@ -150,16 +150,7 @@ buckets:
 // the current target revision, color included.
 func (f *kernelFixture) deploymentName(t *testing.T, application string) string {
 	t.Helper()
-	ctx := context.Background()
-	target := f.target(t)
-	require.NotNil(t, target.TargetRevisionID)
-	rev, err := f.deploy.GetRevision(ctx, *target.TargetRevisionID)
-	require.NoError(t, err)
-	intercepts, err := f.kernel.loadIntercepts(ctx, f.environmentID)
-	require.NoError(t, err)
-	colors, err := f.kernel.desiredColors(ctx, f.environmentID, target, rev, intercepts)
-	require.NoError(t, err)
-	if color, ok := colors[application]; ok {
+	if color, ok := f.colors(t)[application]; ok {
 		return rendering.ColoredApplicationName("demo", application, color)
 	}
 	return rendering.ApplicationName("demo", application)
@@ -173,14 +164,8 @@ func (f *kernelFixture) setWorkload(t *testing.T, application string) {
 	target := f.target(t)
 	row, err := f.st.GetRevisionByID(ctx, *target.TargetRevisionID)
 	require.NoError(t, err)
-	rev, err := f.deploy.GetRevision(ctx, *target.TargetRevisionID)
-	require.NoError(t, err)
-	intercepts, err := f.kernel.loadIntercepts(ctx, f.environmentID)
-	require.NoError(t, err)
-	colors, err := f.kernel.desiredColors(ctx, f.environmentID, target, rev, intercepts)
-	require.NoError(t, err)
 	f.fake.SetColoredWorkload(f.environmentID, f.namespace, f.deploymentName(t, application), application,
-		row.Checksum[:16], colors[application], module.WorkloadStatus{Desired: 1, Ready: 1, Updated: 1})
+		row.Checksum[:16], f.colors(t)[application], module.WorkloadStatus{Desired: 1, Ready: 1, Updated: 1})
 }
 
 // valuesHash reads the values identity the kernel stamped onto the last

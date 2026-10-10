@@ -83,6 +83,9 @@ func (c *Controller) reconcileClaim(ctx context.Context, id uuid.UUID) (time.Dur
 			requeue = requeueWait
 		}
 	}
+	if claim.Phase(current.Phase) == claim.PhaseProvisioned {
+		c.scheduleRepair(workKey{kind: workClaim, id: id})
+	}
 	return requeue, nil
 }
 

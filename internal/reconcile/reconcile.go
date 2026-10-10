@@ -26,11 +26,16 @@ import (
 	"github.com/Hinkolas/skali/internal/redact"
 	"github.com/Hinkolas/skali/internal/revision"
 	"github.com/Hinkolas/skali/internal/store"
+	"github.com/Hinkolas/skali/internal/workstats"
 )
 
 // requeueHealthCheck is the safety interval while waiting on health; watch
-// events normally beat it.
-const requeueHealthCheck = 15 * time.Second
+// events normally beat it. An environment that stays unhealthy without a
+// rollout backs off from it, doubling per pass up to requeueUnhealthyCap.
+const (
+	requeueHealthCheck  = 15 * time.Second
+	requeueUnhealthyCap = 5 * time.Minute
+)
 
 // reconcileEnvironment is one level-triggered pass: load the target
 // revision, render the desired state, apply and prune idempotently,
@@ -40,52 +45,52 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 	// Edge probes are network waits (5s each); they run before the lock so
 	// a pass holds it only for database and cluster work and a Promote or
 	// Rollback waiting on the same lock is never parked behind DNS.
-	probeInterval := k.prepareEdgeVerdicts(ctx, environmentID)
+	// Phase marks split the pass's duration in its log line (workstats).
+	pass := workstats.PassFrom(ctx)
+	inputs := &passInputs{kernel: k, environmentID: environmentID}
+	probeInterval := k.prepareEdgeVerdicts(ctx, environmentID, inputs)
+	pass.Mark("probe")
 
 	unlock, lockErr := k.deps.Store.LockEnvironment(ctx, environmentID)
 	if lockErr != nil {
 		return 0, lockErr
 	}
 	defer unlock()
+	pass.Mark("lock")
 
-	target, err := k.deps.Store.GetEnvironmentTarget(ctx, environmentID)
+	state, err := k.deps.Store.GetEnvironmentPass(ctx, environmentID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			k.forgetHealth(environmentID)
 			return 0, nil // environment deleted; the audit reports orphans
 		}
-		return 0, fmt.Errorf("reconcile: get target: %w", err)
+		return 0, fmt.Errorf("reconcile: get environment: %w", err)
 	}
+	env, target := state.Environment, state.EnvironmentTarget
 	if target.State != deploy.EnvironmentStateActive {
 		// A persisted destructive decision replaces convergence entirely:
 		// desired state is absence, so no health verdict stands either.
 		k.forgetHealth(environmentID)
-		return k.teardownEnvironment(ctx, environmentID, target)
+		return k.teardownEnvironment(ctx, state)
 	}
 	if target.TargetRevisionID == nil {
 		k.forgetHealth(environmentID) // created, never deployed
 		return 0, nil
 	}
-	env, err := k.deps.Store.GetEnvironmentByID(ctx, environmentID)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			k.forgetHealth(environmentID)
-			return 0, nil
-		}
-		return 0, fmt.Errorf("reconcile: get environment: %w", err)
-	}
-	rev, err := k.deps.Deploy.GetRevision(ctx, *target.TargetRevisionID)
+	rev, err := inputs.revision(ctx, *target.TargetRevisionID)
 	if err != nil {
 		return 0, fmt.Errorf("reconcile: load target revision: %w", err)
 	}
 
-	attachment := k.attachRun(ctx, environmentID, env.ProjectID, k.redactor(ctx, environmentID, rev))
+	attachment := k.attachRun(ctx, state, func(ctx context.Context) *redact.Redactor {
+		return k.redactor(ctx, environmentID, rev, inputs)
+	})
 
-	intercepts, err := k.loadIntercepts(ctx, environmentID)
+	intercepts, err := passIntercepts(state)
 	if err != nil {
 		return 0, err
 	}
-	appRestarts, err := k.loadAppRestarts(ctx, environmentID)
+	appRestarts, err := passRestarts(state)
 	if err != nil {
 		return 0, err
 	}
@@ -93,20 +98,18 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 	// provisioned so far; a claim that provisions during this pass reaches
 	// its consumers' templates on the next one, which is also the first
 	// pass that lets them apply.
-	generations, err := k.claimGenerations(ctx, environmentID)
+	outputs, err := k.claimOutputs(ctx, environmentID)
 	if err != nil {
 		return 0, err
 	}
-	bucketNames, err := k.claimBucketNames(ctx, environmentID)
-	if err != nil {
-		return 0, err
-	}
+	pass.Mark("load")
 
 	// The traffic decision reads the live Service selectors and workload
 	// availability before rendering: blue-green applications keep their
 	// serving color until the new one is fully available.
-	desired, err := k.desiredSet(ctx, environmentID, rev, target.RestartedAt, appRestarts, generations, bucketNames, intercepts, env.Priority,
+	desired, err := k.desiredSet(ctx, inputs, rev, target.RestartedAt, appRestarts, outputs.Generations, outputs.BucketNames, intercepts, env.Priority,
 		k.deps.Observed.Snapshot(environmentID))
+	pass.Mark("render")
 	if err != nil {
 		// Whatever stops this target from rendering, the pods of the active
 		// revision keep running: they stay isolated regardless.
@@ -151,11 +154,16 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 	// the evaluation sees are at least as fresh as this pass's intent. The
 	// substrate provisions asynchronously; states carry readiness and the
 	// visible waiting reasons.
-	claimWaiting, err := k.ensureClaims(ctx, env.ProjectID, environmentID, rev, desired.bucketRoutes)
+	repair := k.claimCheckDue(environmentID, attachment)
+	claimWaiting, err := k.ensureClaims(ctx, env.ProjectID, environmentID, rev, desired.bucketRoutes, outputs.Live, repair)
 	if err != nil {
 		k.journalOpFailure(ctx, attachment, "claims", "Record database claims", nil, err)
 		return 0, err
 	}
+	if repair {
+		k.claimsChecked(environmentID, attachment)
+	}
+	pass.Mark("claims")
 
 	snapshot := k.deps.Observed.Snapshot(environmentID)
 
@@ -267,7 +275,7 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 					if rows > 0 {
 						slog.WarnContext(ctx, "release command failed; target returned to the active revision",
 							"environment_id", environmentID, "service", service)
-						k.Enqueue(environmentID)
+						k.EnqueueFor(environmentID, ReasonFallback)
 					}
 					return 0, nil
 				}
@@ -321,6 +329,7 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 	// Blue-green switches narrate on the run: a waiting step while the new
 	// color starts, a completed step when traffic moves.
 	journalTraffic(ctx, attachment, desired.plans, k.cfg.RetireDrain)
+	pass.Mark("apply")
 
 	// Prune only with a complete desired set in hand, only stateless kinds,
 	// only objects owned by this environment, with UID preconditions. The
@@ -344,15 +353,17 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 		attachment.completeStep(ctx, "prune", "Prune removed objects", journal.StepSucceeded, pruned)
 	}
 
-	if err := k.releaseAbsentHostnames(ctx, environmentID); err != nil {
+	if err := k.releaseAbsentHostnames(ctx, state); err != nil {
 		return 0, err
 	}
+	pass.Mark("prune")
 
 	// Route certificates come before the health evaluation: the pass's
 	// edge verdicts (a domain that does not reach this edge yet) ride into
 	// the module through the kernel cache, so a deferred route stops gating
 	// health in the same pass that discovered it.
 	tls := k.reconcileTLS(ctx, attachment, target, rev, desired, k.deps.Observed.Snapshot(environmentID), probeInterval)
+	pass.Mark("tls")
 
 	// Evaluate over a post-apply snapshot and activate when every service of
 	// the target revision passes its health conditions on a fresh view.
@@ -369,6 +380,7 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 	if k.deps.RefreshObservation != nil && unobservedDiagnostics(statuses) {
 		k.deps.RefreshObservation()
 	}
+	pass.Mark("health")
 	healthy := k.deps.Observed.Source().State == module.SourceFresh
 	for _, status := range statuses {
 		if status.Health != module.HealthHealthy {
@@ -401,6 +413,12 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 			"blocked", strings.Join(blocked, "; "))
 	}
 
+	healthCheck := requeueHealthCheck
+	if healthy {
+		k.healthSettled(environmentID)
+	} else {
+		healthCheck = k.healthRequeue(environmentID, attachment.adopted() && rolloutRun(attachment.run.Kind))
+	}
 	if healthy && !tls.blocked {
 		if tls.failed && attachment.created {
 			// A converged environment's issuance failed after its domain
@@ -444,19 +462,19 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 			if rows > 0 {
 				slog.WarnContext(ctx, "rollout deadline exceeded; target returned to the active revision",
 					"environment_id", environmentID)
-				k.Enqueue(environmentID)
+				k.EnqueueFor(environmentID, ReasonFallback)
 				return 0, nil
 			}
 			// A first deployment has nothing to fall back to; level-triggered
 			// reconciliation continues on the ordinary cadence so a late
 			// recovery still activates, instead of the environment silently
 			// leaving the queue until the audit.
-			return soonest(soonest(requeueHealthCheck, retireRequeue), tls.requeue), nil
+			return soonest(soonest(healthCheck, retireRequeue), tls.requeue), nil
 		}
 		attachment.waitStepFields(ctx, "verify", "Verify health",
 			strings.Join(healthSummary(statuses), "\n"), healthFields(statuses))
 	}
-	return soonest(soonest(requeueHealthCheck, retireRequeue), tls.requeue), nil
+	return soonest(soonest(healthCheck, retireRequeue), tls.requeue), nil
 }
 
 // soonest picks the shorter of two requeue delays, ignoring zero (none).
@@ -515,20 +533,31 @@ func (k *Kernel) waitHostGateway(ctx context.Context, attachment *runAttachment,
 // the probe cadence the pass runs under: the rollout interval while a
 // rollout run is attached, the idle interval otherwise. Best effort: a
 // failure here leaves the cache as it was and the locked pass, which
-// re-derives everything, requeues quickly on a missing verdict.
-func (k *Kernel) prepareEdgeVerdicts(ctx context.Context, environmentID uuid.UUID) time.Duration {
+// re-derives everything, requeues quickly on a missing verdict. The
+// revision and values it reads stay in inputs for the locked pass.
+func (k *Kernel) prepareEdgeVerdicts(ctx context.Context, environmentID uuid.UUID, inputs *passInputs) time.Duration {
 	interval := edgeProbeIdleInterval
 	if !k.cfg.Certificates || k.deps.ProbeDomain == nil {
 		return interval
 	}
-	target, rev, err := k.targetRevision(ctx, environmentID)
-	if err != nil || rev == nil || target.State != deploy.EnvironmentStateActive {
+	state, err := k.deps.Store.GetEnvironmentPass(ctx, environmentID)
+	target := state.EnvironmentTarget
+	if err != nil || target.TargetRevisionID == nil || target.State != deploy.EnvironmentStateActive {
 		return interval
 	}
-	if run, ok := k.adoptableRun(ctx, environmentID); ok && rolloutRun(run.Kind) {
+	rev, err := inputs.revision(ctx, *target.TargetRevisionID)
+	if err != nil {
+		return interval
+	}
+	if run, ok := adoptableRun(state); ok && rolloutRun(run.Kind) {
 		interval = edgeProbeRolloutInterval
 	}
-	routes, err := k.routeDomains(ctx, environmentID, rev)
+	values, err := inputs.values(ctx, rev)
+	if err != nil {
+		slog.DebugContext(ctx, "edge probe phase skipped", "environment_id", environmentID, "err", err)
+		return interval
+	}
+	routes, err := routeDomains(rev, values)
 	if err != nil {
 		slog.DebugContext(ctx, "edge probe phase skipped", "environment_id", environmentID, "err", err)
 		return interval
@@ -625,43 +654,101 @@ func (k *Kernel) executeOps(ctx context.Context, ops []Op) ([]string, error) {
 // plaintexts are decrypted for the values Secret only and never logged.
 // restartedAt is the target's restart stamp; nil means no restart was ever
 // forced for this environment.
-// loadIntercepts decodes the environment's intercept rows into the declared
-// host-port map per application key.
-func (k *Kernel) loadIntercepts(ctx context.Context, environmentID uuid.UUID) (map[string]map[string]int32, error) {
-	rows, err := k.deps.Store.ListEnvironmentIntercepts(ctx, environmentID)
-	if err != nil {
-		return nil, fmt.Errorf("reconcile: list intercepts: %w", err)
-	}
-	if len(rows) == 0 {
+// passIntercepts decodes the environment's intercepts into the declared
+// host-port map per application key; nil when nothing is intercepted.
+func passIntercepts(state store.GetEnvironmentPassRow) (map[string]map[string]int32, error) {
+	if state.Intercepts == nil {
 		return nil, nil
 	}
-	intercepts := make(map[string]map[string]int32, len(rows))
-	for _, row := range rows {
-		var ports map[string]int32
-		if err := json.Unmarshal(row.Ports, &ports); err != nil {
-			return nil, fmt.Errorf("reconcile: decode intercept ports for %s: %w", row.ApplicationKey, err)
-		}
-		intercepts[row.ApplicationKey] = ports
+	var intercepts map[string]map[string]int32
+	if err := json.Unmarshal(state.Intercepts, &intercepts); err != nil {
+		return nil, fmt.Errorf("reconcile: decode intercepts: %w", err)
 	}
 	return intercepts, nil
 }
 
-// loadAppRestarts reads the environment's per-application restart stamps as
+// passRestarts decodes the environment's per-application restart stamps as
 // UTC RFC3339 strings ready for rendering; nil when nothing was ever
 // restarted.
-func (k *Kernel) loadAppRestarts(ctx context.Context, environmentID uuid.UUID) (map[string]string, error) {
-	rows, err := k.deps.Store.ListEnvironmentRestarts(ctx, environmentID)
-	if err != nil {
-		return nil, fmt.Errorf("reconcile: list restarts: %w", err)
-	}
-	if len(rows) == 0 {
+func passRestarts(state store.GetEnvironmentPassRow) (map[string]string, error) {
+	if state.Restarts == nil {
 		return nil, nil
 	}
-	stamps := make(map[string]string, len(rows))
-	for _, row := range rows {
-		stamps[row.ApplicationKey] = row.RestartedAt.UTC().Format(time.RFC3339)
+	var restarted map[string]time.Time
+	if err := json.Unmarshal(state.Restarts, &restarted); err != nil {
+		return nil, fmt.Errorf("reconcile: decode restarts: %w", err)
+	}
+	stamps := make(map[string]string, len(restarted))
+	for key, at := range restarted {
+		stamps[key] = at.UTC().Format(time.RFC3339)
 	}
 	return stamps, nil
+}
+
+// passInputs holds what one pass would otherwise read twice: the decoded
+// target revision and the values it pinned. Both are immutable for a
+// revision ID (revisions are never updated, pinned versions never change),
+// so the pre-lock probe phase, the render, and the redactor share them,
+// while the target itself is still read again under the lock.
+type passInputs struct {
+	kernel        *Kernel
+	environmentID uuid.UUID
+
+	revisionID uuid.UUID
+	rev        *revision.Revision
+	pinned     map[string]string // rev's pinned plaintexts; nil until read
+}
+
+// revision decodes the revision once per pass.
+func (in *passInputs) revision(ctx context.Context, id uuid.UUID) (*revision.Revision, error) {
+	if in.rev != nil && in.revisionID == id {
+		return in.rev, nil
+	}
+	row, err := in.kernel.revisionRow(ctx, in.environmentID, id)
+	if err != nil {
+		return nil, err
+	}
+	rev, err := revision.Decode(row.Document)
+	if err != nil {
+		return nil, err
+	}
+	in.revisionID, in.rev, in.pinned = id, rev, nil
+	return rev, nil
+}
+
+// revisionRow reads a revision of the environment, from memory when its
+// last pass read the same one.
+func (k *Kernel) revisionRow(ctx context.Context, environmentID, id uuid.UUID) (store.Revision, error) {
+	k.revisionMu.Lock()
+	row, ok := k.revisions[environmentID]
+	k.revisionMu.Unlock()
+	if ok && row.ID == id {
+		return row, nil
+	}
+	row, err := k.deps.Store.GetRevisionByID(ctx, id)
+	if err != nil {
+		return row, fmt.Errorf("reconcile: get revision: %w", err)
+	}
+	k.revisionMu.Lock()
+	k.revisions[environmentID] = row
+	k.revisionMu.Unlock()
+	return row, nil
+}
+
+// values decrypts the versions rev pinned, once per pass. The map is shared;
+// callers must not modify it.
+func (in *passInputs) values(ctx context.Context, rev *revision.Revision) (map[string]string, error) {
+	if in.pinned != nil && rev == in.rev {
+		return in.pinned, nil
+	}
+	values, err := in.kernel.deps.Values.Plaintexts(ctx, in.environmentID, secretVersions(rev))
+	if err != nil {
+		return nil, err
+	}
+	if rev == in.rev {
+		in.pinned = values
+	}
+	return values, nil
 }
 
 // desiredSet renders the target revision for the environment. priority is
@@ -739,11 +826,11 @@ func (k *Kernel) renderInputs(environmentID uuid.UUID, rev *revision.Revision, r
 	return options, nil
 }
 
-func (k *Kernel) desiredSet(ctx context.Context, environmentID uuid.UUID, rev *revision.Revision,
+func (k *Kernel) desiredSet(ctx context.Context, inputs *passInputs, rev *revision.Revision,
 	restartedAt *time.Time, appRestarts map[string]string, generations map[string]string, bucketNames map[string]string,
 	intercepts map[string]map[string]int32, priority string, snapshot observe.Snapshot) (*desiredSet, error) {
-	refs := secretVersions(rev)
-	variables, err := k.deps.Values.Plaintexts(ctx, environmentID, refs)
+	environmentID := inputs.environmentID
+	variables, err := inputs.values(ctx, rev)
 	if err != nil {
 		return nil, err
 	}
@@ -859,7 +946,8 @@ func resolveBucketRoutes(definition compiler.ProjectDefinition, variables map[st
 // buckets) through the claim manager and returns the dotted-name waiting
 // reasons for every claim that is not provisioned. Without a substrate
 // every claim-backed service waits visibly.
-func (k *Kernel) ensureClaims(ctx context.Context, projectID, environmentID uuid.UUID, rev *revision.Revision, bucketRoutes map[string]BucketRoute) (map[string]string, error) {
+func (k *Kernel) ensureClaims(ctx context.Context, projectID, environmentID uuid.UUID, rev *revision.Revision,
+	bucketRoutes map[string]BucketRoute, live any, repair bool) (map[string]string, error) {
 	total := len(rev.Definition.Databases) + len(rev.Definition.Buckets)
 	if total == 0 {
 		return nil, nil
@@ -879,6 +967,8 @@ func (k *Kernel) ensureClaims(ctx context.Context, projectID, environmentID uuid
 		EnvironmentID: environmentID,
 		Revision:      rev,
 		BucketRoutes:  bucketRoutes,
+		Live:          live,
+		Repair:        repair,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("reconcile: ensure claims: %w", err)
@@ -896,14 +986,39 @@ func (k *Kernel) ensureClaims(ctx context.Context, projectID, environmentID uuid
 	return claimWaiting, nil
 }
 
+// claimCheckDue reports whether the pass asks for every claim of the
+// environment to be reconciled, settled ones included: the first pass of
+// each rollout run (a deploy, rollback, or restart), and the first after
+// the environment's health turned bad. Otherwise a settled claim waits for
+// the substrate's repair cadence.
+func (k *Kernel) claimCheckDue(environmentID uuid.UUID, attachment *runAttachment) bool {
+	k.claimMu.Lock()
+	defer k.claimMu.Unlock()
+	if k.claimsOwed[environmentID] {
+		return true
+	}
+	return attachment.adopted() && rolloutRun(attachment.run.Kind) && k.claimChecks[environmentID] != attachment.run.ID
+}
+
+// claimsChecked records that the pass asked for every claim.
+func (k *Kernel) claimsChecked(environmentID uuid.UUID, attachment *runAttachment) {
+	k.claimMu.Lock()
+	defer k.claimMu.Unlock()
+	delete(k.claimsOwed, environmentID)
+	if attachment.adopted() && rolloutRun(attachment.run.Kind) {
+		k.claimChecks[environmentID] = attachment.run.ID
+	}
+}
+
 // redactor covers the environment's current values plus, when a revision is
 // given, the exact versions it pinned (a tombstoned value is no longer
 // current but still resolvable by an old revision). Values a route domain
 // references are exempt: a hostname the edge serves is public by
 // construction (the status projection resolves it for the same reason),
 // and the TLS checkpoints must be able to name it. Kernel log lines carry
-// no other values, so this is defense in depth, not the only barrier.
-func (k *Kernel) redactor(ctx context.Context, environmentID uuid.UUID, rev *revision.Revision) *redact.Redactor {
+// no other values, so this is defense in depth, not the only barrier. The
+// pinned values come from the pass's inputs, which the render shares.
+func (k *Kernel) redactor(ctx context.Context, environmentID uuid.UUID, rev *revision.Revision, inputs *passInputs) *redact.Redactor {
 	redactor, err := k.deps.Values.Redactor(ctx, environmentID, uuid.Nil)
 	if err != nil {
 		slog.Warn("build redactor", "environment", environmentID, "error", err)
@@ -912,11 +1027,7 @@ func (k *Kernel) redactor(ctx context.Context, environmentID uuid.UUID, rev *rev
 	if rev == nil {
 		return redactor
 	}
-	refs := make(map[string]int, len(rev.Secrets))
-	for name, secret := range rev.Secrets {
-		refs[name] = secret.Version
-	}
-	plaintexts, err := k.deps.Values.Plaintexts(ctx, environmentID, refs)
+	plaintexts, err := inputs.values(ctx, rev)
 	if err != nil {
 		slog.Warn("build pinned redactor", "environment", environmentID, "error", err)
 		return redactor.Without(routeVariableNames(rev))
@@ -1096,18 +1207,17 @@ func describeObject(obj runtime.Object) string {
 	return kind + "/" + accessor.GetNamespace() + "/" + accessor.GetName()
 }
 
-func (k *Kernel) releaseAbsentHostnames(ctx context.Context, env uuid.UUID) error {
-	claims, err := k.deps.Store.ListEnvironmentHostnames(ctx, &env)
-	if err != nil {
-		return err
-	}
-	if len(claims) == 0 {
+// releaseAbsentHostnames releases the environment's retired hostname
+// claims whose routers are gone. Only the lock holder changes the
+// environment's claims, so whether it holds any is as the pass read it.
+func (k *Kernel) releaseAbsentHostnames(ctx context.Context, state store.GetEnvironmentPassRow) error {
+	if !state.ClaimsHostnames {
 		return nil
 	}
-
 	if k.deps.LiveRouteHosts == nil {
 		return nil
 	} // no cluster evidence: retain claims
+	env := state.Environment.ID
 	live, err := k.deps.LiveRouteHosts(ctx, env)
 	if err != nil {
 		return err
@@ -1115,26 +1225,15 @@ func (k *Kernel) releaseAbsentHostnames(ctx context.Context, env uuid.UUID) erro
 	return k.deps.Deploy.ReleaseAbsentHostnames(ctx, env, live)
 }
 
-// claimGenerations reads the output generations of the environment's
-// provisioned claims; without a substrate there are none.
-func (k *Kernel) claimBucketNames(ctx context.Context, environmentID uuid.UUID) (map[string]string, error) {
+// claimOutputs reads the output generations and bucket names of the
+// environment's claims; without a substrate there are none.
+func (k *Kernel) claimOutputs(ctx context.Context, environmentID uuid.UUID) (ClaimOutputs, error) {
 	if k.deps.Claims == nil {
-		return nil, nil
+		return ClaimOutputs{}, nil
 	}
-	names, err := k.deps.Claims.BucketNames(ctx, environmentID)
+	outputs, err := k.deps.Claims.Outputs(ctx, environmentID)
 	if err != nil {
-		return nil, fmt.Errorf("reconcile: claim bucket names: %w", err)
+		return ClaimOutputs{}, fmt.Errorf("reconcile: claim outputs: %w", err)
 	}
-	return names, nil
-}
-
-func (k *Kernel) claimGenerations(ctx context.Context, environmentID uuid.UUID) (map[string]string, error) {
-	if k.deps.Claims == nil {
-		return nil, nil
-	}
-	generations, err := k.deps.Claims.Generations(ctx, environmentID)
-	if err != nil {
-		return nil, fmt.Errorf("reconcile: claim generations: %w", err)
-	}
-	return generations, nil
+	return outputs, nil
 }

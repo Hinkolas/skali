@@ -79,7 +79,7 @@ func (c *Controller) RotateDatabaseCredentials(ctx context.Context, environmentI
 		return DatabaseRotation{}, err
 	}
 	if tenant.PendingLoginRole != nil && tenant.CredentialRetireAt != nil {
-		c.EnqueueClaim(row.ID)
+		c.EnqueueClaim(row.ID, reasonRotation)
 		return DatabaseRotation{LoginRole: *tenant.PendingLoginRole, RetireAt: *tenant.CredentialRetireAt}, nil
 	}
 	if tenant.PreviousLoginRole != nil {
@@ -113,7 +113,7 @@ func (c *Controller) RotateDatabaseCredentials(ctx context.Context, environmentI
 	}
 	slog.Info("substrate: database credential rotation committed",
 		"service", serviceKey, "database", tenant.DatabaseName, "loginRole", login, "retireAt", retireAt.Format(time.RFC3339))
-	c.EnqueueClaim(row.ID)
+	c.EnqueueClaim(row.ID, reasonRotation)
 	return DatabaseRotation{LoginRole: login, RetireAt: retireAt}, nil
 }
 
@@ -131,7 +131,7 @@ func (c *Controller) RetireDatabaseCredentials(ctx context.Context, environmentI
 	if err := c.deps.DB.RetireTenantCredentials(ctx, tenant.ID); err != nil {
 		return err
 	}
-	c.EnqueueClaim(row.ID)
+	c.EnqueueClaim(row.ID, reasonRotation)
 	return nil
 }
 
@@ -288,11 +288,18 @@ func rotationWakeup(tenant store.DatabaseTenant, now time.Time) time.Duration {
 	return min(max(wait, requeueWait), rotationWakeupCap)
 }
 
+// sqlExecTimeout bounds one script or query in a pool's primary: the role
+// changes are small, and an exec whose stream wedged must not hold the
+// claim's worker.
+const sqlExecTimeout = 30 * time.Second
+
 // execPrimarySQL runs one script as the postgres superuser in the pool's
 // primary instance. No ready primary (a failover, a restart) and a script
 // the server refused both surface as waits with their reason; the scripts
 // are idempotent and the pass retries.
 func (c *Controller) execPrimarySQL(ctx context.Context, pool store.DatabaseCluster, database, script string) error {
+	ctx, cancel := context.WithTimeout(ctx, sqlExecTimeout)
+	defer cancel()
 	_, err := c.deps.Cluster.ExecInPod(ctx, Namespace, cnpg.PrimarySelector(pool.Name), cnpg.PostgresContainer,
 		cnpg.PSQLCommand(database, script))
 	if err == nil {
@@ -307,6 +314,8 @@ func (c *Controller) execPrimarySQL(ctx context.Context, pool store.DatabaseClus
 // queryPrimary runs one query in the pool's primary and returns its bare
 // result, trimmed; failures surface as waits like execPrimarySQL's.
 func (c *Controller) queryPrimary(ctx context.Context, pool store.DatabaseCluster, database, query string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, sqlExecTimeout)
+	defer cancel()
 	out, err := c.deps.Cluster.ExecInPod(ctx, Namespace, cnpg.PrimarySelector(pool.Name), cnpg.PostgresContainer,
 		cnpg.PSQLQuery(database, query))
 	if err != nil {

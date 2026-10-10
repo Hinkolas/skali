@@ -79,6 +79,9 @@ func (c *Controller) reconcileBucketClaim(ctx context.Context, id uuid.UUID) (ti
 			requeue = requeueWait
 		}
 	}
+	if claim.Phase(current.Phase) == claim.PhaseProvisioned {
+		c.scheduleRepair(workKey{kind: workBucket, id: id})
+	}
 	return requeue, nil
 }
 
@@ -92,12 +95,14 @@ func (c *Controller) provisionBucket(ctx context.Context, row store.BucketClaim)
 	if err != nil {
 		return false, err
 	}
-	c.EnqueueObjectStore()
 	ready, reason, err := c.objectStoreReady(ctx, *sw)
 	if err != nil {
 		return false, err
 	}
 	if !ready {
+		// The store's own pass brings it up; a ready store keeps its own
+		// cadence, and this pass applies the S3 access policy itself.
+		c.EnqueueObjectStore(reasonBucket)
 		if reason == "" {
 			reason = "waiting for the object store"
 		}

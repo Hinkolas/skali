@@ -1560,6 +1560,8 @@ paths:
             `deployment_in_flight`: another deployment or run is in
             flight. `unsupported_schema`: the revision document was
             written by another build and cannot be targeted.
+            `environment_busy`: a reconcile pass or another change held
+            the environment for 10 seconds; retry shortly.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1794,10 +1796,13 @@ paths:
       summary: Stream an environment's status projection (SSE)
       description: |
         Server-sent events carrying the full `EnvironmentStatus` document,
-        re-sent (coalesced) whenever observation invalidates the
-        environment's projection. A comment ping is sent every 15 seconds.
-        The stream closes when the subscriber falls behind; clients simply
-        reconnect. This route is exempt from the request timeout.
+        re-sent whenever observation invalidates the environment's
+        projection; the invalidations of one burst (250 ms) produce one
+        document, the same one for every stream of the environment. A
+        stream that falls behind skips to the newest document. A comment
+        ping is sent every 15 seconds. The stream closes when the status
+        cannot be computed; clients simply reconnect. This route is exempt
+        from the request timeout.
       tags: [status]
       responses:
         "200":
@@ -2960,7 +2965,16 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/ReauthRequired" }
         "404": { $ref: "#/components/responses/NotFound" }
-        "409": { $ref: "#/components/responses/Conflict" }
+        "409":
+          description: |
+            `conflict`: the environment is already releasing.
+            `deployment_in_flight`: a deployment is in flight; cancel its
+            run or wait for it to finish.
+            `environment_busy`: a reconcile pass or another change held
+            the environment for 10 seconds; retry shortly.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /v1/environments/{id}/backups:
     parameters:
@@ -3768,7 +3782,11 @@ paths:
         artifact window closes (values, target, and active revision remain
         untouched); after promotion but before activation the target
         returns to the prior active revision and reconciliation converges
-        back; after activation cancellation is refused.
+        back; after activation cancellation is refused. A first deployment
+        has no prior revision: its revision stays the target and keeps
+        rolling out without a run until the next deployment replaces it.
+        A rollback run is cancelled like a promotion. The fallback and the
+        run's cancellation commit together, under the environment lock.
       tags: [runs]
       responses:
         "200":
@@ -3777,16 +3795,32 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [status, fallback]
+                required: [status, fallback, continues]
                 properties:
                   status:
                     type: string
                   fallback:
                     type: boolean
+                    description: The target returned to the prior active revision.
+                  continues:
+                    type: boolean
+                    description: |
+                      A first deployment had no prior revision to return
+                      to; its revision stays the target and keeps rolling
+                      out.
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
-        "409": { $ref: "#/components/responses/Conflict" }
+        "409":
+          description: |
+            `conflict`: the run is already terminal, its rollout already
+            activated, or the deployment can no longer be cancelled.
+            `environment_busy`: a reconcile pass or another change held the
+            environment for 10 seconds; nothing changed, and the cancel can
+            be retried.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /v1/runs/{id}/steps:
     parameters:

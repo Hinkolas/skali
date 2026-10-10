@@ -10,6 +10,7 @@ package reconcile
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -27,9 +28,27 @@ import (
 	"github.com/Hinkolas/skali/internal/revision"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/valuestore"
+	"github.com/Hinkolas/skali/internal/workstats"
 )
 
 var ErrEnvironmentNotFound = errors.New("reconcile: environment not found")
+
+// Reasons an environment enters the queue. The system observation endpoint
+// counts arrivals per reason; observation sources pass their own (see
+// observe.SourceOptions).
+const (
+	ReasonDeploy    = "deploy"    // a promotion, run start, or teardown request (Enqueue)
+	ReasonAPI       = "api"       // an API handler's direct request
+	ReasonPoll      = "poll"      // a provider poll reported the environment affected
+	ReasonSubstrate = "substrate" // a claim's state or outputs changed
+	ReasonBackup    = "backup"    // a restore stopped or resumed the environment
+	ReasonFallback  = "fallback"  // the kernel returned the target to the active revision
+	ReasonProbe     = "probe"     // a manual edge probe recorded new verdicts
+	ReasonResync    = "resync"    // the periodic sweep of out-of-sync environments
+	ReasonAudit     = "audit"     // the boot or periodic audit
+	ReasonRequeue   = "requeue"   // a pass asked to run again after a delay
+	ReasonRetry     = "retry"     // a failed pass, after its backoff
+)
 
 // Cluster is the mutation surface the kernel needs from the cluster client;
 // kube.Client implements it, tests record against a fake.
@@ -54,15 +73,26 @@ type ClaimManager interface {
 	// purging environment, reporting completion and, while unfinished, what
 	// is still going.
 	Release(ctx context.Context, environmentID uuid.UUID) (released bool, detail []string, err error)
-	// Generations reports, per provisioned claim (dotted service name), a
+	// Outputs reports what rendering needs from the environment's live
+	// claims.
+	Outputs(ctx context.Context, environmentID uuid.UUID) (ClaimOutputs, error)
+}
+
+// ClaimOutputs is what rendering needs from an environment's live claims.
+type ClaimOutputs struct {
+	// Generations holds, per provisioned claim (dotted service name), a
 	// short non-secret identity of its connection outputs (endpoints and
 	// credential version). Applications referencing the service fold it
 	// into their pod-template identity, so a changed output rolls them.
-	Generations(ctx context.Context, environmentID uuid.UUID) (map[string]string, error)
-	// BucketNames reports, per bucket key, the store bucket name its live
+	Generations map[string]string
+	// BucketNames holds, per bucket key, the store bucket name its live
 	// claim allocated. Bucket routes key the edge on it, so the renderer
 	// needs it before the claim is provisioned.
-	BucketNames(ctx context.Context, environmentID uuid.UUID) (map[string]string, error)
+	BucketNames map[string]string
+	// Live is the claim manager's read behind these outputs, which the
+	// pass hands back to Ensure so the claims are read once. The kernel
+	// never looks inside.
+	Live any
 }
 
 // ClaimEnsureInput carries the environment identity the portable revision
@@ -75,6 +105,14 @@ type ClaimEnsureInput struct {
 	// the environment's values and canonical, keyed by bucket key. The
 	// substrate records it on the claim and publishes it as the endpoint.
 	BucketRoutes map[string]BucketRoute
+	// Live is the pass's ClaimOutputs.Live; without it Ensure reads the
+	// claims itself.
+	Live any
+	// Repair asks for every kept claim to be reconciled, settled ones
+	// included: the pass begins a rollout, or the environment's health
+	// turned, and drift on a settled claim (a deleted output Secret) must
+	// not wait for the substrate's repair cadence then.
+	Repair bool
 }
 
 // BucketRoute is one bucket's resolved public hostname and TLS policy; its
@@ -145,6 +183,9 @@ type Deps struct {
 	// wait in (the skalid image). Nil renders release Jobs without the
 	// wait.
 	WaitImage func(ctx context.Context) (string, error)
+	// SubstrateQueue reads the substrate controller's queue accounting for
+	// the system observation endpoint. Nil without a substrate.
+	SubstrateQueue func() workstats.QueueStats
 }
 
 type Config struct {
@@ -152,7 +193,11 @@ type Config struct {
 	Audit           time.Duration
 	RolloutDeadline time.Duration
 	StaleThreshold  time.Duration
-	Workers         int
+	// PassTimeout bounds one environment's pass, the wait for its lock
+	// included: a call that hangs fails the pass, which retries, instead of
+	// holding a worker and the environment lock.
+	PassTimeout time.Duration
+	Workers     int
 	// ManagedCluster pins application pods to application-capable nodes.
 	// Local development leaves it false.
 	ManagedCluster bool
@@ -170,6 +215,9 @@ type Config struct {
 	// production bundle (ACME) and the local platform (private CA) set it;
 	// only a bare skalid without cert-manager leaves it false.
 	Certificates bool
+	// RequestBudget is the Kubernetes client's configured request budget,
+	// reported by the system observation endpoint.
+	RequestBudget kube.RequestBudget
 	// RetireDrain is how long a Deployment that stopped serving (the
 	// previous blue-green color, a superseded pending color, a legacy
 	// workload) keeps running before it is pruned; zero means the default
@@ -180,7 +228,7 @@ type Config struct {
 type Kernel struct {
 	deps  Deps
 	cfg   Config
-	queue workqueue.TypedRateLimitingInterface[uuid.UUID]
+	queue *workstats.Queue[uuid.UUID]
 
 	// retired holds, per Deployment that stopped serving, when it was first
 	// seen not serving; the drain window counts from there. In-memory by
@@ -208,6 +256,34 @@ type Kernel struct {
 	// audit's passes re-derive it.
 	healthMu sync.RWMutex
 	health   map[uuid.UUID]EnvironmentHealth
+	// unhealthyPasses counts each environment's passes in a row that ended
+	// unhealthy without a rollout, the exponent of its health backoff.
+	unhealthyPasses map[uuid.UUID]int
+
+	// liveRead holds when each environment last finished a pass that read
+	// what it applies from the API server instead of the watch cache. One
+	// such pass per audit interval checks what the cache vouched for (see
+	// kube.WithCachedReads): every audit clears the map, so each
+	// environment's next pass reads live. In-memory by design: after a
+	// restart the boot audit's passes read live.
+	liveMu   sync.Mutex
+	liveRead map[uuid.UUID]time.Time
+
+	// revisions holds the target revision row each environment's last pass
+	// read. Revisions are never updated, so a row stays right for its ID,
+	// and every pass decodes its own copy of the document. In-memory by
+	// design: one row per environment, dropped with its health verdict.
+	revisionMu sync.Mutex
+	revisions  map[uuid.UUID]store.Revision
+
+	// claimChecks holds, per environment, the rollout run whose pass last
+	// asked for every claim to be reconciled (ClaimEnsureInput.Repair), and
+	// claimsOwed the environments whose health turned bad since their last
+	// such pass. In-memory by design: after a restart a rollout in flight
+	// asks once more.
+	claimMu     sync.Mutex
+	claimChecks map[uuid.UUID]uuid.UUID
+	claimsOwed  map[uuid.UUID]bool
 }
 
 func New(deps Deps, cfg Config) *Kernel {
@@ -223,6 +299,9 @@ func New(deps Deps, cfg Config) *Kernel {
 	if cfg.RolloutDeadline <= 0 {
 		cfg.RolloutDeadline = 10 * time.Minute
 	}
+	if cfg.PassTimeout <= 0 {
+		cfg.PassTimeout = defaultPassTimeout
+	}
 	if cfg.RetireDrain <= 0 {
 		cfg.RetireDrain = defaultRetireDrain
 	}
@@ -230,24 +309,37 @@ func New(deps Deps, cfg Config) *Kernel {
 	// error must never park an in-flight rollout longer than an ordinary
 	// waiting pass.
 	return &Kernel{
-		deps:    deps,
-		cfg:     cfg,
-		retired: map[retireKey]time.Time{},
-		domains: map[string]domainProbe{},
-		routes:  map[routeKey]routeRecord{},
-		health:  map[uuid.UUID]EnvironmentHealth{},
-		queue: workqueue.NewTypedRateLimitingQueue(workqueue.NewTypedWithMaxWaitRateLimiter(
-			workqueue.DefaultTypedControllerRateLimiter[uuid.UUID](), requeueHealthCheck)),
+		deps:            deps,
+		cfg:             cfg,
+		retired:         map[retireKey]time.Time{},
+		domains:         map[string]domainProbe{},
+		routes:          map[routeKey]routeRecord{},
+		health:          map[uuid.UUID]EnvironmentHealth{},
+		unhealthyPasses: map[uuid.UUID]int{},
+		liveRead:        map[uuid.UUID]time.Time{},
+		revisions:       map[uuid.UUID]store.Revision{},
+		claimChecks:     map[uuid.UUID]uuid.UUID{},
+		claimsOwed:      map[uuid.UUID]bool{},
+		queue: workstats.NewQueue(workqueue.NewTypedWithMaxWaitRateLimiter(
+			workqueue.DefaultTypedControllerRateLimiter[uuid.UUID](), requeueHealthCheck),
+			func(uuid.UUID) string { return "environment" }),
 	}
 }
 
 // Connected reports whether a cluster is wired at all.
 func (k *Kernel) Connected() bool { return k.deps.Cluster != nil }
 
-// Enqueue implements deploy.Enqueuer and is the affected-owner entry point
-// for every watch-driven change.
+// Enqueue implements deploy.Enqueuer: promotions, run starts, and teardown
+// requests hand the environment over here.
 func (k *Kernel) Enqueue(environmentID uuid.UUID) {
-	k.queue.Add(environmentID)
+	k.queue.Add(environmentID, ReasonDeploy)
+}
+
+// EnqueueFor is the entry point for every other caller, naming why the
+// environment needs a pass: the observation sources' watch-driven changes,
+// the substrate, the API.
+func (k *Kernel) EnqueueFor(environmentID uuid.UUID, reason string) {
+	k.queue.Add(environmentID, reason)
 }
 
 // Run starts the observation source, waits for cache readiness, then runs
@@ -283,7 +375,9 @@ func (k *Kernel) Run(ctx context.Context) error {
 			k.worker(ctx)
 		}()
 	}
-	k.audit(ctx)
+	// The boot audit runs every environment at once: after a restart no
+	// health verdict exists until a pass derives it.
+	k.audit(ctx, 0)
 
 	auditTicker := time.NewTicker(k.cfg.Audit)
 	defer auditTicker.Stop()
@@ -296,7 +390,7 @@ func (k *Kernel) Run(ctx context.Context) error {
 			workers.Wait()
 			return nil
 		case <-auditTicker.C:
-			k.audit(ctx)
+			k.audit(ctx, k.cfg.Audit)
 		case <-resyncTicker.C:
 			k.resync(ctx)
 		}
@@ -314,41 +408,88 @@ func (k *Kernel) resync(ctx context.Context) {
 		return
 	}
 	for _, target := range targets {
-		k.queue.Add(target.EnvironmentID)
+		k.queue.Add(target.EnvironmentID, ReasonResync)
 	}
 }
 
 func (k *Kernel) worker(ctx context.Context) {
 	for {
-		environmentID, shutdown := k.queue.Get()
+		environmentID, waited, shutdown := k.queue.Take()
 		if shutdown {
 			return
 		}
-		requeue, err := k.reconcileEnvironment(ctx, environmentID)
+		// The pass is charged its database round trips, Kubernetes requests,
+		// request-budget waits, and lock time through the context.
+		pass := workstats.NewPass("kernel")
+		requeue, err := k.runPass(workstats.WithPass(ctx, pass), environmentID)
 		k.queue.Done(environmentID)
-		slog.Debug("reconcile: dequeue", "environment", environmentID,
+		pass.Log(ctx, "reconcile: pass", waited, "environment", environmentID,
 			"requeue", requeue, "error", err != nil)
 		switch {
 		case ctx.Err() != nil:
 			return
 		case err != nil:
 			slog.Warn("reconcile failed", "environment", environmentID, "error", err)
-			k.queue.AddRateLimited(environmentID)
+			k.queue.AddRateLimited(environmentID, ReasonRetry)
 		case requeue > 0:
 			k.queue.Forget(environmentID)
-			k.queue.AddAfter(environmentID, requeue)
+			k.queue.AddAfter(environmentID, requeue, ReasonRequeue)
 		default:
 			k.queue.Forget(environmentID)
 		}
 	}
 }
 
+// defaultPassTimeout is far above a pass's usual second: its slowest parts,
+// the edge probes, run in parallel under their own few seconds.
+const defaultPassTimeout = 2 * time.Minute
+
+// runPass runs one pass of environmentID under the pass deadline, reading
+// what it applies live when a live read is due and from the watch caches
+// otherwise.
+func (k *Kernel) runPass(ctx context.Context, environmentID uuid.UUID) (time.Duration, error) {
+	ctx, cancel := context.WithTimeout(ctx, k.cfg.PassTimeout)
+	defer cancel()
+	live := k.liveReadDue(environmentID)
+	if !live {
+		ctx = kube.WithCachedReads(ctx)
+	}
+	requeue, err := k.reconcileEnvironment(ctx, environmentID)
+	if err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return 0, fmt.Errorf("reconcile: the pass ran past its %s deadline: %w", k.cfg.PassTimeout, err)
+	}
+	if live && err == nil {
+		k.liveMu.Lock()
+		k.liveRead[environmentID] = time.Now()
+		k.liveMu.Unlock()
+	}
+	return requeue, err
+}
+
+// liveReadDue reports whether environmentID's next pass reads live: its
+// first, the first after each audit, and any whose last live read is an
+// audit interval old (a backstop for an audit that did not run).
+func (k *Kernel) liveReadDue(environmentID uuid.UUID) bool {
+	k.liveMu.Lock()
+	defer k.liveMu.Unlock()
+	last, ok := k.liveRead[environmentID]
+	return !ok || time.Since(last) >= k.cfg.Audit
+}
+
 // audit enqueues every environment from Postgres: the slower correctness
-// backstop that catches divergence with no cluster object to fire on. It
-// also surfaces orphaned managed namespaces as diagnostics and touches
-// nothing (removal is a destructive transition that does not exist yet;
-// see docs/limitations.md).
-func (k *Kernel) audit(ctx context.Context) {
+// backstop that catches divergence with no cluster object to fire on. Each
+// environment is scheduled at its fixed phase of spread, so a periodic
+// audit trickles through the queue instead of parking a deploy behind every
+// environment's pass. It also surfaces orphaned managed namespaces as
+// diagnostics and touches nothing (removal is a destructive transition that
+// does not exist yet; see docs/limitations.md).
+func (k *Kernel) audit(ctx context.Context, spread time.Duration) {
+	// The audit owes every environment a live read. Timing it from the last
+	// live pass instead lets the next audit arrive a little early, read the
+	// cache again, and stretch the check to two intervals.
+	k.liveMu.Lock()
+	clear(k.liveRead)
+	k.liveMu.Unlock()
 	listedAt := time.Now()
 	targets, err := k.deps.Store.ListEnvironmentTargets(ctx)
 	if err != nil {
@@ -358,11 +499,24 @@ func (k *Kernel) audit(ctx context.Context) {
 	known := make(map[uuid.UUID]bool, len(targets))
 	for _, target := range targets {
 		known[target.EnvironmentID] = true
-		k.queue.Add(target.EnvironmentID)
+		k.queue.AddAfter(target.EnvironmentID, workstats.Phase(target.EnvironmentID, spread), ReasonAudit)
 	}
 	// The same authoritative set retires health verdicts of environments
-	// whose rows vanished without a pass.
+	// whose rows vanished without a pass, and what their claims were last
+	// checked for.
 	k.sweepHealth(known, listedAt)
+	k.claimMu.Lock()
+	for id := range k.claimChecks {
+		if !known[id] {
+			delete(k.claimChecks, id)
+		}
+	}
+	for id := range k.claimsOwed {
+		if !known[id] {
+			delete(k.claimsOwed, id)
+		}
+	}
+	k.claimMu.Unlock()
 	for _, namespace := range k.deps.Observed.ManagedNamespaces() {
 		if namespace.Environment != uuid.Nil && !known[namespace.Environment] {
 			slog.Warn("orphaned managed namespace retained",
@@ -384,6 +538,15 @@ type ObservationInfo struct {
 	Kinds      []observe.KindSync
 	QueueDepth int
 	Workers    int
+	// RequestBudget is the Kubernetes client's effective request budget.
+	RequestBudget kube.RequestBudget
+	// Queue and Substrate account for the kernel's and the substrate's work
+	// queues (Substrate is nil without one); Passes and Requests for what
+	// their passes and the Kubernetes requests cost (see workstats).
+	Queue     workstats.QueueStats
+	Substrate *workstats.QueueStats
+	Passes    []workstats.CallerTotals
+	Requests  []workstats.RequestTotals
 }
 
 // NodePlatforms exposes the observed cluster platforms to the API layer
@@ -411,12 +574,21 @@ func (k *Kernel) DatabaseCluster(name string) (*module.DatabaseClusterStatus, bo
 
 func (k *Kernel) Observation() ObservationInfo {
 	info := ObservationInfo{
-		Mode:       "api-only",
-		Ready:      k.deps.Observed.Ready(),
-		Source:     k.deps.Observed.Source(),
-		Sources:    k.deps.Observed.Sources(),
-		QueueDepth: k.queue.Len(),
-		Workers:    k.cfg.Workers,
+		Mode:          "api-only",
+		Ready:         k.deps.Observed.Ready(),
+		Source:        k.deps.Observed.Source(),
+		Sources:       k.deps.Observed.Sources(),
+		QueueDepth:    k.queue.Len(),
+		Workers:       k.cfg.Workers,
+		RequestBudget: k.cfg.RequestBudget.Effective(),
+		Passes:        workstats.Totals(),
+		Requests:      workstats.Requests(),
+	}
+	info.Queue = k.queue.Stats()
+	info.Queue.Workers = k.cfg.Workers
+	if k.deps.SubstrateQueue != nil {
+		substrate := k.deps.SubstrateQueue()
+		info.Substrate = &substrate
 	}
 	if k.Connected() {
 		info.Mode = "connected"

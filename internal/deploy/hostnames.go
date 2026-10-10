@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 
 	"github.com/Hinkolas/skali/internal/compiler"
@@ -105,24 +106,32 @@ func (s *Service) checkRoutes(ctx context.Context, env uuid.UUID, rev *revision.
 }
 
 func (s *Service) claimRoutesTx(ctx context.Context, q *store.Queries, env, revisionID uuid.UUID, routes []compiler.ResolvedRoute) error {
-	if err := q.RetireEnvironmentHostnames(ctx, &env); err != nil {
+	sort.Slice(routes, func(i, j int) bool { return routes[i].Domain < routes[j].Domain })
+	// Never nil: an empty set retires every claim of the environment.
+	hostnames := make([]string, 0, len(routes))
+	for _, route := range routes {
+		if len(hostnames) == 0 || hostnames[len(hostnames)-1] != route.Domain {
+			hostnames = append(hostnames, route.Domain)
+		}
+	}
+	refused, err := q.ClaimEnvironmentHostnames(ctx, store.ClaimEnvironmentHostnamesParams{
+		Hostnames: hostnames, EnvironmentID: env, TargetRevisionID: revisionID,
+	})
+	if err != nil || len(refused) == 0 {
 		return err
 	}
-	sort.Slice(routes, func(i, j int) bool { return routes[i].Domain < routes[j].Domain })
+	// The first refused route in domain order names the conflict.
 	for _, route := range routes {
-		n, err := q.AcquireHostname(ctx, store.AcquireHostnameParams{Hostname: route.Domain, EnvironmentID: &env, TargetRevisionID: &revisionID})
+		if !slices.Contains(refused, route.Domain) {
+			continue
+		}
+		claim, err := q.GetHostnameClaim(ctx, route.Domain)
 		if err != nil {
 			return err
 		}
-		if n == 0 {
-			claim, err := q.GetHostnameClaim(ctx, route.Domain)
-			if err != nil {
-				return err
-			}
-			return &HostnameConflict{route.Field, claim.Reserved}
-		}
+		return &HostnameConflict{route.Field, claim.Reserved}
 	}
-	return nil
+	return fmt.Errorf("deploy: claim hostnames: refused %v outside the routes", refused)
 }
 
 // ReleaseAbsentHostnames runs under the environment lock after a fresh cluster
@@ -189,15 +198,6 @@ func (s *Service) ResumeRevision(ctx context.Context, env, id uuid.UUID) error {
 		}
 		return nil
 	})
-}
-
-func (s *Service) FallbackTarget(ctx context.Context, in store.FallbackEnvironmentTargetParams) (int64, error) {
-	unlock, err := s.st.LockEnvironment(ctx, in.EnvironmentID)
-	if err != nil {
-		return 0, err
-	}
-	defer unlock()
-	return s.FallbackTargetLocked(ctx, in)
 }
 
 // FallbackTargetLocked is used by reconciliation, which already holds the

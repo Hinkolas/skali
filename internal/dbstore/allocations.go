@@ -11,6 +11,7 @@ import (
 
 	"github.com/Hinkolas/skali/internal/claim"
 	"github.com/Hinkolas/skali/internal/store"
+	"github.com/Hinkolas/skali/internal/utils"
 )
 
 // AllocationInput records a generated bucket identity. CredentialSecret is
@@ -94,6 +95,17 @@ func (s *Service) LiveAllocation(ctx context.Context, claimID uuid.UUID) (*store
 		return nil, fmt.Errorf("dbstore: live allocation: %w", err)
 	}
 	return &row, nil
+}
+
+// EnvironmentBucketClaimOutputs returns every live service claim of the
+// environment with its live allocation's bucket name and output facts, when
+// it has one.
+func (s *Service) EnvironmentBucketClaimOutputs(ctx context.Context, environmentID uuid.UUID) ([]store.ListLiveBucketClaimOutputsByEnvironmentRow, error) {
+	rows, err := s.st.ListLiveBucketClaimOutputsByEnvironment(ctx, utils.NilWhenZero(environmentID))
+	if err != nil {
+		return nil, fmt.Errorf("dbstore: list environment bucket claims: %w", err)
+	}
+	return rows, nil
 }
 
 // ListStoreAllocations returns the live allocations on a store, the input

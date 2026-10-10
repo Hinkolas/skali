@@ -10,6 +10,7 @@ import (
 	"github.com/Hinkolas/skali/internal/module"
 	"github.com/Hinkolas/skali/internal/reconcile"
 	"github.com/Hinkolas/skali/internal/revision"
+	"github.com/Hinkolas/skali/internal/workstats"
 )
 
 // statusHandlers serves topology and health projections. Every read comes
@@ -17,6 +18,7 @@ import (
 // here can reach Kubernetes because none holds a cluster client.
 type statusHandlers struct {
 	reconcile *reconcile.Kernel
+	feeds     *statusFeeds
 }
 
 type revisionRefPayload struct {
@@ -246,8 +248,9 @@ func (h *statusHandlers) get(w http.ResponseWriter, r *http.Request) {
 }
 
 // stream is the projection invalidation stream made client-visible: the
-// full status document is re-sent, coalesced, on every invalidation that
-// touches the environment. Mounted outside the request timeout.
+// full status document is re-sent on every burst of invalidations that
+// touches the environment, computed once for all of its streams (see
+// statusFeeds). Mounted outside the request timeout.
 func (h *statusHandlers) stream(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
 	if !ok {
@@ -258,13 +261,15 @@ func (h *statusHandlers) stream(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, codeInternal, "streaming unsupported")
 		return
 	}
+	// Joined before the first document is computed, so a change after
+	// that computation always reaches the stream.
+	updates, leave := h.feeds.subscribe(id)
+	defer leave()
 	status, err := h.reconcile.Status(r.Context(), id)
 	if err != nil {
 		writeStatusError(r, w, err)
 		return
 	}
-	invalidations, cancel := h.reconcile.SubscribeStatus(id)
-	defer cancel()
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -293,28 +298,8 @@ func (h *statusHandlers) stream(w http.ResponseWriter, r *http.Request) {
 		case <-heartbeat.C:
 			fmt.Fprint(w, ": ping\n\n")
 			flusher.Flush()
-		case _, open := <-invalidations:
-			if !open {
-				// Fell behind; the client reconnects and re-reads.
-				return
-			}
-			// Coalesce whatever queued up; the payload is a full document.
-			for {
-				select {
-				case _, more := <-invalidations:
-					if !more {
-						return
-					}
-					continue
-				default:
-				}
-				break
-			}
-			status, err := h.reconcile.Status(r.Context(), id)
-			if err != nil {
-				return
-			}
-			if !send(status) {
+		case update := <-updates:
+			if update.err != nil || !send(update.status) {
 				return
 			}
 		}
@@ -382,25 +367,127 @@ type namedSourcePayload struct {
 }
 
 type systemObservationPayload struct {
-	Mode        string               `json:"mode"`
-	Ready       bool                 `json:"ready"`
-	Observation observationPayload   `json:"observation"`
-	Sources     []namedSourcePayload `json:"sources"`
-	Kinds       []kindSyncPayload    `json:"kinds"`
-	QueueDepth  int                  `json:"queue_depth"`
-	Workers     int                  `json:"workers"`
+	Mode          string               `json:"mode"`
+	Ready         bool                 `json:"ready"`
+	Observation   observationPayload   `json:"observation"`
+	Sources       []namedSourcePayload `json:"sources"`
+	Kinds         []kindSyncPayload    `json:"kinds"`
+	QueueDepth    int                  `json:"queue_depth"`
+	Workers       int                  `json:"workers"`
+	RequestBudget requestBudgetPayload `json:"request_budget"`
+	// Queues, Passes and Requests account for background work since the
+	// process started; a sampler subtracts two readings to see an interval.
+	Queues   map[string]queuePayload `json:"queues"`
+	Passes   []passTotalsPayload     `json:"passes"`
+	Requests []requestTotalsPayload  `json:"requests"`
+}
+
+type requestBudgetPayload struct {
+	QPS   float32 `json:"qps"`
+	Burst int     `json:"burst"`
+}
+
+type queuePayload struct {
+	Depth   int                `json:"depth"`
+	Active  int                `json:"active"`
+	Workers int                `json:"workers"`
+	Kinds   []queueKindPayload `json:"kinds"`
+}
+
+type queueKindPayload struct {
+	Kind     string            `json:"kind"`
+	Arrivals map[string]uint64 `json:"arrivals"`
+	Wait     histogramPayload  `json:"wait"`
+	Pass     histogramPayload  `json:"pass"`
+}
+
+// histogramPayload is a cumulative distribution: each bucket counts the
+// observations at or below its bound in seconds.
+type histogramPayload struct {
+	Count      uint64          `json:"count"`
+	SumSeconds float64         `json:"sum_seconds"`
+	MaxSeconds float64         `json:"max_seconds"`
+	Buckets    []bucketPayload `json:"buckets"`
+}
+
+type bucketPayload struct {
+	LE    float64 `json:"le"`
+	Count uint64  `json:"count"`
+}
+
+type passTotalsPayload struct {
+	Caller             string  `json:"caller"`
+	Passes             uint64  `json:"passes"`
+	Seconds            float64 `json:"seconds"`
+	DBQueries          int     `json:"db_queries"`
+	DBSeconds          float64 `json:"db_seconds"`
+	DBAcquireSeconds   float64 `json:"db_acquire_seconds"`
+	KubeRequests       int     `json:"kube_requests"`
+	KubeSeconds        float64 `json:"kube_seconds"`
+	ThrottledSeconds   float64 `json:"throttled_seconds"`
+	LockConnectSeconds float64 `json:"lock_connect_seconds"`
+	LockWaitSeconds    float64 `json:"lock_wait_seconds"`
+}
+
+// requestTotalsPayload sums one caller's requests for one verb and
+// resource; seconds include the throttled wait.
+type requestTotalsPayload struct {
+	Caller           string  `json:"caller"`
+	Verb             string  `json:"verb"`
+	Resource         string  `json:"resource"`
+	Count            uint64  `json:"count"`
+	Seconds          float64 `json:"seconds"`
+	ThrottledSeconds float64 `json:"throttled_seconds"`
+}
+
+func newQueuePayload(stats workstats.QueueStats) queuePayload {
+	payload := queuePayload{Depth: stats.Depth, Active: stats.Active, Workers: stats.Workers,
+		Kinds: make([]queueKindPayload, 0, len(stats.Kinds))}
+	for _, kind := range stats.Kinds {
+		payload.Kinds = append(payload.Kinds, queueKindPayload{Kind: kind.Kind, Arrivals: kind.Arrivals,
+			Wait: newHistogramPayload(kind.Wait), Pass: newHistogramPayload(kind.Pass)})
+	}
+	return payload
+}
+
+func newHistogramPayload(h workstats.Histogram) histogramPayload {
+	payload := histogramPayload{Count: h.Count, SumSeconds: h.Sum.Seconds(), MaxSeconds: h.Max.Seconds(),
+		Buckets: make([]bucketPayload, len(workstats.Bounds))}
+	for i, bound := range workstats.Bounds {
+		payload.Buckets[i] = bucketPayload{LE: bound.Seconds(), Count: h.Buckets[i]}
+	}
+	return payload
 }
 
 func (h *statusHandlers) system(w http.ResponseWriter, r *http.Request) {
 	info := h.reconcile.Observation()
 	payload := systemObservationPayload{
-		Mode:        info.Mode,
-		Ready:       info.Ready,
-		Observation: newObservationPayload(info.Source),
-		Sources:     make([]namedSourcePayload, 0, len(info.Sources)),
-		Kinds:       make([]kindSyncPayload, 0, len(info.Kinds)),
-		QueueDepth:  info.QueueDepth,
-		Workers:     info.Workers,
+		Mode:          info.Mode,
+		Ready:         info.Ready,
+		Observation:   newObservationPayload(info.Source),
+		Sources:       make([]namedSourcePayload, 0, len(info.Sources)),
+		Kinds:         make([]kindSyncPayload, 0, len(info.Kinds)),
+		QueueDepth:    info.QueueDepth,
+		Workers:       info.Workers,
+		RequestBudget: requestBudgetPayload{QPS: info.RequestBudget.QPS, Burst: info.RequestBudget.Burst},
+		Queues:        map[string]queuePayload{"kernel": newQueuePayload(info.Queue)},
+		Passes:        make([]passTotalsPayload, 0, len(info.Passes)),
+		Requests:      make([]requestTotalsPayload, 0, len(info.Requests)),
+	}
+	if info.Substrate != nil {
+		payload.Queues["substrate"] = newQueuePayload(*info.Substrate)
+	}
+	for _, t := range info.Passes {
+		payload.Passes = append(payload.Passes, passTotalsPayload{
+			Caller: t.Caller, Passes: t.Passes, Seconds: t.Took.Seconds(),
+			DBQueries: t.DBQueries, DBSeconds: t.DB.Seconds(), DBAcquireSeconds: t.DBAcquire.Seconds(),
+			KubeRequests: t.KubeRequests, KubeSeconds: t.Kube.Seconds(), ThrottledSeconds: t.Throttled.Seconds(),
+			LockConnectSeconds: t.LockConnect.Seconds(), LockWaitSeconds: t.LockWait.Seconds(),
+		})
+	}
+	for _, t := range info.Requests {
+		payload.Requests = append(payload.Requests, requestTotalsPayload{Caller: t.Caller, Verb: t.Verb,
+			Resource: t.Resource, Count: t.Count, Seconds: t.Took.Seconds(), ThrottledSeconds: t.Throttled.Seconds()})
 	}
 	for _, source := range info.Sources {
 		payload.Sources = append(payload.Sources, namedSourcePayload{

@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/Hinkolas/skali/internal/store"
+	"github.com/Hinkolas/skali/internal/utils"
 )
 
 // TenantInput records a provisioned logical database. CredentialSecret is
@@ -82,6 +83,16 @@ func (s *Service) LiveTenant(ctx context.Context, claimID uuid.UUID) (*store.Dat
 		return nil, fmt.Errorf("dbstore: live tenant: %w", err)
 	}
 	return &row, nil
+}
+
+// EnvironmentClaimOutputs returns every live service claim of the
+// environment with its live tenant's connection facts, when it has one.
+func (s *Service) EnvironmentClaimOutputs(ctx context.Context, environmentID uuid.UUID) ([]store.ListLiveDatabaseClaimOutputsByEnvironmentRow, error) {
+	rows, err := s.st.ListLiveDatabaseClaimOutputsByEnvironment(ctx, utils.NilWhenZero(environmentID))
+	if err != nil {
+		return nil, fmt.Errorf("dbstore: list environment claims: %w", err)
+	}
+	return rows, nil
 }
 
 // ListClusterTenants returns the live tenants on a cluster.

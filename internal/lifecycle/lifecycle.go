@@ -34,6 +34,18 @@ func (m Machine[S]) Can(from, to S) bool {
 	return slices.Contains(m.Transitions[from], to)
 }
 
+// Sources lists, in display order, the statuses that may transition to
+// status: the guard a single conditional update applies.
+func (m Machine[S]) Sources(status S) []S {
+	var sources []S
+	for _, from := range m.States {
+		if m.Can(from, status) {
+			sources = append(sources, from)
+		}
+	}
+	return sources
+}
+
 // Verify checks the invariants shared by all contract machines: at least one
 // state, no duplicate states, transitions only between declared states, no
 // self-transitions, every state reachable from the initial state, and no

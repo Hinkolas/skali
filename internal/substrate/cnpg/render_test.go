@@ -4,7 +4,9 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/util/intstr"
 
 	"github.com/Hinkolas/skali/internal/dbcatalog"
 	"github.com/Hinkolas/skali/internal/layout"
@@ -43,6 +45,7 @@ func TestRenderClusterRotationRoles(t *testing.T) {
 	require.Equal(t, "present", owner["ensure"])
 	require.Equal(t, false, owner["login"])
 	require.Equal(t, true, owner["inherit"])
+	require.Equal(t, int64(-1), owner["connectionLimit"], "the CRD's default, so an unchanged pool applies nothing")
 	require.Equal(t, true, owner["disablePassword"])
 	_, hasSecret := owner["passwordSecret"]
 	require.False(t, hasSecret, "an owner without a login has no Secret to point at")
@@ -54,8 +57,23 @@ func TestRenderClusterRotationRoles(t *testing.T) {
 	require.Equal(t, true, login["login"])
 	require.Equal(t, map[string]any{"name": "dbcred-abcd1234-v2"}, login["passwordSecret"])
 	require.Equal(t, []any{"u_data_abcd1234"}, login["inRoles"])
+	require.Equal(t, int64(-1), login["connectionLimit"])
 	_, disabled := login["disablePassword"]
 	require.False(t, disabled)
+}
+
+// A pool's Services target each port's own number, as the server defaults
+// an unset target, so an unchanged Service applies nothing.
+func TestRenderPoolServicesTargetTheirPorts(t *testing.T) {
+	t.Parallel()
+	for _, service := range []*corev1.Service{
+		RenderMetricsService("skali-platform", "pg17-shared"),
+		RenderPrimaryNodePortService("skali-platform", "pg17-shared", 30432),
+	} {
+		for _, port := range service.Spec.Ports {
+			require.Equal(t, intstr.FromInt32(port.Port), port.TargetPort, "%s/%s", service.Name, port.Name)
+		}
+	}
 }
 
 func TestRenderClusterSingle(t *testing.T) {

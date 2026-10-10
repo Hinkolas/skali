@@ -1,0 +1,11 @@
+.git
+.skali
+.env
+.env.*
+*.md
+measure.py
+smoke.py
+sample.py
+main_test.go
+results
+__pycache__

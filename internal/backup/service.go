@@ -142,23 +142,17 @@ func (c *Controller) CreateBackup(ctx context.Context, in BackupInput) (*CreateR
 		return nil, err
 	}
 
-	run, err := c.deps.Journal.CreateRun(ctx, journal.RunInput{
+	run, err := c.deps.Journal.BeginRun(ctx, journal.RunInput{
 		Kind:          KindBackup,
 		ProjectID:     names.projectID,
 		EnvironmentID: environmentID,
 		Actor:         in.Actor,
 	})
-	if err != nil {
-		return nil, fmt.Errorf("backup: create run: %w", err)
+	if errors.Is(err, journal.ErrRunConflict) {
+		return nil, ErrBackupInFlight
 	}
-	if err := c.deps.Journal.StartRun(ctx, run.ID); err != nil {
-		if discardErr := c.deps.Journal.DiscardRun(ctx, run.ID); discardErr != nil {
-			slog.WarnContext(ctx, "backup: discard unstarted run", "run", run.ID, "err", discardErr)
-		}
-		if errors.Is(err, journal.ErrRunConflict) {
-			return nil, ErrBackupInFlight
-		}
-		return nil, fmt.Errorf("backup: start run: %w", err)
+	if err != nil {
+		return nil, fmt.Errorf("backup: begin run: %w", err)
 	}
 
 	id, err := uuid.NewV7()
