@@ -23,7 +23,9 @@ import (
 
 // Ensure implements reconcile.ClaimManager: it records the revision's
 // database claims, enqueues the reconciliation of new, changed, and
-// unsettled ones, and reports readiness. A settled claim is repaired on the
+// unsettled ones, and reports readiness. Claims the revision dropped are
+// released only when the pass allows it (ClaimEnsureInput.Release) and
+// reported Retained otherwise. A settled claim is repaired on the
 // substrate's own cadence (scheduleRepair), not on every environment pass,
 // unless the pass asks for every claim (ClaimEnsureInput.Repair).
 // The kernel never sees claim mechanics; the substrate never sees the
@@ -121,11 +123,16 @@ func (c *Controller) Ensure(ctx context.Context, in reconcile.ClaimEnsureInput) 
 	}
 	states = append(states, bucketStates...)
 
-	// Claims whose service left the promoted revision release now: the
-	// destructive gate already ran at deploy open, and the promoted
-	// revision is the persisted decision.
+	// Claims whose service left the revision release once it is active:
+	// the destructive gate already ran at deploy open, and the active
+	// revision is the persisted decision. Before that a rollout may still
+	// fall back to a revision that declares them, so they stay as they are.
 	for _, row := range live {
 		if _, kept := in.Revision.Definition.Databases[row.ServiceKey]; kept {
+			continue
+		}
+		if !in.Release {
+			states = append(states, reconcile.ClaimState{Service: "databases." + row.ServiceKey, Retained: true})
 			continue
 		}
 		released, err := c.deps.DB.ReleaseClaim(ctx, row.ID)
@@ -137,6 +144,10 @@ func (c *Controller) Ensure(ctx context.Context, in reconcile.ClaimEnsureInput) 
 	}
 	for _, row := range liveBuckets {
 		if _, kept := in.Revision.Definition.Buckets[row.ServiceKey]; kept {
+			continue
+		}
+		if !in.Release {
+			states = append(states, reconcile.ClaimState{Service: "buckets." + row.ServiceKey, Retained: true})
 			continue
 		}
 		released, err := c.deps.DB.ReleaseBucketClaim(ctx, row.ID)

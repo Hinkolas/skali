@@ -43,6 +43,7 @@ const (
 	ReasonSubstrate = "substrate" // a claim's state or outputs changed
 	ReasonBackup    = "backup"    // a restore stopped or resumed the environment
 	ReasonFallback  = "fallback"  // the kernel returned the target to the active revision
+	ReasonActivated = "activated" // an activated revision left claims to release
 	ReasonProbe     = "probe"     // a manual edge probe recorded new verdicts
 	ReasonResync    = "resync"    // the periodic sweep of out-of-sync environments
 	ReasonAudit     = "audit"     // the boot or periodic audit
@@ -65,7 +66,7 @@ type Cluster interface {
 // health still flows through module evaluation over observed claim
 // projections.
 type ClaimManager interface {
-	// Ensure records the revision's claims, releases the ones the promoted
+	// Ensure records the revision's claims, releases the ones an active
 	// revision no longer contains, and reports each kept claim's readiness
 	// keyed by dotted service name ("databases.data").
 	Ensure(ctx context.Context, in ClaimEnsureInput) ([]ClaimState, error)
@@ -113,6 +114,12 @@ type ClaimEnsureInput struct {
 	// turned, and drift on a settled claim (a deleted output Secret) must
 	// not wait for the substrate's repair cadence then.
 	Repair bool
+	// Release lets Ensure release the claims the revision no longer
+	// declares. The kernel sets it only once the revision is active: a
+	// rollout that falls back must find the previous revision's databases
+	// and buckets untouched, so until then they stay as they are and Ensure
+	// reports them Retained.
+	Release bool
 }
 
 // BucketRoute is one bucket's resolved public hostname and TLS policy; its
@@ -136,6 +143,10 @@ type ClaimState struct {
 	Service     string // dotted form, e.g. "databases.data"
 	Provisioned bool
 	Waiting     string // human reason while not provisioned
+	// Retained marks a live claim the revision no longer declares, kept
+	// because the pass did not allow its release. It gates nothing; the
+	// kernel only learns that activating the revision leaves work behind.
+	Retained bool
 }
 
 // Deps wires the kernel. Cluster and Source are nil in API-only mode (no

@@ -623,6 +623,41 @@ func TestEnsureComparesWithTheOutputsRead(t *testing.T) {
 	require.Equal(t, 2, claims(), "a fresh read finds no live claim and records one")
 }
 
+// A claim the revision dropped stays as it is until the pass allows its
+// release, which the kernel does only once that revision is active: a
+// rollout that falls back to the revision declaring it must find its data
+// intact.
+func TestEnsureReleasesDroppedClaimsOnlyWhenAllowed(t *testing.T) {
+	fx := newSettleFixture(t)
+	ctx := context.Background()
+	fx.fake.set(clusterHealthyPhase, 1, true)
+	_, phase := fx.pass(t)
+	require.Equal(t, claim.PhaseProvisioned, phase)
+
+	dropped := fx.ensureInput()
+	dropped.Revision.Definition.Databases = nil
+	states, err := fx.control.Ensure(ctx, dropped)
+	require.NoError(t, err)
+	require.Equal(t, []reconcile.ClaimState{{Service: "databases.data", Retained: true}}, states)
+	current, err := fx.db.GetClaim(ctx, fx.claim.ID)
+	require.NoError(t, err)
+	require.Equal(t, claim.PhaseProvisioned, claim.Phase(current.Phase), "a rollout in flight releases nothing")
+
+	// The rollout falls back: the previous revision still declares the
+	// claim and finds it provisioned.
+	states, err = fx.control.Ensure(ctx, fx.ensureInput())
+	require.NoError(t, err)
+	require.Equal(t, []reconcile.ClaimState{{Service: "databases.data", Provisioned: true}}, states)
+
+	dropped.Release = true
+	states, err = fx.control.Ensure(ctx, dropped)
+	require.NoError(t, err)
+	require.Empty(t, states)
+	current, err = fx.db.GetClaim(ctx, fx.claim.ID)
+	require.NoError(t, err)
+	require.Equal(t, claim.PhaseReleasing, claim.Phase(current.Phase), "the active revision releases it")
+}
+
 // TestRepairSchedulesEveryLiveClaim pins the cadence that replaces per-pass
 // repair: every live claim is scheduled, spread over the interval rather
 // than runnable at once.
