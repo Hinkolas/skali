@@ -1,4 +1,4 @@
-import type { Project, ServiceHealth } from '$lib/types/project';
+import type { Project, ServiceHealth, SummaryEnvironment } from '$lib/types/project';
 import { relativeTime } from '$lib/format';
 
 // Rollups over a project summary, shared by every listing of projects
@@ -27,6 +27,16 @@ export function projectWorstHealth(project: Project): ServiceHealth {
 	return environments.reduce<ServiceHealth>(
 		(acc, e) => (e.health && HEALTH_RANK[e.health] > HEALTH_RANK[acc] ? e.health : acc),
 		environments.length ? 'healthy' : 'unknown'
+	);
+}
+
+/** The summary's environments for a one-line rollup: high-priority ones
+ * first, so the one a listing shows is never hidden behind its +N, then the
+ * daemon's name order. Priority is configured, not read from the name. */
+export function projectEnvironmentRollup(project: Project): SummaryEnvironment[] {
+	const environments = project.summary?.environments ?? [];
+	return environments.toSorted(
+		(a, b) => Number(b.priority === 'high') - Number(a.priority === 'high')
 	);
 }
 
