@@ -159,7 +159,7 @@
 									<Pill text="protected" tone="warning" />
 								{/if}
 								{#if e.settings.priority === 'high'}
-									<Pill text="high" tone="warning" />
+									<Pill text="high" tone="warning" title="high priority" />
 								{/if}
 							</span>
 						{/if}

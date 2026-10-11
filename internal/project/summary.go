@@ -13,9 +13,10 @@ import (
 // pointer state comes straight from environment_targets; health is filled in
 // by the caller (the API layer holds the reconcile kernel).
 type EnvironmentSummary struct {
-	ID    uuid.UUID
-	Name  string
-	State string
+	ID       uuid.UUID
+	Name     string
+	Priority string
+	State    string
 	// TargetRevision and ActiveRevision are the pointer row's revisions
 	// with their checksums; nil where the pointer is unset (never
 	// deployed, or taken down).
@@ -84,6 +85,7 @@ func (s *Service) ListSummaries(ctx context.Context) (map[uuid.UUID]Summary, err
 		summary.Environments = append(summary.Environments, EnvironmentSummary{
 			ID:             env.ID,
 			Name:           env.Name,
+			Priority:       env.Priority,
 			State:          env.State,
 			TargetRevision: revisionRef(env.TargetRevisionID, env.TargetChecksum),
 			ActiveRevision: revisionRef(env.ActiveRevisionID, env.ActiveChecksum),

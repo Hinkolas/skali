@@ -1,6 +1,7 @@
 import { expect, test } from 'vitest';
 import {
 	projectEnvironmentCount,
+	projectEnvironmentRollup,
 	projectHealthTitle,
 	projectServiceCount,
 	projectWorstHealth
@@ -54,6 +55,25 @@ test('service counts sum the summary and read zero without one', () => {
 test('environment counts fall back to the access map on the plain list', () => {
 	expect(projectEnvironmentCount(project())).toBe(2);
 	expect(projectEnvironmentCount(summary([env()]))).toBe(1);
+});
+
+test('the environment rollup leads with high priority, not with a name', () => {
+	expect(projectEnvironmentRollup(project())).toEqual([]);
+	const names = (environments: SummaryEnvironment[]) =>
+		projectEnvironmentRollup(summary(environments)).map((e) => e.name);
+	// Normal priority keeps the daemon's name order, production included.
+	expect(
+		names([env({ name: 'development' }), env({ name: 'production', priority: 'normal' })])
+	).toEqual(['development', 'production']);
+	expect(
+		names([
+			env({ name: 'development' }),
+			env({ name: 'preview', priority: 'high' }),
+			env({ name: 'production', priority: 'normal' }),
+			env({ name: 'staging', priority: 'high' }),
+			env({ name: 'locked', access: 'none' })
+		])
+	).toEqual(['preview', 'staging', 'development', 'production', 'locked']);
 });
 
 test('the health title explains what the cached verdict rests on', () => {
