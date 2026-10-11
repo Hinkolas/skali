@@ -57,10 +57,11 @@ func summaryEnvironments(t *testing.T, body map[string]any) map[string]map[strin
 
 func TestProjectListSummaryReadsKernelHealth(t *testing.T) {
 	a, stub := newHealthAPI(t)
-	a.createUser("nick@example.com", "hunter2hunter2")
+	// An instance admin, who may create a high-priority environment.
+	a.createAdmin("nick@example.com", "hunter2hunter2")
 	token := a.login("nick@example.com", "hunter2hunter2")
 	projectID, prodID := a.createEnvironment(t, token)
-	status, body := a.do("POST", "/v1/projects/"+projectID+"/environments", token, map[string]any{"name": "staging"})
+	status, body := a.do("POST", "/v1/projects/"+projectID+"/environments", token, map[string]any{"name": "staging", "priority": "high"})
 	require.Equal(t, http.StatusCreated, status, "%v", body)
 
 	evaluatedAt := time.Date(2026, 9, 22, 10, 0, 0, 0, time.UTC)
@@ -78,6 +79,9 @@ func TestProjectListSummaryReadsKernelHealth(t *testing.T) {
 	// A miss reads unknown and carries no evaluation time.
 	require.Equal(t, "unknown", envs["staging"]["health"])
 	require.Nil(t, envs["staging"]["health_evaluated_at"])
+	// The configured priority rides along, whatever the name.
+	require.Equal(t, "normal", envs["production"]["priority"])
+	require.Equal(t, "high", envs["staging"]["priority"])
 
 	// One batch read per request covers every readable environment.
 	require.Equal(t, 1, stub.calls)
@@ -108,11 +112,13 @@ func TestProjectListSummaryLockedEnvironmentHidesCachedHealth(t *testing.T) {
 	require.Equal(t, http.StatusOK, status)
 	envs := summaryEnvironments(t, body)
 	require.Equal(t, "none", envs["production"]["access"])
+	require.Nil(t, envs["production"]["priority"])
 	require.Nil(t, envs["production"]["state"])
 	require.Nil(t, envs["production"]["health"], "a cached verdict never leaks through a lock")
 	require.Nil(t, envs["production"]["health_evaluated_at"])
 	require.Equal(t, "healthy", envs["staging"]["health"])
 	require.NotNil(t, envs["staging"]["health_evaluated_at"])
+	require.Equal(t, "normal", envs["staging"]["priority"])
 
 	// The locked environment is never even asked for.
 	require.Equal(t, []uuid.UUID{uuid.MustParse(stagingID)}, stub.lastIDs)

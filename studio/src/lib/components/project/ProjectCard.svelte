@@ -3,8 +3,13 @@
 	import type { Project } from '$lib/types/project';
 	import { relativeTime } from '$lib/format';
 	import { HEALTH_META } from '$lib/service-types';
-	import { projectHealthTitle, projectServiceCount, projectWorstHealth } from '$lib/models/project';
-	import Pill from '$lib/components/ui/Pill.svelte';
+	import {
+		projectEnvironmentRollup,
+		projectHealthTitle,
+		projectServiceCount,
+		projectWorstHealth
+	} from '$lib/models/project';
+	import EnvironmentRollup from '$lib/components/project/EnvironmentRollup.svelte';
 	import Skeleton from '$lib/components/ui/Skeleton.svelte';
 	import TypeBadge from '$lib/components/ui/TypeBadge.svelte';
 
@@ -14,7 +19,7 @@
 	let { project, loading = false }: { project: Project; loading?: boolean } = $props();
 
 	const pending = $derived(loading && !project.summary);
-	const environments = $derived(project.summary?.environments ?? []);
+	const environments = $derived(projectEnvironmentRollup(project));
 	const counts = $derived(project.summary?.service_counts);
 	const serviceCount = $derived(projectServiceCount(project));
 	// The card dot shows the worst environment health: the kernel's cached
@@ -37,13 +42,7 @@
 		{:else}
 			{#if environments.length > 0}
 				<span class="flex items-center gap-2.5">
-					<Pill
-						text={environments[0].name}
-						tone={environments[0].name === 'production' ? 'success' : 'neutral'}
-					/>
-					{#if environments.length > 1}
-						<Pill text="+{environments.length - 1}" tone="neutral" />
-					{/if}
+					<EnvironmentRollup {environments} />
 				</span>
 			{/if}
 			<span
