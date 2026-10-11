@@ -122,6 +122,20 @@ func TestProjectListSummaryLockedEnvironmentHidesCachedHealth(t *testing.T) {
 
 	// The locked environment is never even asked for.
 	require.Equal(t, []uuid.UUID{uuid.MustParse(stagingID)}, stub.lastIDs)
+
+	// Nor does its rollout activity reach the project's last-activity time.
+	_, err := a.st.Pool.Exec(a.t.Context(),
+		"UPDATE environment_targets SET updated_at = '2100-01-01T00:00:00Z' WHERE environment_id = $1", prodID)
+	require.NoError(t, err)
+	lastActivity := func(token string) int {
+		status, body := a.do("GET", "/v1/projects?include=summary", token, nil)
+		require.Equal(t, http.StatusOK, status)
+		at, err := time.Parse(time.RFC3339Nano, body["projects"].([]any)[0].(map[string]any)["summary"].(map[string]any)["updated_at"].(string))
+		require.NoError(t, err)
+		return at.UTC().Year()
+	}
+	require.NotEqual(t, 2100, lastActivity(bob))
+	require.Equal(t, 2100, lastActivity(owner))
 }
 
 func TestEnvironmentListSummaryReadsKernelHealth(t *testing.T) {

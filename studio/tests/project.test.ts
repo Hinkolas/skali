@@ -4,6 +4,7 @@ import {
 	projectEnvironmentRollup,
 	projectHealthTitle,
 	projectServiceCount,
+	projectUpdatedAt,
 	projectWorstHealth
 } from '../src/lib/models/project';
 import type { Project, SummaryEnvironment } from '../src/lib/types/project';
@@ -27,7 +28,11 @@ function env(overrides: Partial<SummaryEnvironment> = {}): SummaryEnvironment {
 
 function summary(environments: SummaryEnvironment[]): Project {
 	return project({
-		summary: { environments, service_counts: { applications: 2, databases: 1, buckets: 0 } }
+		summary: {
+			environments,
+			service_counts: { applications: 2, databases: 1, buckets: 0 },
+			updated_at: '2026-10-11T12:00:00Z'
+		}
 	});
 }
 
@@ -50,6 +55,11 @@ test('the worst environment health wins; unknown outranks healthy', () => {
 test('service counts sum the summary and read zero without one', () => {
 	expect(projectServiceCount(project())).toBe(0);
 	expect(projectServiceCount(summary([]))).toBe(3);
+});
+
+test('the update time is the summary activity, else the settings time', () => {
+	expect(projectUpdatedAt(project())).toBe('2026-09-01T00:00:00Z');
+	expect(projectUpdatedAt(summary([]))).toBe('2026-10-11T12:00:00Z');
 });
 
 test('environment counts fall back to the access map on the plain list', () => {

@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -111,6 +112,8 @@ func TestProjectListSummary(t *testing.T) {
 	require.Empty(t, summary["environments"])
 	counts := summary["service_counts"].(map[string]any)
 	require.Equal(t, float64(0), counts["applications"])
+	created := body["projects"].([]any)[0].(map[string]any)["updated_at"]
+	require.Equal(t, created, summary["updated_at"], "nothing happened since creation")
 
 	// With an environment and a draft the rollup fills in.
 	status, body = a.do("POST", "/v1/projects/"+projectID+"/environments", token, map[string]any{"name": "production"})
@@ -134,6 +137,20 @@ func TestProjectListSummary(t *testing.T) {
 	require.Equal(t, float64(1), counts["applications"])
 	require.Equal(t, float64(0), counts["databases"])
 	require.Equal(t, float64(0), counts["buckets"])
+
+	// A deploy moves the environment's pointer, which the project's
+	// last-activity time follows even though the project row is untouched.
+	_, err := a.st.Pool.Exec(a.t.Context(),
+		"UPDATE environment_targets SET updated_at = now() + interval '1 hour' WHERE environment_id = $1", envID)
+	require.NoError(t, err)
+	status, body = a.do("GET", "/v1/projects?include=summary", token, nil)
+	require.Equal(t, http.StatusOK, status)
+	item := body["projects"].([]any)[0].(map[string]any)
+	updatedAt, err := time.Parse(time.RFC3339Nano, item["summary"].(map[string]any)["updated_at"].(string))
+	require.NoError(t, err)
+	projectUpdatedAt, err := time.Parse(time.RFC3339Nano, item["updated_at"].(string))
+	require.NoError(t, err)
+	require.True(t, updatedAt.After(projectUpdatedAt.Add(50*time.Minute)), "summary %s, project %s", updatedAt, projectUpdatedAt)
 }
 
 func TestProjectListMembership(t *testing.T) {

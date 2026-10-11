@@ -42,11 +42,13 @@ RETURNING *;
 -- pointers, for the project list summary (one query across all projects,
 -- not one per project). The checksums ride along so list consumers never
 -- load a revision to name it; the priority lets a listing lead with its
--- high-priority environments.
+-- high-priority environments. The pointer's updated_at dates the
+-- environment's last rollout activity.
 -- name: ListEnvironmentsWithTargets :many
 SELECT e.id, e.project_id, e.name, e.priority, t.state,
        t.target_revision_id, tr.checksum AS target_checksum,
-       t.active_revision_id, ar.checksum AS active_checksum
+       t.active_revision_id, ar.checksum AS active_checksum,
+       t.updated_at AS target_updated_at
 FROM environments e
 JOIN environment_targets t ON t.environment_id = e.id
 LEFT JOIN revisions tr ON tr.id = t.target_revision_id

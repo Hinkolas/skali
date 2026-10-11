@@ -7,9 +7,9 @@ RETURNING *;
 SELECT * FROM project_drafts WHERE project_id = $1;
 
 -- Every project's current draft definition, for service-count summaries on
--- the project list.
+-- the project list, with the time it was last written.
 -- name: ListDraftDefinitions :many
-SELECT d.project_id, v.definition
+SELECT d.project_id, v.definition, d.updated_at
 FROM project_drafts d
 JOIN definition_versions v ON v.id = d.definition_version_id;
 

@@ -3,6 +3,7 @@ package project
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -22,6 +23,9 @@ type EnvironmentSummary struct {
 	// deployed, or taken down).
 	TargetRevision *RevisionRef
 	ActiveRevision *RevisionRef
+	// UpdatedAt is when the pointer row last moved: a deploy, an
+	// activation, a restart, a fallback, or a take-down.
+	UpdatedAt time.Time
 }
 
 // RevisionRef names one revision without loading it.
@@ -50,10 +54,11 @@ type ServiceCounts struct {
 }
 
 // Summary is the project-list rollup: environments with their states plus
-// draft service counts.
+// draft service counts. DraftUpdatedAt is zero without a draft.
 type Summary struct {
-	Environments  []EnvironmentSummary
-	ServiceCounts ServiceCounts
+	Environments   []EnvironmentSummary
+	ServiceCounts  ServiceCounts
+	DraftUpdatedAt time.Time
 }
 
 // ListEnvironmentStates maps one project's environments to their target
@@ -89,6 +94,7 @@ func (s *Service) ListSummaries(ctx context.Context) (map[uuid.UUID]Summary, err
 			State:          env.State,
 			TargetRevision: revisionRef(env.TargetRevisionID, env.TargetChecksum),
 			ActiveRevision: revisionRef(env.ActiveRevisionID, env.ActiveChecksum),
+			UpdatedAt:      env.TargetUpdatedAt,
 		})
 		summaries[env.ProjectID] = summary
 	}
@@ -108,6 +114,7 @@ func (s *Service) ListSummaries(ctx context.Context) (map[uuid.UUID]Summary, err
 			Databases:    len(definition.Databases),
 			Buckets:      len(definition.Buckets),
 		}
+		summary.DraftUpdatedAt = draft.UpdatedAt
 		summaries[draft.ProjectID] = summary
 	}
 

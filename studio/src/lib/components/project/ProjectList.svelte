@@ -7,6 +7,7 @@
 		projectEnvironmentRollup,
 		projectHealthTitle,
 		projectServiceCount,
+		projectUpdatedAt,
 		projectWorstHealth
 	} from '$lib/models/project';
 	import EnvironmentRollup from '$lib/components/project/EnvironmentRollup.svelte';
@@ -32,7 +33,7 @@
 		{@const serviceCount = projectServiceCount(project)}
 		{@const health = HEALTH_META[projectWorstHealth(project)]}
 		{@const healthTitle = projectHealthTitle(project)}
-		{@const updated = relativeTime(project.updated_at)}
+		{@const updated = relativeTime(projectUpdatedAt(project))}
 		<a
 			href={resolve('/(app)/projects/[project]', { project: project.name })}
 			class="border-border-subtle border-b px-4.5 py-3 transition-colors last:border-0 hover:bg-white/2 @max-2xl:flex @max-2xl:flex-wrap @max-2xl:items-center @max-2xl:gap-x-3 @max-2xl:gap-y-1.5 @2xl:grid @2xl:items-center {grid}"
@@ -79,7 +80,11 @@
 					{/if}
 				</div>
 				<div class="font-mono text-text-muted text-sm whitespace-nowrap @2xl:hidden">
-					updated {updated}
+					{#if pending}
+						<Skeleton variant="line" class="w-20" />
+					{:else}
+						updated {updated}
+					{/if}
 				</div>
 			</div>
 			{#if pending}
@@ -97,7 +102,11 @@
 				</div>
 			{/if}
 			<div class="font-mono text-text-muted text-sm whitespace-nowrap @max-2xl:hidden">
-				{updated}
+				{#if pending}
+					<Skeleton variant="line" class="w-14" />
+				{:else}
+					{updated}
+				{/if}
 			</div>
 		</a>
 	{/each}

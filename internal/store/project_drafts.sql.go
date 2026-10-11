@@ -7,6 +7,7 @@ package store
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -77,7 +78,7 @@ func (q *Queries) GetProjectDraft(ctx context.Context, projectID uuid.UUID) (Pro
 }
 
 const listDraftDefinitions = `-- name: ListDraftDefinitions :many
-SELECT d.project_id, v.definition
+SELECT d.project_id, v.definition, d.updated_at
 FROM project_drafts d
 JOIN definition_versions v ON v.id = d.definition_version_id
 `
@@ -85,10 +86,11 @@ JOIN definition_versions v ON v.id = d.definition_version_id
 type ListDraftDefinitionsRow struct {
 	ProjectID  uuid.UUID
 	Definition []byte
+	UpdatedAt  time.Time
 }
 
 // Every project's current draft definition, for service-count summaries on
-// the project list.
+// the project list, with the time it was last written.
 func (q *Queries) ListDraftDefinitions(ctx context.Context) ([]ListDraftDefinitionsRow, error) {
 	rows, err := q.db.Query(ctx, listDraftDefinitions)
 	if err != nil {
@@ -98,7 +100,7 @@ func (q *Queries) ListDraftDefinitions(ctx context.Context) ([]ListDraftDefiniti
 	var items []ListDraftDefinitionsRow
 	for rows.Next() {
 		var i ListDraftDefinitionsRow
-		if err := rows.Scan(&i.ProjectID, &i.Definition); err != nil {
+		if err := rows.Scan(&i.ProjectID, &i.Definition, &i.UpdatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

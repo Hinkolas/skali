@@ -4503,6 +4503,9 @@ components:
         updated_at:
           type: string
           format: date-time
+          description: |
+            When the project's own settings last changed. Deploys never
+            move it; the project's last activity is `summary.updated_at`.
         access: { $ref: "#/components/schemas/ProjectAccess" }
         summary:
           $ref: "#/components/schemas/ProjectSummary"
@@ -4514,7 +4517,7 @@ components:
         pointer state and worst service health, plus the draft's per-type
         service counts (zeros without a draft). A locked environment
         (`access: none`) carries id, name, and access only.
-      required: [environments, service_counts]
+      required: [environments, service_counts, updated_at]
       properties:
         environments:
           type: array
@@ -4573,6 +4576,15 @@ components:
               type: integer
             buckets:
               type: integer
+        updated_at:
+          type: string
+          format: date-time
+          description: |
+            The project's last activity: the latest of its own
+            `updated_at` (settings), its draft write, and each unlocked
+            environment's last target pointer move (a deploy, activation,
+            restart, fallback, or take-down). Locked environments never
+            contribute.
 
     ProjectResponse:
       type: object
