@@ -87,7 +87,7 @@ type projectSummaryPayload struct {
 }
 
 // summaryEnvironmentPayload: a locked environment carries id, name, and
-// access only; state and health are part of its contents. Health is the
+// access only; priority, state, and health are part of its contents. Health is the
 // kernel's cached verdict from its last pass; the evaluation time is absent
 // when nothing was evaluated yet, so unknown-and-pending reads apart from
 // unknown-and-evaluated.
@@ -95,6 +95,7 @@ type summaryEnvironmentPayload struct {
 	ID                string     `json:"id"`
 	Name              string     `json:"name"`
 	Access            string     `json:"access"`
+	Priority          string     `json:"priority,omitempty"`
 	State             string     `json:"state,omitempty"`
 	Health            string     `json:"health,omitempty"`
 	HealthEvaluatedAt *time.Time `json:"health_evaluated_at,omitempty"`
@@ -307,6 +308,7 @@ func (h *projectsHandlers) attachSummaries(ctx context.Context, payload []projec
 				if envGrant, ok := grant.Environment(env.ID); ok {
 					item.Access = envGrant.Role.String()
 					if !envGrant.Locked() {
+						item.Priority = env.Priority
 						item.State = env.State
 						item.Health = string(module.HealthUnknown)
 						item.TargetRevision = newRevisionRefPayload(env.TargetRevision)

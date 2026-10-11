@@ -1110,77 +1110,97 @@ func executeActions(ctx context.Context, out io.Writer, api *client.Client,
 				Skip("current, " + utils.ShortChecksum(action.Digest))
 			continue
 		case "build":
-			if _, err := api.EnsureStep(ctx, runID, action.StepKey, action.Application, "artifacts"); err != nil {
-				return err
-			}
-			application := project.Result.Definition.Applications[action.Application]
-			spec := application.Source.Build
-			buildStep, err := api.EnsureStep(ctx, runID, action.StepKey+".build",
-				"Build locally ("+action.Platform+")", action.StepKey)
+			err := artifactStep(ctx, api, runID, action, func() error {
+				application := project.Result.Definition.Applications[action.Application]
+				spec := application.Source.Build
+				buildStep, err := api.EnsureStep(ctx, runID, action.StepKey+".build",
+					"Build locally ("+action.Platform+")", action.StepKey)
+				if err != nil {
+					return err
+				}
+				if err := api.SetStepStatus(ctx, buildStep.ID, "running"); err != nil {
+					return err
+				}
+				stopHeartbeat := startHeartbeat(ctx, api, action.BuildID)
+				task := tasks.Start(fmt.Sprintf("Build %s (%s)", action.Application, action.Platform))
+				sink := newStepLogSink(ctx, api, buildStep.ID)
+				result, err := engine.Build(ctx, build.BuildRequest{
+					ContextDir: contexts[action.Application].Dir,
+					Dockerfile: filepath.Join(project.Root, spec.Dockerfile),
+					Target:     spec.Target,
+					Arguments:  spec.Arguments,
+					Platform:   action.Platform,
+					PushRef:    action.PushRef,
+					Rebuild:    rebuild,
+				}, &teeSink{inner: sink, task: task})
+				sink.Flush()
+				stopHeartbeat()
+				if err != nil {
+					task.Fail()
+					_ = api.SetStepStatus(ctx, buildStep.ID, "failed")
+					return failDeployment(ctx, api, opened, fmt.Errorf("build for %s failed: %w", action.Application, err))
+				}
+				task.Done(utils.ShortChecksum(result.Digest))
+				if err := api.SetStepStatus(ctx, buildStep.ID, "succeeded"); err != nil {
+					return err
+				}
+				return verifyAction(ctx, api, opened, action, result.Digest)
+			})
 			if err != nil {
-				return err
-			}
-			if err := api.SetStepStatus(ctx, buildStep.ID, "running"); err != nil {
-				return err
-			}
-			stopHeartbeat := startHeartbeat(ctx, api, action.BuildID)
-			task := tasks.Start(fmt.Sprintf("Build %s (%s)", action.Application, action.Platform))
-			sink := newStepLogSink(ctx, api, buildStep.ID)
-			result, err := engine.Build(ctx, build.BuildRequest{
-				ContextDir: contexts[action.Application].Dir,
-				Dockerfile: filepath.Join(project.Root, spec.Dockerfile),
-				Target:     spec.Target,
-				Arguments:  spec.Arguments,
-				Platform:   action.Platform,
-				PushRef:    action.PushRef,
-				Rebuild:    rebuild,
-			}, &teeSink{inner: sink, task: task})
-			sink.Flush()
-			stopHeartbeat()
-			if err != nil {
-				task.Fail()
-				_ = api.SetStepStatus(ctx, buildStep.ID, "failed")
-				return failDeployment(ctx, api, opened, fmt.Errorf("build for %s failed: %w", action.Application, err))
-			}
-			task.Done(utils.ShortChecksum(result.Digest))
-			if err := api.SetStepStatus(ctx, buildStep.ID, "succeeded"); err != nil {
-				return err
-			}
-			if err := verifyAction(ctx, api, opened, action, result.Digest); err != nil {
 				return err
 			}
 		case "import":
-			if _, err := api.EnsureStep(ctx, runID, action.StepKey, action.Application, "artifacts"); err != nil {
-				return err
-			}
-			importStep, err := api.EnsureStep(ctx, runID, action.StepKey+".import",
-				"Import "+action.Upstream, action.StepKey)
+			err := artifactStep(ctx, api, runID, action, func() error {
+				importStep, err := api.EnsureStep(ctx, runID, action.StepKey+".import",
+					"Import "+action.Upstream, action.StepKey)
+				if err != nil {
+					return err
+				}
+				if err := api.SetStepStatus(ctx, importStep.ID, "running"); err != nil {
+					return err
+				}
+				task := tasks.Start("Import " + action.Upstream)
+				sink := newStepLogSink(ctx, api, importStep.ID)
+				result, err := build.Import(ctx, action.Upstream, action.PushRef,
+					build.ImportOptions{TargetAuth: registryAuth}, &teeSink{inner: sink, task: task})
+				sink.Flush()
+				if err != nil {
+					task.Fail()
+					_ = api.SetStepStatus(ctx, importStep.ID, "failed")
+					return failDeployment(ctx, api, opened, fmt.Errorf("import for %s failed: %w", action.Application, err))
+				}
+				task.Done(utils.ShortChecksum(result.Digest))
+				if err := api.SetStepStatus(ctx, importStep.ID, "succeeded"); err != nil {
+					return err
+				}
+				return verifyAction(ctx, api, opened, action, result.Digest)
+			})
 			if err != nil {
-				return err
-			}
-			if err := api.SetStepStatus(ctx, importStep.ID, "running"); err != nil {
-				return err
-			}
-			task := tasks.Start("Import " + action.Upstream)
-			sink := newStepLogSink(ctx, api, importStep.ID)
-			result, err := build.Import(ctx, action.Upstream, action.PushRef,
-				build.ImportOptions{TargetAuth: registryAuth}, &teeSink{inner: sink, task: task})
-			sink.Flush()
-			if err != nil {
-				task.Fail()
-				_ = api.SetStepStatus(ctx, importStep.ID, "failed")
-				return failDeployment(ctx, api, opened, fmt.Errorf("import for %s failed: %w", action.Application, err))
-			}
-			task.Done(utils.ShortChecksum(result.Digest))
-			if err := api.SetStepStatus(ctx, importStep.ID, "succeeded"); err != nil {
-				return err
-			}
-			if err := verifyAction(ctx, api, opened, action, result.Digest); err != nil {
 				return err
 			}
 		}
 	}
 	return nil
+}
+
+// artifactStep journals one application's step under "artifacts" around
+// its build or import and verify children: running from the first child on,
+// then their outcome. A step left pending would be closed as skipped when
+// the run finishes, above children that succeeded.
+func artifactStep(ctx context.Context, api *client.Client, runID string,
+	action client.ArtifactAction, children func() error) error {
+	step, err := api.EnsureStep(ctx, runID, action.StepKey, action.Application, "artifacts")
+	if err != nil {
+		return err
+	}
+	if err := api.SetStepStatus(ctx, step.ID, "running"); err != nil {
+		return err
+	}
+	if err := children(); err != nil {
+		_ = api.SetStepStatus(ctx, step.ID, "failed")
+		return err
+	}
+	return api.SetStepStatus(ctx, step.ID, "succeeded")
 }
 
 // verifyAction journals the verification step around the server's registry
