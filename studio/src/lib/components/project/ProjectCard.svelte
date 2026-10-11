@@ -7,15 +7,17 @@
 		projectEnvironmentRollup,
 		projectHealthTitle,
 		projectServiceCount,
+		projectUpdatedAt,
 		projectWorstHealth
 	} from '$lib/models/project';
 	import EnvironmentRollup from '$lib/components/project/EnvironmentRollup.svelte';
 	import Skeleton from '$lib/components/ui/Skeleton.svelte';
 	import TypeBadge from '$lib/components/ui/TypeBadge.svelte';
 
-	// `loading` says the summary is still on its way: the card paints name
-	// and timestamp from the plain list and holds the summary's slots with
-	// skeletons instead of claiming "no services" or unknown health.
+	// `loading` says the summary is still on its way: the card paints the
+	// name from the plain list and holds the summary's slots, the activity
+	// time included, with skeletons instead of claiming "no services",
+	// unknown health, or the settings time as the last update.
 	let { project, loading = false }: { project: Project; loading?: boolean } = $props();
 
 	const pending = $derived(loading && !project.summary);
@@ -26,6 +28,7 @@
 	// verdict, so its title says when that was evaluated.
 	const worst = $derived(projectWorstHealth(project));
 	const healthTitle = $derived(projectHealthTitle(project));
+	const updated = $derived(relativeTime(projectUpdatedAt(project)));
 </script>
 
 <a
@@ -76,6 +79,10 @@
 		{:else}
 			<span>{serviceCount} service{serviceCount === 1 ? '' : 's'}</span>
 		{/if}
-		<span>updated <span class="text-text-secondary">{relativeTime(project.updated_at)}</span></span>
+		{#if pending}
+			<Skeleton variant="line" class="w-24" />
+		{:else}
+			<span>updated <span class="text-text-secondary">{updated}</span></span>
+		{/if}
 	</div>
 </a>

@@ -81,9 +81,14 @@ func newProjectAccessPayload(grant *authz.Grant) projectAccessPayload {
 	}
 }
 
+// projectSummaryPayload's UpdatedAt is the project's last activity: the
+// latest of its own settings change, its draft write, and the pointer moves
+// of the environments the caller can see. Locked environments stay out so
+// the rollup reveals nothing about them.
 type projectSummaryPayload struct {
 	Environments  []summaryEnvironmentPayload `json:"environments"`
 	ServiceCounts serviceCountsPayload        `json:"service_counts"`
+	UpdatedAt     time.Time                   `json:"updated_at"`
 }
 
 // summaryEnvironmentPayload: a locked environment carries id, name, and
@@ -276,10 +281,10 @@ func (h *projectsHandlers) list(w http.ResponseWriter, r *http.Request) {
 }
 
 // attachSummaries decorates the list payload with environments, states,
-// health rollups, and draft service counts. Locked environments keep their
-// name and access only. The whole rollup costs two batched queries plus one
-// read of the kernel's health cache: the list never iterates environments
-// against the database or the status projection.
+// health rollups, draft service counts, and the last-activity time. Locked
+// environments keep their name and access only. The whole rollup costs two
+// batched queries plus one read of the kernel's health cache: the list never
+// iterates environments against the database or the status projection.
 func (h *projectsHandlers) attachSummaries(ctx context.Context, payload []projectPayload, grants map[uuid.UUID]*authz.Grant) error {
 	summaries, err := h.projects.ListSummaries(ctx)
 	if err != nil {
@@ -301,6 +306,7 @@ func (h *projectsHandlers) attachSummaries(ctx context.Context, payload []projec
 				Databases:    summary.ServiceCounts.Databases,
 				Buckets:      summary.ServiceCounts.Buckets,
 			},
+			UpdatedAt: latest(payload[i].UpdatedAt, summary.DraftUpdatedAt),
 		}
 		for _, env := range summary.Environments {
 			item := summaryEnvironmentPayload{ID: env.ID.String(), Name: env.Name, Access: authz.None.String()}
@@ -313,6 +319,7 @@ func (h *projectsHandlers) attachSummaries(ctx context.Context, payload []projec
 						item.Health = string(module.HealthUnknown)
 						item.TargetRevision = newRevisionRefPayload(env.TargetRevision)
 						item.ActiveRevision = newRevisionRefPayload(env.ActiveRevision)
+						entry.UpdatedAt = latest(entry.UpdatedAt, env.UpdatedAt)
 						unlocked = append(unlocked, env.ID)
 					}
 				}
@@ -348,6 +355,13 @@ func (h *projectsHandlers) attachSummaries(ctx context.Context, payload []projec
 		}
 	}
 	return nil
+}
+
+func latest(a, b time.Time) time.Time {
+	if b.After(a) {
+		return b
+	}
+	return a
 }
 
 // GET /v1/projects/{id}

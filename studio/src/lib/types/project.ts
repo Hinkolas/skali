@@ -64,6 +64,7 @@ export interface Project {
 	display_name: string;
 	source_mode: SourceMode;
 	created_at: string;
+	/** When the project's own settings last changed; deploys never move it. */
 	updated_at: string;
 	access: ProjectAccess;
 	/** Present only when the list was fetched with ?include=summary. */
@@ -73,6 +74,9 @@ export interface Project {
 export interface ProjectSummary {
 	environments: SummaryEnvironment[];
 	service_counts: ServiceCounts;
+	/** The project's last activity: settings, draft, or a visible
+	 * environment's deploy, restart, or take-down, whichever is latest. */
+	updated_at: string;
 }
 
 export interface SummaryEnvironment {

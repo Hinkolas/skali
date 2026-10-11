@@ -40,6 +40,12 @@ export function projectEnvironmentRollup(project: Project): SummaryEnvironment[]
 	);
 }
 
+/** The project's last activity from the summary. Without one it falls back
+ * to the settings time, which deploys never move. */
+export function projectUpdatedAt(project: Project): string {
+	return project.summary?.updated_at ?? project.updated_at;
+}
+
 /** Environments the caller can name: the summary when the list carried one,
  * else the access map, which lists every environment (locked ones as none).
  * The plain list therefore counts correctly on every route. */
