@@ -317,3 +317,22 @@ func TestAcceptIncompleteRestore(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 1, moved, "a deployment brings the environment back")
 }
+
+// An accept run a dying daemon never finished would hold the
+// environment's run slot for good; the stranded-run sweep fails it once
+// the grace has passed, like a backup run without its row.
+func TestSweepFailsStrandedAcceptRun(t *testing.T) {
+	f := newServiceFixture(t)
+	ctx := context.Background()
+	run, err := f.journal.BeginRun(ctx, journal.RunInput{
+		Kind: KindAccept, ProjectID: f.projectID, EnvironmentID: f.environmentID, Actor: "tester",
+	})
+	require.NoError(t, err)
+	require.NoError(t, f.controller.sweep(ctx))
+	require.Equal(t, string(journal.RunRunning), f.runStatus(t, run.ID), "an accept may still be finishing")
+	_, err = f.st.Pool.Exec(ctx, "UPDATE runs SET created_at = now() - interval '2 minutes' WHERE id = $1", run.ID)
+	require.NoError(t, err)
+	require.NoError(t, f.controller.sweep(ctx))
+	require.Equal(t, string(journal.RunFailed), f.runStatus(t, run.ID))
+	require.True(t, f.slotFree(t))
+}

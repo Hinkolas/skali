@@ -179,7 +179,7 @@ func (q *Queries) ListBackupsByEnvironment(ctx context.Context, environmentID uu
 const listStrandedBackupRuns = `-- name: ListStrandedBackupRuns :many
 SELECT runs.id, runs.kind FROM runs
 LEFT JOIN backups ON backups.run_id = runs.id
-WHERE runs.kind IN ('backup', 'restore') AND runs.status = 'running'
+WHERE runs.kind IN ('backup', 'restore', 'restore-accept') AND runs.status = 'running'
   AND runs.created_at < $1::timestamptz
   AND (backups.id IS NULL OR backups.status IN ('succeeded', 'failed', 'cancelled'))
 ORDER BY runs.created_at
@@ -194,6 +194,9 @@ type ListStrandedBackupRunsRow struct {
 // worker driving its row finishes it, and the worker finishes the run
 // before the row. A running run whose row is already terminal, or that has
 // no row at all once the accept path had time to record one, is stranded.
+// Accepting an incomplete restore's data runs without a row and finishes
+// within its request, so one still running after the grace is stranded
+// too.
 func (q *Queries) ListStrandedBackupRuns(ctx context.Context, cutoff time.Time) ([]ListStrandedBackupRunsRow, error) {
 	rows, err := q.db.Query(ctx, listStrandedBackupRuns, cutoff)
 	if err != nil {
