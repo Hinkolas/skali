@@ -132,6 +132,9 @@ type backupContext struct {
 	// workerImage is resolved lazily, only when a Job-backed component
 	// (database or volume) actually runs.
 	workerImage string
+	// listings holds what a restore's verification found under each
+	// bucket component's snapshot prefix, keyed by component label.
+	listings map[string]bucketListing
 }
 
 func (b *backupContext) prefix() string { return b.credentials.Prefix }

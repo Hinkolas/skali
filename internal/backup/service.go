@@ -193,6 +193,9 @@ func (c *Controller) RecoverOnBoot(ctx context.Context) error {
 	}
 	for _, row := range rows {
 		message := row.Kind + " interrupted: the daemon restarted while it was running"
+		if row.Kind == KindRestore && c.holds(ctx, row) {
+			message += "; the environment stays down until a restore completes or its data is accepted"
+		}
 		if row.RunID != nil {
 			if err := c.deps.Journal.FailRun(ctx, *row.RunID, nil, message); err != nil &&
 				!errors.Is(err, journal.ErrInvalidTransition) && !errors.Is(err, journal.ErrNotFound) {
@@ -212,6 +215,13 @@ func (c *Controller) RecoverOnBoot(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// holds reports whether the restore row holds its environment: it stopped
+// the environment and nothing completed or accepted it since.
+func (c *Controller) holds(ctx context.Context, row store.Backup) bool {
+	target, err := c.deps.Store.GetEnvironmentTarget(ctx, row.EnvironmentID)
+	return err == nil && target.IncompleteRestoreID != nil && *target.IncompleteRestoreID == row.ID
 }
 
 // SnapshotSummary is one listable snapshot, read from its S3 manifest.

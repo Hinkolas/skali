@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -237,4 +239,65 @@ func TestRestoreEnvironmentDefaultsToSnapshotOrigin(t *testing.T) {
 
 	_, err = findSnapshot(context.Background(), scope, "nope")
 	require.ErrorContains(t, err, "no snapshot nope in project flowdemo")
+}
+
+// Accepting an incomplete restore's data names the restore that holds the
+// environment, shows it before the typed confirmation, and refuses when no
+// restore holds the environment or the one that does still runs.
+func TestBackupAcceptLiftsTheHold(t *testing.T) {
+	install := seedBackupScope(t)
+	accept := func(args ...string) (string, error) {
+		command := newBackupAcceptCommand()
+		command.SetArgs(args)
+		out := &bytes.Buffer{}
+		command.SetOut(out)
+		command.SetErr(out)
+		command.SetIn(strings.NewReader(""))
+		err := command.ExecuteContext(context.Background())
+		return out.String(), err
+	}
+
+	_, err := accept("--yes")
+	require.ErrorContains(t, err, "no incomplete restore holds environment production")
+
+	runID := "run-restore-1"
+	held := &client.IncompleteRestore{ID: "restore-1", RunID: &runID, SnapshotID: testSnapshotProduction,
+		Status: "running", StartedAt: time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC),
+		Components: []string{"db:data", "bucket:files"}}
+	install.held["p1-e1"] = held
+	_, err = accept("--yes")
+	require.ErrorContains(t, err, "restore restore-1 into production is still running")
+
+	held.Status, held.Error = "failed", "copy failed halfway"
+	out, err := accept()
+	require.ErrorContains(t, err, "non-interactive use requires --yes")
+	require.Contains(t, out, "environment  production")
+	require.Contains(t, out, "restore      restore-1")
+	require.Contains(t, out, "snapshot "+testSnapshotProduction+", failed")
+	require.Contains(t, out, "copy failed halfway")
+	require.Empty(t, install.posts)
+
+	out, err = accept("--yes")
+	require.NoError(t, err)
+	require.Equal(t, []string{"accept:p1-e1:restore-1"}, install.posts)
+	require.Contains(t, out, "restore hold lifted")
+	require.Contains(t, out, "production stays down until the next deploy")
+	require.Contains(t, acceptWarning(held), "db:data, bucket:files may hold partial data")
+}
+
+// A restore run that ended without completing explains the hold it left,
+// with both ways forward; one that never stopped the environment, or a
+// hold some other restore keeps, leaves the run's own error alone.
+func TestRestoreHoldError(t *testing.T) {
+	cause := errors.New("run run-1 failed: copy failed")
+	runID, other := "run-1", "run-2"
+	status := &client.EnvironmentStatus{IncompleteRestore: &client.IncompleteRestore{ID: "r", RunID: &runID}}
+	err := restoreHoldError(status, "run-1", "production", cause)
+	require.ErrorIs(t, err, cause)
+	require.ErrorContains(t, err, "production stays down and deploys are refused until a restore completes")
+	require.ErrorContains(t, err, "skali backup accept --environment production")
+
+	require.Equal(t, cause, restoreHoldError(&client.EnvironmentStatus{}, "run-1", "production", cause))
+	status.IncompleteRestore.RunID = &other
+	require.Equal(t, cause, restoreHoldError(status, "run-1", "production", cause))
 }

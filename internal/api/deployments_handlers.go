@@ -888,6 +888,11 @@ func writeDeployError(ctx context.Context, w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "invalid_route", invalidRoute.Error())
 		return
 	}
+	var held *deploy.RestoreIncompleteError
+	if errors.As(err, &held) {
+		writeError(w, http.StatusConflict, codeRestoreIncomplete, restoreIncompleteMessage(held.RestoreID))
+		return
+	}
 	var hostname *deploy.HostnameConflict
 	if errors.As(err, &hostname) {
 		code := "hostname_claimed"

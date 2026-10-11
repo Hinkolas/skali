@@ -785,6 +785,23 @@ type EnvironmentStatus struct {
 	// configured.
 	PlatformPreference []string        `json:"platform_preference"`
 	Services           []ServiceStatus `json:"services"`
+	// IncompleteRestore is the restore holding the environment down; nil
+	// when none does (or the server predates the field).
+	IncompleteRestore *IncompleteRestore `json:"incomplete_restore"`
+}
+
+// IncompleteRestore is a restore that stopped its environment and did not
+// complete: deployments are refused until a restore completes or its data
+// is accepted.
+type IncompleteRestore struct {
+	ID         string     `json:"id"`
+	RunID      *string    `json:"run_id"`
+	SnapshotID string     `json:"snapshot_id"`
+	Status     string     `json:"status"`
+	Error      string     `json:"error"`
+	StartedAt  time.Time  `json:"started_at"`
+	FinishedAt *time.Time `json:"finished_at"`
+	Components []string   `json:"components"`
 }
 
 type ServiceStatus struct {
@@ -1069,6 +1086,21 @@ func (c *Client) RestoreBackup(ctx context.Context, environmentID, snapshotID st
 	}
 	err := c.do(ctx, http.MethodPost, "/v1/environments/"+environmentID+"/restore",
 		map[string]string{"snapshot_id": snapshotID}, &res)
+	if err != nil {
+		return "", err
+	}
+	return res.RunID, nil
+}
+
+// AcceptIncompleteRestore lifts the hold the named incomplete restore
+// keeps on the environment, accepting its data as it is; the environment
+// stays down until the next deployment. It returns the journaled run.
+func (c *Client) AcceptIncompleteRestore(ctx context.Context, environmentID, restoreID string) (string, error) {
+	var res struct {
+		RunID string `json:"run_id"`
+	}
+	err := c.do(ctx, http.MethodPost, "/v1/environments/"+environmentID+"/restore/accept",
+		map[string]string{"restore_id": restoreID}, &res)
 	if err != nil {
 		return "", err
 	}

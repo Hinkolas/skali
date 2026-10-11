@@ -444,6 +444,9 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 					if d.Backups != nil {
 						bkh := &backupsHandlers{backups: d.Backups, st: d.Store}
 						ac.route(r, "POST", "/environments/{id}/restore", classEnvMaintain, bkh.restore)
+						// Accepting an incomplete restore's data lets a
+						// deployment resume the environment on it.
+						ac.route(r, "POST", "/environments/{id}/restore/accept", classEnvMaintain, bkh.accept)
 						// Deleting a snapshot is one-way; the scope floor is
 						// project read (ids are project-wide) and the handler
 						// requires maintain on the holding environment.

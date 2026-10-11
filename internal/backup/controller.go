@@ -37,6 +37,10 @@ type Deps struct {
 	// Enqueue pokes the environment reconciler; restore uses it to stop and
 	// resume the environment around data movement.
 	Enqueue func(environmentID uuid.UUID)
+	// StatusChanged tells status streams that the environment's status
+	// changed without a cluster change: a restore holding it concluded, or
+	// its hold was lifted. Nil when nothing streams status.
+	StatusChanged func(environmentID uuid.UUID)
 	// Version is stamped into snapshot manifests.
 	Version string
 }
@@ -86,6 +90,9 @@ type Controller struct {
 	// revisions loads revision documents; deps.Deploy in production, a
 	// fake in tests.
 	revisions revisionLoader
+	// resume points a restored environment back at its revision and lifts
+	// the restore's hold; deps.Deploy in production, a fake in tests.
+	resume func(ctx context.Context, environmentID, revisionID, restoreID uuid.UUID) error
 
 	// mu guards running.
 	mu sync.Mutex
@@ -119,6 +126,7 @@ func New(deps Deps, cfg Config) *Controller {
 	c.openBucket = c.openServiceBucket
 	if deps.Deploy != nil {
 		c.revisions = deps.Deploy
+		c.resume = deps.Deploy.ResumeRevision
 	}
 	return c
 }

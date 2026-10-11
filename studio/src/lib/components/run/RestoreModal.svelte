@@ -12,10 +12,12 @@
 	// Restore flow for one snapshot: pick the environment it goes into
 	// (the origin is preselected when it still exists and may be written),
 	// read what will happen, type the environment name, go. The server
-	// stops the environment, replaces matching databases, buckets, and
-	// volumes, and resumes the current revision; on failure the environment
-	// stays down. Restore is sudo-gated: the API client replays after a
-	// fresh login on its own.
+	// verifies the snapshot, stops the environment, replaces matching
+	// databases, buckets, and volumes, and resumes the current revision; a
+	// restore that fails after the stop keeps the environment down and
+	// refuses deploys until a restore completes or its data is accepted.
+	// Restore is sudo-gated: the API client replays after a fresh login on
+	// its own.
 	import ArrowRight from '@lucide/svelte/icons/arrow-right';
 	import DatabaseBackup from '@lucide/svelte/icons/database-backup';
 	import Lock from '@lucide/svelte/icons/lock';
@@ -146,8 +148,9 @@
 			<p>
 				<span class="font-mono text-text-primary">{target.name}</span> stops while the snapshot's databases,
 				buckets, and volumes replace its current data, then the revision running there resumes. Current
-				data is overwritten. If the restore fails the environment stays down until a restore succeeds
-				or it is redeployed.
+				data is overwritten. The snapshot is verified before anything stops; if the restore fails after
+				the stop, the environment stays down and refuses deploys until a restore completes or its data
+				is accepted.
 			</p>
 			{#if crossEnvironment}
 				<p class="mt-2">

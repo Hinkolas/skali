@@ -421,7 +421,7 @@
 		<RunsSection
 			envId={data.env.id}
 			seed={data.runs}
-			kinds={['backup', 'restore']}
+			kinds={['backup', 'restore', 'restore-accept']}
 			emptyTitle="No backup runs yet"
 			emptyDescription="snapshots and restores of {data.env.name} appear here"
 		/>

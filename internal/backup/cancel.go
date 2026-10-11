@@ -129,7 +129,18 @@ func (c *Controller) conclude(ctx context.Context, row *store.Backup, scope *jou
 	}); err != nil {
 		return fmt.Errorf("backup: finish row: %w", err)
 	}
+	if row.Kind == KindRestore {
+		// A restore that stopped the environment shows in its status
+		// until it completes; the row's outcome is part of that.
+		c.statusChanged(row.EnvironmentID)
+	}
 	return nil
+}
+
+func (c *Controller) statusChanged(environmentID uuid.UUID) {
+	if c.deps.StatusChanged != nil {
+		c.deps.StatusChanged(environmentID)
+	}
 }
 
 // abandon fails a run the accept path began but could not hand to a

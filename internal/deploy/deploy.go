@@ -324,7 +324,7 @@ func (s *Service) Promote(ctx context.Context, p *Prepared) error {
 			return fmt.Errorf("deploy: set target: %w", err)
 		}
 		if rows == 0 {
-			return ErrEnvironmentNotFound
+			return unmovedTarget(ctx, q, p.EnvironmentID)
 		}
 		if err := s.values.PromoteTx(ctx, q, p.EnvironmentID, p.CandidateID); err != nil {
 			return err
@@ -414,6 +414,9 @@ func (s *Service) Rollback(ctx context.Context, in RollbackInput) (*RollbackResu
 		}
 		return nil, fmt.Errorf("deploy: get target: %w", err)
 	}
+	if err := restoreHold(target); err != nil {
+		return nil, err
+	}
 	// Rolling back to the active revision while the target moved ahead stays
 	// allowed: that aborts an in-flight rollout.
 	if target.TargetRevisionID != nil && *target.TargetRevisionID == in.RevisionID {
@@ -463,7 +466,7 @@ func (s *Service) Rollback(ctx context.Context, in RollbackInput) (*RollbackResu
 			return fmt.Errorf("deploy: set target: %w", err)
 		}
 		if rows == 0 {
-			return ErrEnvironmentNotFound
+			return unmovedTarget(ctx, q, in.EnvironmentID)
 		}
 		return nil
 	})

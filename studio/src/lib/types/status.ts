@@ -112,4 +112,23 @@ export interface EnvironmentStatus {
 	observation: Observation;
 	platforms: string[];
 	services: ServiceStatus[];
+	/** The restore holding the environment down; null (or absent from older servers) when none does. */
+	incomplete_restore?: IncompleteRestore | null;
+}
+
+/**
+ * A restore that stopped its environment and did not complete: its data may
+ * be partial, so deploys are refused until a restore completes or the data
+ * is accepted (POST /v1/environments/{id}/restore/accept).
+ */
+export interface IncompleteRestore {
+	id: string;
+	run_id: string | null;
+	snapshot_id: string;
+	status: 'running' | 'failed' | 'cancelled';
+	error?: string;
+	started_at: string;
+	finished_at: string | null;
+	/** Components it set out to rewrite: `db:<key>`, `bucket:<key>`, `volume:<app>.<volume>`. */
+	components: string[];
 }

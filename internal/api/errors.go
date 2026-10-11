@@ -64,6 +64,8 @@ const (
 	codeObjectStorageNotReady    = "object_storage_not_ready"
 	codeSnapshotNotFound         = "snapshot_not_found"
 	codeSnapshotInUse            = "snapshot_in_use"
+	codeRestoreIncomplete        = "restore_incomplete"
+	codeNoIncompleteRestore      = "no_incomplete_restore"
 
 	// Buckets and databases (credential rotation).
 	codeBucketNotProvisioned   = "bucket_not_provisioned"

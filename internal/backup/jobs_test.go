@@ -33,3 +33,42 @@ func TestDatabaseJobsWaitForThePool(t *testing.T) {
 	require.True(t, strings.HasPrefix(client.Command[2], databaseReadyWait))
 	require.Contains(t, client.Command[2], "exec pg_restore")
 }
+
+// A database restore downloads the dump against the manifest's size and
+// checksum, reads its table of contents before it connects, and restores
+// in one transaction; a volume restore hands the worker the archive's
+// size and checksum to verify before it clears the volume.
+func TestRestoreJobsVerifyBeforeTheyWrite(t *testing.T) {
+	identity := databaseJobIdentity{
+		Host: "pool", Port: 5432, DatabaseName: "app", SecretName: "credentials",
+		PostgresImage: "postgres:17", WorkerImage: "skalid:1", TargetSecret: targetSecretName,
+		SnapshotObject: "snapshots/db.dump", Expect: objectCheck{Bytes: 1234, SHA256: "abcd"},
+	}
+	restore := renderDatabaseRestoreJob("restore", "skali-platform", "id", identity)
+	download := restore.Spec.Template.Spec.InitContainers[0]
+	require.Equal(t, []string{"backup-worker", "download", "--key", "snapshots/db.dump", "--file", "/work/db.dump",
+		"--size", "1234", "--sha256", "abcd"}, download.Args)
+	script := restore.Spec.Template.Spec.Containers[0].Command[2]
+	require.Contains(t, script, "set -e\npg_restore -l /work/db.dump > /work/toc\n")
+	require.Contains(t, script, "--single-transaction --exit-on-error -L /work/list")
+
+	volume := renderVolumeRestoreJob("restore", "env", "id", "skalid:1", targetSecretName, "claim", "vol.tar.zst",
+		objectCheck{Bytes: 99})
+	require.Equal(t, []string{"backup-worker", "untar", "--path", "/data", "--key", "vol.tar.zst", "--size", "99"},
+		volume.Spec.Template.Spec.Containers[0].Args)
+	backup := renderVolumeJob("backup", "env", "id", "skalid:1", targetSecretName, "claim", "vol.tar.zst", false)
+	require.Equal(t, []string{"backup-worker", "tar", "--path", "/data", "--key", "vol.tar.zst"},
+		backup.Spec.Template.Spec.Containers[0].Args)
+}
+
+// A download must be the size and checksum the snapshot records; without
+// a recorded size or checksum, the object's own recorded checksum decides.
+func TestVerifyDownload(t *testing.T) {
+	require.NoError(t, verifyDownload("k", 4, "abcd", objectCheck{Bytes: 4, SHA256: "ABCD"}, ""))
+	require.NoError(t, verifyDownload("k", 4, "abcd", objectCheck{Bytes: -1}, "abcd"))
+	require.NoError(t, verifyDownload("k", 4, "abcd", objectCheck{Bytes: -1}, ""))
+	require.ErrorContains(t, verifyDownload("k", 3, "abcd", objectCheck{Bytes: 4, SHA256: "abcd"}, ""), "3 bytes")
+	require.ErrorContains(t, verifyDownload("k", 4, "abcd", objectCheck{Bytes: 4, SHA256: "ffff"}, "abcd"),
+		"sha256 mismatch", "the manifest's checksum wins over the object's")
+	require.ErrorContains(t, verifyDownload("k", 4, "abcd", objectCheck{Bytes: -1}, "ffff"), "sha256 mismatch")
+}

@@ -176,6 +176,49 @@ func (h *backupsHandlers) restore(w http.ResponseWriter, r *http.Request) {
 	}{result.RunID.String()})
 }
 
+// POST /v1/environments/{id}/restore/accept: lift the hold an incomplete
+// restore keeps on the environment, accepting its data as it is. The
+// caller names the restore it was shown; the environment stays down until
+// the next deployment. Like restore, it sits behind sudo mode.
+func (h *backupsHandlers) accept(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		RestoreID string `json:"restore_id"`
+	}
+	if err := decodeJSON(w, r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, codeBadRequest, err.Error())
+		return
+	}
+	restoreID, err := uuid.Parse(req.RestoreID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, codeBadRequest, "restore_id must be a UUID")
+		return
+	}
+	runID, err := h.backups.AcceptIncompleteRestore(r.Context(), backup.AcceptInput{
+		EnvironmentID: id,
+		RestoreID:     restoreID,
+		Actor:         UserFrom(r.Context()).ID.String(),
+	})
+	if err != nil {
+		writeBackupError(r.Context(), w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, struct {
+		RunID string `json:"run_id"`
+	}{runID.String()})
+}
+
+// restoreIncompleteMessage explains a refusal to bring back an environment
+// an incomplete restore holds, with both ways forward.
+func restoreIncompleteMessage(restoreID uuid.UUID) string {
+	return "a restore stopped this environment and did not complete (restore " + restoreID.String() +
+		"), so its data may be partial; re-run a restore (skali backup restore), " +
+		"or accept the data as it is (skali backup accept) and deploy"
+}
+
 func writeBackupError(ctx context.Context, w http.ResponseWriter, err error) {
 	var unreachable *backup.TargetUnreachableError
 	switch {
@@ -186,7 +229,11 @@ func writeBackupError(ctx context.Context, w http.ResponseWriter, err error) {
 			"no snapshot with this id exists on the backup target")
 	case errors.Is(err, backup.ErrEnvironmentNotActive):
 		writeError(w, http.StatusUnprocessableEntity, codeEnvironmentNotActive,
-			"the environment is not active; deploy it before backing it up")
+			"the environment is not active; deploy it first")
+	case errors.Is(err, backup.ErrNoIncompleteRestore):
+		writeError(w, http.StatusConflict, codeNoIncompleteRestore,
+			"that restore no longer holds the environment: it completed, its data was accepted, "+
+				"or a later restore took over; check the environment's status")
 	case errors.Is(err, backup.ErrNothingToBackUp):
 		writeError(w, http.StatusUnprocessableEntity, codeNothingToBackUp,
 			"nothing to back up: the environment declares no database, bucket, or application volume")

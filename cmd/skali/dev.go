@@ -1144,12 +1144,17 @@ func runDevStatus(command *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	switch status.State {
-	case "down":
+	switch {
+	case status.IncompleteRestore != nil:
+		fmt.Fprintf(out, "project    %s (restore %s did not complete; its data may be partial: "+
+			"re-run the restore, or skali backup accept --remote local)\n",
+			stateColor(style, "down"), status.IncompleteRestore.ID)
+		return nil
+	case status.State == "down":
 		fmt.Fprintf(out, "project    %s (workloads removed; data retained; skali dev brings it back)\n",
 			stateColor(style, "down"))
 		return nil
-	case "releasing":
+	case status.State == "releasing":
 		fmt.Fprintf(out, "project    %s (purge in progress)\n", stateColor(style, "releasing"))
 		return nil
 	}
