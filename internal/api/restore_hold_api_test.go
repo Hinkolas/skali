@@ -68,6 +68,9 @@ func TestRestoreHoldAPI(t *testing.T) {
 	status, body = a.do("PUT", "/v1/environments/"+envID+"/target", token, map[string]string{"revision_id": first})
 	require.Equal(t, http.StatusConflict, status, "%v", body)
 	require.Equal(t, "restore_incomplete", errorCode(t, body))
+	status, body = a.do("POST", "/v1/environments/"+envID+"/backups", token, nil)
+	require.Equal(t, http.StatusConflict, status, "%v", body)
+	require.Equal(t, "restore_incomplete", errorCode(t, body))
 
 	status, body = a.do("POST", "/v1/environments/"+envID+"/restore/accept", token, map[string]string{"restore_id": "nope"})
 	require.Equal(t, http.StatusBadRequest, status, "%v", body)

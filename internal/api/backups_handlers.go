@@ -11,6 +11,7 @@ import (
 
 	"github.com/Hinkolas/skali/internal/authz"
 	"github.com/Hinkolas/skali/internal/backup"
+	"github.com/Hinkolas/skali/internal/deploy"
 	"github.com/Hinkolas/skali/internal/store"
 )
 
@@ -221,7 +222,10 @@ func restoreIncompleteMessage(restoreID uuid.UUID) string {
 
 func writeBackupError(ctx context.Context, w http.ResponseWriter, err error) {
 	var unreachable *backup.TargetUnreachableError
+	var held *deploy.RestoreIncompleteError
 	switch {
+	case errors.As(err, &held):
+		writeError(w, http.StatusConflict, codeRestoreIncomplete, restoreIncompleteMessage(held.RestoreID))
 	case errors.Is(err, backup.ErrEnvironmentNotFound):
 		writeError(w, http.StatusNotFound, codeNotFound, "environment not found")
 	case errors.Is(err, backup.ErrSnapshotNotFound):

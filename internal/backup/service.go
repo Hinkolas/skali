@@ -13,6 +13,7 @@ import (
 
 	"github.com/Hinkolas/skali/internal/authz"
 	"github.com/Hinkolas/skali/internal/compiler"
+	"github.com/Hinkolas/skali/internal/deploy"
 	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/substrate"
@@ -119,6 +120,12 @@ func (c *Controller) CreateBackup(ctx context.Context, in BackupInput) (*CreateR
 			return nil, ErrEnvironmentNotFound
 		}
 		return nil, fmt.Errorf("backup: get environment target: %w", err)
+	}
+	if target.IncompleteRestoreID != nil {
+		// Down like any inactive environment, but no deploy brings it
+		// back: say what does.
+		return nil, fmt.Errorf("%w: %w", ErrEnvironmentNotActive,
+			&deploy.RestoreIncompleteError{RestoreID: *target.IncompleteRestoreID})
 	}
 	if target.State != "active" || target.ActiveRevisionID == nil {
 		return nil, ErrEnvironmentNotActive
