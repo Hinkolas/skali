@@ -51,8 +51,9 @@ func (t *Tasks) Start(title string) *Task {
 		task.stop = make(chan struct{})
 		task.stopped = make(chan struct{})
 		t.mu.Lock()
-		task.paint()
+		block := task.render()
 		t.mu.Unlock()
+		_, _ = io.WriteString(t.Out, block)
 		go task.spin()
 	}
 	return task
@@ -69,38 +70,50 @@ func (task *Task) spin() {
 		case <-ticker.C:
 			task.tasks.mu.Lock()
 			task.frame++
-			task.paint()
+			block := task.render()
 			task.tasks.mu.Unlock()
+			// The write happens outside the lock: a slow terminal holds up
+			// the animation, never the notes arriving from the work.
+			_, _ = io.WriteString(task.tasks.Out, block)
 		}
 	}
 }
 
-// paint redraws the live block; the caller holds the printer lock.
-func (task *Task) paint() {
-	task.erase()
+// render builds the live block, erasing the one on screen, as one write.
+// The caller holds the printer lock; only the spinner goroutine writes
+// while the task is live, so the block lands in order.
+func (task *Task) render() string {
+	var block strings.Builder
+	block.WriteString(task.erase())
 	style := task.tasks.Style
 	width := TerminalWidth(task.tasks.Out)
 	line := "  " + style.Cyan(style.spinner(task.frame)) + " " + Truncate(task.title, width-6)
 	if elapsed := task.elapsed(); elapsed != "" {
 		line += "  " + style.Dim(elapsed)
 	}
-	fmt.Fprintln(task.tasks.Out, line)
+	block.WriteString(line + "\n")
 	task.live = 1
 	if task.note != "" {
-		fmt.Fprintln(task.tasks.Out, "    "+style.Dim(Truncate(task.note, width-6)))
+		block.WriteString("    " + style.Dim(Truncate(task.note, width-6)) + "\n")
 		task.live = 2
 	}
+	return block.String()
 }
 
-func (task *Task) erase() {
-	if task.live > 0 {
-		fmt.Fprintf(task.tasks.Out, "\x1b[%dA\x1b[J", task.live)
-		task.live = 0
+// erase returns the sequence that clears the live block.
+func (task *Task) erase() string {
+	if task.live == 0 {
+		return ""
 	}
+	sequence := fmt.Sprintf("\x1b[%dA\x1b[J", task.live)
+	task.live = 0
+	return sequence
 }
 
 // Note publishes a progress line: it becomes the transient tail under the
-// spinner and enters the failure replay buffer.
+// spinner, shown from the next frame on, and enters the failure replay
+// buffer. It never writes to the terminal itself, so the work reporting
+// progress never waits on the display.
 func (task *Task) Note(line string) {
 	line = strings.TrimRight(line, "\r\n")
 	if line == "" {
@@ -112,9 +125,6 @@ func (task *Task) Note(line string) {
 	task.tail = append(task.tail, line)
 	if len(task.tail) > tailLines {
 		task.tail = task.tail[len(task.tail)-tailLines:]
-	}
-	if task.stop != nil && !task.finished {
-		task.paint()
 	}
 }
 
@@ -159,7 +169,7 @@ func (task *Task) finish(status, detail string, replayTail bool) {
 		return
 	}
 	task.finished = true
-	task.erase()
+	_, _ = io.WriteString(task.tasks.Out, task.erase())
 
 	style := task.tasks.Style
 	var line string
