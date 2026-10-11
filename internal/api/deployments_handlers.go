@@ -16,6 +16,7 @@ import (
 	"github.com/Hinkolas/skali/internal/artifactstore"
 	"github.com/Hinkolas/skali/internal/auth"
 	"github.com/Hinkolas/skali/internal/authz"
+	"github.com/Hinkolas/skali/internal/backup"
 	"github.com/Hinkolas/skali/internal/buildstore"
 	"github.com/Hinkolas/skali/internal/compiler"
 	"github.com/Hinkolas/skali/internal/deploy"
@@ -40,6 +41,9 @@ type deploymentsHandlers struct {
 	reconcile    *reconcile.Kernel
 	capabilities []string
 	managed      bool
+	// backups stops the backup and restore runs it drives; nil without a
+	// cluster, where no such run executes.
+	backups *backup.Controller
 	// storageClass is the application volume class; empty means the
 	// cluster default (local-path), whose declared sizes are unenforced.
 	storageClass string
@@ -730,6 +734,16 @@ func (h *deploymentsHandlers) cancelRun(w http.ResponseWriter, r *http.Request) 
 			RunID: id, EnvironmentID: environmentID, Journal: h.journal,
 		})
 		if err != nil {
+			writeCancelError(r.Context(), w, err)
+			return
+		}
+	case (run.Kind == backup.KindBackup || run.Kind == backup.KindRestore) && h.backups != nil:
+		// The backup controller drives the run's row: a waiting row never
+		// starts, a running one is interrupted.
+		if err := h.backups.Cancel(r.Context(), id); err != nil {
+			if errors.Is(err, journal.ErrInvalidTransition) {
+				err = h.concludedRun(r.Context(), id)
+			}
 			writeCancelError(r.Context(), w, err)
 			return
 		}

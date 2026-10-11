@@ -39,52 +39,78 @@ func (c *Controller) process(ctx context.Context, id uuid.UUID) error {
 	if row.Status != StatusPending {
 		return nil
 	}
-	claimed, err := c.deps.Store.SetBackupStatus(ctx, store.SetBackupStatusParams{
-		ID: row.ID, ToStatus: StatusRunning, FromStatus: StatusPending,
-	})
-	if err != nil {
-		return fmt.Errorf("backup: claim row: %w", err)
-	}
-	if claimed == 0 {
-		return nil
-	}
 	if row.RunID == nil {
+		// Nothing holds a run slot for it; the row alone fails.
+		claimed, err := c.claim(ctx, row.ID)
+		if err != nil || !claimed {
+			return err
+		}
 		return c.failRow(ctx, row.ID, "backup row carries no run")
 	}
 
+	// The row's cancel is reachable before the run is read: a cancel that
+	// lands after the read finds it, one that landed before shows in the
+	// run (Cancel).
+	work, stop := context.WithCancelCause(ctx)
+	defer stop(nil)
+	defer c.track(*row.RunID, stop)()
+	run, err := c.deps.Journal.Run(ctx, *row.RunID)
+	if err != nil {
+		return fmt.Errorf("backup: get run: %w", err)
+	}
+	if journal.Runs.Terminal(journal.RunStatus(run.Status)) {
+		// Cancelled while it waited: it never starts. A restore must not
+		// stop the environment on behalf of a run that no longer exists.
+		_, err := c.setCancelled(ctx, row.ID)
+		return err
+	}
+	claimed, err := c.claim(ctx, row.ID)
+	if err != nil || !claimed {
+		return err
+	}
+
+	scope, err := c.execute(work, &row)
+	if ctx.Err() != nil {
+		// The daemon is stopping; boot recovery concludes the row and its
+		// run.
+		return err
+	}
+	if errors.Is(context.Cause(work), errCancelled) || (err != nil && scope.Cancelled(ctx)) {
+		// The run is cancelled; whatever the work returned, so is the row.
+		// A cancel that reached only the journal shows as a step that could
+		// not finish under its terminal run.
+		err = errCancelled
+	}
+	return c.conclude(ctx, &row, scope, err)
+}
+
+// execute runs the claimed row's operation under its run and returns the
+// scope that journals it.
+func (c *Controller) execute(ctx context.Context, row *store.Backup) (*journal.Scope, error) {
 	redactor, err := c.deps.Values.Redactor(ctx, row.EnvironmentID, uuid.Nil)
 	if err != nil {
-		return c.failRow(ctx, row.ID, fmt.Sprintf("build redactor: %v", err))
+		return journal.NewScope(c.deps.Journal, nil, *row.RunID), fmt.Errorf("build redactor: %w", err)
 	}
 	scope := journal.NewScope(c.deps.Journal, redactor, *row.RunID)
-
 	switch row.Kind {
 	case KindBackup:
-		err = c.executeBackup(ctx, scope, &row)
+		return scope, c.executeBackup(ctx, scope, row)
 	case KindRestore:
-		err = c.executeRestore(ctx, scope, &row)
-	default:
-		err = fmt.Errorf("backup: unknown row kind %q", row.Kind)
+		return scope, c.executeRestore(ctx, scope, row)
 	}
+	return scope, fmt.Errorf("backup: unknown row kind %q", row.Kind)
+}
+
+// claim moves a pending row to running, reporting whether this worker won
+// it.
+func (c *Controller) claim(ctx context.Context, id uuid.UUID) (bool, error) {
+	claimed, err := c.deps.Store.SetBackupStatus(ctx, store.SetBackupStatusParams{
+		ID: id, ToStatus: StatusRunning, FromStatus: StatusPending,
+	})
 	if err != nil {
-		// The run's failure reason and the row's error are the same text by
-		// construction: whoever reads either sees the same summary.
-		status, message := journal.RunFailed, err.Error()
-		if errors.Is(err, errCancelled) {
-			status, message = journal.RunCancelled, "cancelled"
-		}
-		scope.Finish(ctx, status, message)
-		c.cleanupJobs(ctx, &row)
-		return c.failRow(ctx, row.ID, message)
+		return false, fmt.Errorf("backup: claim row: %w", err)
 	}
-	scope.Finish(ctx, journal.RunSucceeded, "")
-	c.cleanupJobs(ctx, &row)
-	if _, err := c.deps.Store.SetBackupStatus(ctx, store.SetBackupStatusParams{
-		ID: row.ID, ToStatus: StatusSucceeded, FromStatus: StatusRunning,
-	}); err != nil {
-		return fmt.Errorf("backup: finish row: %w", err)
-	}
-	return nil
+	return claimed > 0, nil
 }
 
 func (c *Controller) failRow(ctx context.Context, id uuid.UUID, message string) error {

@@ -86,6 +86,12 @@ type Controller struct {
 	// revisions loads revision documents; deps.Deploy in production, a
 	// fake in tests.
 	revisions revisionLoader
+
+	// mu guards running.
+	mu sync.Mutex
+	// running holds the cancel of every row in execution, keyed by its run,
+	// so a cancel of the run reaches the work (Cancel).
+	running map[uuid.UUID]context.CancelCauseFunc
 }
 
 func New(deps Deps, cfg Config) *Controller {
@@ -108,6 +114,7 @@ func New(deps Deps, cfg Config) *Controller {
 		queue: workqueue.NewTypedRateLimitingQueue(
 			workqueue.DefaultTypedControllerRateLimiter[uuid.UUID]()),
 		openStore: func(loc s3Location) (objectStore, error) { return newObjectStore(loc) },
+		running:   map[uuid.UUID]context.CancelCauseFunc{},
 	}
 	c.openBucket = c.openServiceBucket
 	if deps.Deploy != nil {
@@ -126,7 +133,8 @@ func (c *Controller) Enqueue(id uuid.UUID) {
 	c.queue.Add(id)
 }
 
-// Run processes backup work until the context ends.
+// Run processes backup work, and sweeps stranded runs, until the context
+// ends.
 func (c *Controller) Run(ctx context.Context) {
 	var wg sync.WaitGroup
 	for range c.cfg.Workers {
@@ -135,6 +143,20 @@ func (c *Controller) Run(ctx context.Context) {
 			}
 		})
 	}
+	wg.Go(func() {
+		ticker := time.NewTicker(sweepInterval)
+		defer ticker.Stop()
+		for {
+			if err := c.sweep(ctx); err != nil && ctx.Err() == nil {
+				slog.WarnContext(ctx, "backup: sweep stranded runs", "err", err)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	})
 	<-ctx.Done()
 	c.queue.ShutDown()
 	wg.Wait()

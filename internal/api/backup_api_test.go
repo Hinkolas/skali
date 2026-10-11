@@ -10,8 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Hinkolas/skali/internal/backup"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Hinkolas/skali/internal/backup"
 )
 
 // A recreated name cannot inherit snapshot access from its previous owner.
@@ -355,4 +357,37 @@ func TestBackupCreateRefusesNothingToBackUp(t *testing.T) {
 	for _, raw := range body["runs"].([]any) {
 		require.NotEqual(t, "backup", raw.(map[string]any)["kind"], "a refused backup leaves no run")
 	}
+}
+
+// Cancelling a backup run reaches the backup controller: the waiting row
+// never starts, and the environment's run slot frees at once.
+func TestCancelBackupRunCancelsItsRow(t *testing.T) {
+	a := newTestAPI(t)
+	a.createUser("dev@example.com", "hunter2hunter2")
+	a.createAdmin("admin@example.com", "hunter2hunter2")
+	token := a.login("dev@example.com", "hunter2hunter2")
+	admin := a.login("admin@example.com", "hunter2hunter2")
+	projectID, envID := a.createEnvironment(t, token)
+	definitionVersion := a.submitDefinition(t, token, projectID, deployAPIManifest)
+	candidate := a.stageValues(t, token, envID, definitionVersion, "backup-cancel-value")
+	a.deployAndActivate(t, token, envID, definitionVersion, candidate)
+	status, _ := a.do("PUT", "/v1/system/backup-target", admin, map[string]string{
+		"endpoint": "http://127.0.0.1:1", "bucket": "backups",
+		"access_key_id": "AK", "secret_access_key": "sk",
+	})
+	require.Equal(t, http.StatusOK, status)
+
+	status, body := a.do("POST", "/v1/environments/"+envID+"/backups", token, nil)
+	require.Equal(t, http.StatusAccepted, status, "%v", body)
+	runID, backupID := body["run_id"].(string), body["backup_id"].(string)
+	status, body = a.do("POST", "/v1/environments/"+envID+"/backups", token, nil)
+	require.Equal(t, http.StatusConflict, status, "%v", body)
+
+	status, body = a.do("POST", "/v1/runs/"+runID+"/cancel", token, nil)
+	require.Equal(t, http.StatusOK, status, "%v", body)
+	row, err := a.st.GetBackup(t.Context(), uuid.MustParse(backupID))
+	require.NoError(t, err)
+	require.Equal(t, backup.StatusCancelled, row.Status)
+	status, body = a.do("POST", "/v1/environments/"+envID+"/backups", token, nil)
+	require.Equal(t, http.StatusAccepted, status, "%v", body)
 }

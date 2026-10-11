@@ -68,7 +68,9 @@ Bucket restore is destructive: the bucket is cleared and rewritten from the
 snapshot, and it is fenced for the duration (its own credentials and any
 presigned URLs are refused; see [buckets](buckets.md#backups-and-restores)).
 A failed bucket restore leaves the environment down and the bucket fenced;
-re-run the restore, or deploy to bring the environment back.
+re-run the restore, or deploy to bring the environment back. A restore
+cancelled after it stopped the environment ends the same way; one cancelled
+before that changes nothing.
 
 Volume restore is destructive and may leave partial restored contents on failure.
 It preserves numeric ownership, permissions, and timestamps on Linux, including
