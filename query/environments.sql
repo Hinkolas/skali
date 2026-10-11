@@ -41,9 +41,10 @@ RETURNING *;
 -- Every environment joined with its target pointer state and revision
 -- pointers, for the project list summary (one query across all projects,
 -- not one per project). The checksums ride along so list consumers never
--- load a revision to name it.
+-- load a revision to name it; the priority lets a listing lead with its
+-- high-priority environments.
 -- name: ListEnvironmentsWithTargets :many
-SELECT e.id, e.project_id, e.name, t.state,
+SELECT e.id, e.project_id, e.name, e.priority, t.state,
        t.target_revision_id, tr.checksum AS target_checksum,
        t.active_revision_id, ar.checksum AS active_checksum
 FROM environments e

@@ -3,8 +3,13 @@
 	import type { Project } from '$lib/types/project';
 	import { relativeTime } from '$lib/format';
 	import { HEALTH_META } from '$lib/service-types';
-	import { projectHealthTitle, projectServiceCount, projectWorstHealth } from '$lib/models/project';
-	import Pill from '$lib/components/ui/Pill.svelte';
+	import {
+		projectEnvironmentRollup,
+		projectHealthTitle,
+		projectServiceCount,
+		projectWorstHealth
+	} from '$lib/models/project';
+	import EnvironmentRollup from '$lib/components/project/EnvironmentRollup.svelte';
 	import Skeleton from '$lib/components/ui/Skeleton.svelte';
 	import Table from '$lib/components/ui/Table.svelte';
 	import TypeBadge from '$lib/components/ui/TypeBadge.svelte';
@@ -22,7 +27,7 @@
 <Table columns={['Project', 'Environments', 'Services', 'Health', 'Updated']} {grid}>
 	{#each projects as project (project.id)}
 		{@const pending = loading && !project.summary}
-		{@const environments = project.summary?.environments ?? []}
+		{@const environments = projectEnvironmentRollup(project)}
 		{@const counts = project.summary?.service_counts}
 		{@const serviceCount = projectServiceCount(project)}
 		{@const health = HEALTH_META[projectWorstHealth(project)]}
@@ -45,26 +50,12 @@
 			<div
 				class="@2xl:contents @max-2xl:order-1 @max-2xl:flex @max-2xl:basis-full @max-2xl:flex-wrap @max-2xl:items-center @max-2xl:gap-x-3 @max-2xl:gap-y-1.5"
 			>
-				<!-- Same rollup as the card: the first environment and a +N for the
-				     rest, so a project with many environments stays one line. -->
+				<!-- Same rollup as the card. -->
 				<div class="flex items-center gap-2 pr-3 whitespace-nowrap">
 					{#if pending}
 						<Skeleton variant="pill" />
 					{:else if environments.length > 0}
-						<Pill
-							text={environments[0].name}
-							tone={environments[0].name === 'production' ? 'success' : 'neutral'}
-						/>
-						{#if environments.length > 1}
-							<span
-								title={environments
-									.slice(1)
-									.map((e) => e.name)
-									.join(', ')}
-							>
-								<Pill text="+{environments.length - 1}" tone="neutral" />
-							</span>
-						{/if}
+						<EnvironmentRollup {environments} />
 					{:else}
 						<span class="font-mono text-text-faint text-xs">no environments</span>
 					{/if}
