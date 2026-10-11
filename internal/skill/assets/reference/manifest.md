@@ -694,4 +694,4 @@ buckets:
       storage: 50GB
 ```
 
-Backups run once the installation has a backup target (`skali backup target set`, admin only). `skali backup schedule set` turns automatic backups on for one environment, `skali backup create` takes a snapshot by hand, `skali backup list` shows every snapshot with its origin (`manual` or `scheduled`), `skali backup restore` replays one, and `skali backup remove` deletes one.
+Backups run once the installation has a backup target (`skali backup target set`, admin only). `skali backup schedule set` turns automatic backups on for one environment, `skali backup create` takes a snapshot by hand, `skali backup list` shows every snapshot with its origin (`manual` or `scheduled`), `skali backup restore` replays one, and `skali backup remove` deletes one. A restore that fails after stopping the environment keeps it down and refuses deploys until a restore completes or `skali backup accept` accepts the data as it is.

@@ -89,7 +89,8 @@ Studio: seven users under `@seed.skali.local` (password `seed-password`,
 `ada@` is an instance admin), five projects with several environments each,
 memberships and environment cells, a week of deployment history (successes,
 a failed rollout, a rollback, restarts, backups, one deployment still in
-flight), provisioned database and bucket claims, and usage, edge, and
+flight, one environment held by a restore that failed halfway), provisioned
+database and bucket claims, and usage, edge, and
 storage telemetry for the charts. `task seed:reset` removes exactly those
 rows and seeds again; other data is left alone. Cluster observation (health,
 pods, the node list) is not seeded and reads as unknown without a cluster.

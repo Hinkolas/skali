@@ -322,8 +322,9 @@ once: the gateway answers a recursive listing by visiting directories one
 after another, each visit a round trip to the metadata database, which
 for an application that keeps every upload in its own directory meant one
 round trip per object. The restore's clear of the live bucket walks it the
-same way. Listings of the backup target stay flat, since a hosted target
-bills every listing request.
+same way, and so does its check of the restored bucket. Listings of the
+backup target stay flat, since a hosted target bills every listing
+request.
 
 Objects copy with bounded concurrency, 16 at a time by default
 (`SKALI_BACKUP_COPY_CONCURRENCY` on the daemon; lower it for a target that
@@ -333,7 +334,10 @@ in minutes instead of tens of minutes. A transient failure on one object (a
 server error, throttling, a dropped connection) is retried a few times
 with backoff before it fails the run; a denied or invalid request fails the
 run at once with the object's key in the error. A restore clears the live
-bucket with batched deletes before the copy back.
+bucket with batched deletes before the copy back, and clears it again
+until nothing is listed: the gateway keeps a folder after its last object
+is gone, and a folder the snapshot never had must not survive the
+restore.
 
 A snapshot of a live bucket is loosely consistent: objects written or
 deleted while the copy runs may or may not be in it. An object the listing
@@ -341,9 +345,13 @@ named that is gone by the time the copy reaches it is skipped, and the run
 notes how many were skipped. Stop the environment first (a restore does)
 when an exact cut matters.
 
-Restoring an immutable snapshot is stricter: a missing object or an object count
-that differs from its manifest fails the restore and keeps the bucket fenced.
-Only live backups skip objects that disappear during copying.
+Restoring an immutable snapshot is stricter. Before the environment stops,
+the snapshot's objects must add up to the count and bytes its manifest
+records, or the restore fails without touching anything. After the copy,
+the restore lists the bucket again: unless it holds exactly the snapshot's
+keys at their sizes (an object went missing, or one landed beside the
+copy), the restore fails and keeps the bucket fenced. Only live backups
+skip objects that disappear during copying.
 
 A restore fences the bucket while it rewrites it. The bucket's own
 identity is deleted for the duration, so the application's mirrored keys
@@ -354,12 +362,15 @@ the next probe. When the bucket is restored the identity comes back with
 its unchanged keypair: URLs signed before the restore work again from that
 moment, because the key that signed them is the same key. Only a
 [credential rotation](#credential-rotation) retires them for good. A
-restore that fails leaves the environment down and the bucket fenced on
-purpose; re-running the restore is the way forward, and a deploy that
-brings the environment back instead finds the fence lifted within one
-probe interval. Cancelling a restore before it stops the environment
-changes nothing; cancelling it later interrupts the copy and leaves the
-environment down and the bucket fenced, like a failure.
+restore that fails leaves the environment down, held, and the bucket
+fenced on purpose: deploys are refused until a restore completes, so the
+application never resumes on a half-written bucket. Re-running the restore
+is the way forward; accepting the data as it is (`skali backup accept`)
+allows deploys again, and the deploy that brings the environment back
+finds the fence lifted within one probe interval. Cancelling a restore
+before it stops the environment changes nothing; cancelling it later
+interrupts the copy and ends like a failure. See
+[prerelease safety](prerelease-safety.md) for the whole restore contract.
 
 ## Credential rotation
 

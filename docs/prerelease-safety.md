@@ -64,19 +64,45 @@ create`) are kept until removed with `skali backup remove`. One backup runs
 at a time per installation, so environments due in the same minute are
 snapshotted one after another.
 
-Bucket restore is destructive: the bucket is cleared and rewritten from the
-snapshot, and it is fenced for the duration (its own credentials and any
-presigned URLs are refused; see [buckets](buckets.md#backups-and-restores)).
-A failed bucket restore leaves the environment down and the bucket fenced;
-re-run the restore, or deploy to bring the environment back. A restore
-cancelled after it stopped the environment ends the same way; one cancelled
-before that changes nothing.
+A restore is destructive, and it verifies before it destroys. It checks
+the snapshot's manifest first (every component lies inside the snapshot's
+own directory and is of a kind this build restores), then every component
+it will rewrite against what the manifest records: a database dump's size
+and checksum, a volume archive's size, a bucket's object count and bytes. A
+damaged snapshot fails the run before the environment stops, and nothing
+changes. Each component is then checked again where its data is read,
+before the destructive step: the database Job downloads the dump and checks
+its size and checksum before `pg_restore` connects, and `pg_restore` runs
+in one transaction, so a restore that fails halfway rolls back and leaves
+the database as it was; a volume restore reads the whole archive once
+(its size, its compression checksum, every entry) before it clears the
+volume; a bucket restore lists the bucket again after the copy and fails
+unless the bucket holds exactly the snapshot's keys at their sizes. The
+bucket is cleared and rewritten while it is fenced (its own credentials and
+any presigned URLs are refused; see
+[buckets](buckets.md#backups-and-restores)).
 
-Volume restore is destructive and may leave partial restored contents on failure.
-It preserves numeric ownership, permissions, and timestamps on Linux, including
-the volume root in new archives. Unsupported entries and metadata failures fail
-the operation explicitly. Archives support regular files, directories, and
-symlinks; symlink contents are never followed during extraction.
+From the moment a restore stops the environment, it holds it. A restore
+that fails or is cancelled after that point, or that a daemon restart
+interrupts, leaves the environment down with the hold in place: a component
+may be half-written, and the components the restore never reached still
+hold their earlier data. While the hold stands, deploys, rollbacks, and
+`skali dev` are refused with `restore_incomplete`; the environment's
+status, `skali dev status`, and the Studio show the restore. There are two
+ways out. Re-run a restore: it is accepted although the environment is
+down, resumes the revision the failed restore was to resume, must rewrite
+every component the failed one set out to rewrite, and lifts the hold when
+it completes. Or accept the data as it is with `skali backup accept` (Accept
+current data in the Studio): the hold lifts, the environment stays down,
+and the next deploy brings it back on that data and lifts the bucket
+fences. A restore cancelled before it stops the environment changes
+nothing.
+
+Volume restore preserves numeric ownership, permissions, and timestamps on
+Linux, including the volume root in new archives. Unsupported entries and
+metadata failures fail the operation explicitly. Archives support regular
+files, directories, and symlinks; symlink contents are never followed
+during extraction.
 
 Release verification: `scripts/check-release-snapshot.sh` builds a nonpublishing
 snapshot and checks its metadata against the binaries and installer pin. CI also
@@ -111,9 +137,11 @@ Snapshots without a live owner remain discoverable at project level, require
 project admin for access, and need an explicitly selected restore target. This
 also supports discovery on a fresh installation without rewriting S3 objects.
 
-Bucket restores now refuse missing snapshot objects and a restored object count
-that differs from the manifest. Failure keeps the bucket fenced. Skipping an
-object deleted during a live backup remains supported and is recorded in its run.
+Bucket restores refuse missing snapshot objects, a snapshot whose objects
+do not add up to its manifest, and a restored bucket that does not list
+exactly the snapshot's keys and sizes. Failure keeps the bucket fenced.
+Skipping an object deleted during a live backup remains supported and is
+recorded in its run.
 
 ## Reconciliation ownership protection
 

@@ -261,6 +261,18 @@ backup. Stop the environment first when an exact cut matters (a restore
 does). Volumes and databases have their own notes in
 [prerelease safety](prerelease-safety.md).
 
+## Restore verification stops at keys and sizes for buckets
+
+A restore verifies database dumps by their checksum and volume archives by
+their size and their compression checksum, but a snapshot records no
+per-object checksum for buckets: a bucket's objects are checked by key and
+size, before and after the copy. A database restore is one transaction, so
+a schema with many thousands of tables, partitions, or large objects can
+exceed the pool's lock table (`max_locks_per_transaction`); the restore
+then fails and leaves the database as it was. A restore replaces the
+objects its dump holds and leaves others the database gained since in
+place.
+
 ## Builds run on your machine
 
 Every `skali deploy` builds and pushes from the machine running the CLI;
