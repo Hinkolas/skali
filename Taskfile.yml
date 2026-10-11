@@ -153,7 +153,7 @@ tasks:
     cmds:
       - task: _test:live
         vars:
-          PACKAGES: './internal/kube/... ./internal/observe/... ./internal/reconcile/... ./internal/substrate/...'
+          PACKAGES: './internal/kube/... ./internal/observe/... ./internal/reconcile/... ./internal/substrate/... ./internal/backup/...'
           RUN: '^TestLive'
           LIVE_TIMEOUT: '{{.TIMEOUT | default "90m"}}'
 
@@ -183,6 +183,15 @@ tasks:
           PACKAGES: './internal/reconcile/...'
           RUN: '^TestLive'
           LIVE_TIMEOUT: '{{.TIMEOUT | default "30m"}}'
+
+  test:live:backup:
+    desc: Run live backup controller tests
+    cmds:
+      - task: _test:live
+        vars:
+          PACKAGES: './internal/backup/...'
+          RUN: '^TestLive'
+          LIVE_TIMEOUT: '{{.TIMEOUT | default "15m"}}'
 
   test:live:substrate:
     desc: Run all live substrate coverage

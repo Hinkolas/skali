@@ -59,10 +59,11 @@ cluster. Cluster restart has a separate opt-in described below.
 
 | Named live command | Coverage |
 | --- | --- |
-| `task test:live` | All four live package families below. |
+| `task test:live` | All five live package families below. |
 | `task test:live:kube` | Apply/prune, ownership, and actual NetworkPolicy enforcement. |
 | `task test:live:observe` | Kubernetes list/watch propagation, stale state, and recovery. |
 | `task test:live:reconcile` | Environment deployment, healing, isolation, ownership, and rollout behavior, including prompt rollout handoffs while other environments keep the workers busy. |
+| `task test:live:backup` | Backup and restore Jobs: a cancel interrupts a real Job wait and removes the Job and its target Secret. |
 | `task test:live:substrate` | All substrate scenarios, including all six bucket contracts. |
 | `task test:live:substrate:database` | User claims, system claims, pgvector, and database credential rotation. |
 | `task test:live:substrate:bootstrap` | Cold object-store bootstrap and cold bucket provisioning. |
