@@ -271,7 +271,9 @@ a schema with many thousands of tables, partitions, or large objects can
 exceed the pool's lock table (`max_locks_per_transaction`); the restore
 then fails and leaves the database as it was. A restore replaces the
 objects its dump holds and leaves others the database gained since in
-place.
+place. A volume restore reads its archive from the target twice, once to
+verify it and once to extract it, and both passes share the restore Job's
+timeout (`SKALI_BACKUP_JOB_TIMEOUT`, one hour by default).
 
 ## Builds run on your machine
 

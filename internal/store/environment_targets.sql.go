@@ -270,7 +270,7 @@ const markEnvironmentRestoring = `-- name: MarkEnvironmentRestoring :execrows
 UPDATE environment_targets
 SET state = 'down', target_revision_id = NULL, active_revision_id = NULL,
     incomplete_restore_id = $1::uuid,
-    incomplete_restore_components = $2::text[],
+    incomplete_restore_components = COALESCE($2::text[], '{}'),
     updated_at = now()
 WHERE environment_id = $3 AND state <> 'releasing'
 `
@@ -298,8 +298,11 @@ UPDATE environment_targets
 SET target_revision_id = $1::uuid, state = 'active',
     incomplete_restore_id = NULL, incomplete_restore_components = '{}',
     updated_at = now()
-WHERE environment_id = $2 AND state <> 'releasing'
-  AND incomplete_restore_id = $3::uuid
+WHERE environment_targets.environment_id = $2
+  AND environment_targets.state <> 'releasing'
+  AND environment_targets.incomplete_restore_id = $3::uuid
+  AND EXISTS (SELECT 1 FROM backups JOIN runs ON runs.id = backups.run_id
+              WHERE backups.id = $3::uuid AND runs.status = 'running')
 `
 
 type ResumeRestoredEnvironmentParams struct {
@@ -309,7 +312,10 @@ type ResumeRestoredEnvironmentParams struct {
 }
 
 // A completed restore's resume: the target moves back and the hold lifts in
-// the same write. Only the restore holding the environment resumes it.
+// the same write. Only the restore holding the environment resumes it, and
+// only while its run still runs: a teardown cancels the run before it takes
+// the environment down, and a restore finishing its last component must
+// not undo that.
 func (q *Queries) ResumeRestoredEnvironment(ctx context.Context, arg ResumeRestoredEnvironmentParams) (int64, error) {
 	result, err := q.db.Exec(ctx, resumeRestoredEnvironment, arg.TargetRevisionID, arg.EnvironmentID, arg.RestoreID)
 	if err != nil {

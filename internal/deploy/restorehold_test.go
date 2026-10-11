@@ -13,13 +13,18 @@ import (
 )
 
 // hold stops the environment for a restore of revision the way the
-// restore's stop does, and returns the restore's id.
-func (f *fixture) hold(t *testing.T, revision uuid.UUID) uuid.UUID {
+// restore's stop does, under a running restore run, and returns the
+// restore's id and its run.
+func (f *fixture) hold(t *testing.T, jsvc *journal.Service, revision uuid.UUID) (uuid.UUID, uuid.UUID) {
 	t.Helper()
 	ctx := context.Background()
+	run, err := jsvc.BeginRun(ctx, journal.RunInput{
+		Kind: "restore", ProjectID: f.projectID, EnvironmentID: f.environmentID, Actor: "test",
+	})
+	require.NoError(t, err)
 	row, err := f.st.CreateBackup(ctx, store.CreateBackupParams{
 		ID: uuid.New(), Kind: "restore", EnvironmentID: f.environmentID, ProjectName: "demo",
-		EnvironmentName: "production", RevisionID: &revision, Trigger: "manual", Strategy: "complete",
+		EnvironmentName: "production", RevisionID: &revision, RunID: &run.ID, Trigger: "manual", Strategy: "complete",
 	})
 	require.NoError(t, err)
 	marked, err := f.st.MarkEnvironmentRestoring(ctx, store.MarkEnvironmentRestoringParams{
@@ -27,14 +32,16 @@ func (f *fixture) hold(t *testing.T, revision uuid.UUID) uuid.UUID {
 	})
 	require.NoError(t, err)
 	require.EqualValues(t, 1, marked)
-	return row.ID
+	return row.ID, run.ID
 }
 
 // An environment an incomplete restore holds is never brought back by a
 // deployment: opening one, promoting a prepared one, and rolling back are
 // all refused with the restore that holds it, and nothing moves. Only the
-// holding restore resumes it, which lifts the hold, and deployments work
-// again from there.
+// holding restore resumes it, and only while its run runs: a teardown
+// cancels the run before it takes the environment down, and a restore
+// finishing afterwards must not undo that. Resuming lifts the hold, and
+// deployments work again from there.
 func TestRestoreHoldRefusesDeployments(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
@@ -56,7 +63,7 @@ func TestRestoreHoldRefusesDeployments(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	restoreID := f.hold(t, first.RevisionID)
+	restoreID, restoreRun := f.hold(t, jsvc, first.RevisionID)
 	refused := func(err error) {
 		t.Helper()
 		var held *RestoreIncompleteError
@@ -78,14 +85,18 @@ func TestRestoreHoldRefusesDeployments(t *testing.T) {
 		Actor:     "test", Capabilities: []string{"application"}, RegistryConfigured: true, Journal: jsvc,
 	})
 	refused(err)
-	run, err := jsvc.BeginRun(ctx, journal.RunInput{
-		Kind: "reconcile", ProjectID: f.projectID, EnvironmentID: f.environmentID, Actor: "test",
-	})
-	require.NoError(t, err, "a refused deployment leaves no run behind")
-	require.NoError(t, jsvc.FinishRun(ctx, run.ID, journal.RunSucceeded))
+	running, err := f.st.GetRunningRunByEnvironment(ctx, &f.environmentID)
+	require.NoError(t, err)
+	require.Equal(t, restoreRun, running.ID, "a refused deployment leaves no run behind")
 
 	require.ErrorIs(t, f.deploy.ResumeRevision(ctx, f.environmentID, first.RevisionID, uuid.New()), ErrRestoreHoldLost,
 		"only the restore that holds the environment resumes it")
+	require.NoError(t, jsvc.FinishRun(ctx, restoreRun, journal.RunCancelled))
+	require.ErrorIs(t, f.deploy.ResumeRevision(ctx, f.environmentID, first.RevisionID, restoreID), ErrRestoreHoldLost,
+		"a cancelled restore does not resume")
+	refused(f.deploy.Promote(ctx, second))
+
+	restoreID, _ = f.hold(t, jsvc, first.RevisionID)
 	require.NoError(t, f.deploy.ResumeRevision(ctx, f.environmentID, first.RevisionID, restoreID))
 	target, err := f.deploy.Target(ctx, f.environmentID)
 	require.NoError(t, err)

@@ -17,8 +17,10 @@ import (
 var ErrRestoreIncomplete = errors.New("deploy: an incomplete restore holds the environment")
 
 // ErrRestoreHoldLost: a restore went to resume an environment it no longer
-// holds; someone accepted its data, or another restore took the hold over.
-var ErrRestoreHoldLost = errors.New("deploy: the restore no longer holds the environment")
+// holds, or its run no longer runs: someone accepted its data, another
+// restore took the hold over, or the run was cancelled (a teardown cancels
+// it before it takes the environment down).
+var ErrRestoreHoldLost = errors.New("deploy: the restore no longer holds the environment or its run was cancelled")
 
 // RestoreIncompleteError refuses bringing back an environment an incomplete
 // restore holds. Only a restore that completes, or an explicit acceptance

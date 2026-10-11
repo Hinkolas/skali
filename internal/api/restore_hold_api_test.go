@@ -41,12 +41,16 @@ func TestRestoreHoldAPI(t *testing.T) {
 	})
 	require.NoError(t, err)
 	failure := "copy failed halfway"
-	for _, move := range [][2]string{{backup.StatusPending, backup.StatusRunning}, {backup.StatusRunning, backup.StatusFailed}} {
-		_, err = a.st.SetBackupStatus(ctx, store.SetBackupStatusParams{ID: row.ID, FromStatus: move[0], ToStatus: move[1], Error: &failure})
-		require.NoError(t, err)
-	}
+	_, err = a.st.SetBackupStatus(ctx, store.SetBackupStatusParams{ID: row.ID, FromStatus: backup.StatusPending, ToStatus: backup.StatusRunning})
+	require.NoError(t, err)
+	status, body := a.do("POST", "/v1/environments/"+envID+"/restore/accept", token,
+		map[string]string{"restore_id": row.ID.String()})
+	require.Equal(t, http.StatusConflict, status, "%v", body)
+	require.Equal(t, "backup_in_flight", errorCode(t, body), "a running restore's data is not accepted")
+	_, err = a.st.SetBackupStatus(ctx, store.SetBackupStatusParams{ID: row.ID, FromStatus: backup.StatusRunning, ToStatus: backup.StatusFailed, Error: &failure})
+	require.NoError(t, err)
 
-	status, body := a.do("GET", "/v1/environments/"+envID+"/status", token, nil)
+	status, body = a.do("GET", "/v1/environments/"+envID+"/status", token, nil)
 	require.Equal(t, http.StatusOK, status, "%v", body)
 	require.Equal(t, "down", body["state"])
 	held := body["incomplete_restore"].(map[string]any)

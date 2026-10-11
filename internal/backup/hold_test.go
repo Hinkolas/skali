@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -217,6 +218,11 @@ func TestRecoverOnBootKeepsTheHold(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	_, err = f.controller.AcceptIncompleteRestore(ctx, AcceptInput{
+		EnvironmentID: f.environmentID, RestoreID: row.ID, Actor: "tester",
+	})
+	require.ErrorIs(t, err, ErrRestoreStillRunning, "a running restore's data is not accepted")
+
 	require.NoError(t, f.controller.RecoverOnBoot(ctx))
 	recovered := f.rowStatus(t, row.ID)
 	require.Equal(t, StatusFailed, recovered.Status)
@@ -335,4 +341,41 @@ func TestSweepFailsStrandedAcceptRun(t *testing.T) {
 	require.NoError(t, f.controller.sweep(ctx))
 	require.Equal(t, string(journal.RunFailed), f.runStatus(t, run.ID))
 	require.True(t, f.slotFree(t))
+}
+
+// tearingBucket takes the environment down on the restore's first write
+// the way a teardown does: the run is cancelled in the journal only and
+// the environment marked down, while the copy goes on.
+type tearingBucket struct {
+	*memoryStore
+	teardown sync.Once
+	down     func()
+}
+
+func (s *tearingBucket) PutWithMeta(ctx context.Context, key string, r io.Reader, size int64, meta objectMeta) error {
+	s.teardown.Do(s.down)
+	return s.memoryStore.PutWithMeta(ctx, key, r, size, meta)
+}
+
+// A teardown that lands while a restore copies is not undone when the
+// copy completes: the restore sees its run cancelled and does not resume,
+// and the environment stays down, held.
+func TestTeardownDuringRestoreIsNotUndone(t *testing.T) {
+	f := newHoldFixture(t)
+	ctx := context.Background()
+	snapshot := f.snapshot(t, "snap", 3)
+	result, err := f.controller.CreateRestore(ctx, RestoreInput{EnvironmentID: f.environmentID, SnapshotID: snapshot, Actor: "tester"})
+	require.NoError(t, err)
+	f.bucket = &tearingBucket{memoryStore: f.destination, down: func() {
+		require.NoError(t, f.journal.FinishRun(ctx, result.RunID, journal.RunCancelled))
+		_, err := f.st.MarkEnvironmentDown(ctx, f.environmentID)
+		require.NoError(t, err)
+	}}
+
+	require.NoError(t, f.controller.process(ctx, result.BackupID))
+	require.Equal(t, StatusCancelled, f.rowStatus(t, result.BackupID).Status)
+	target := f.target(t)
+	require.Equal(t, "down", target.State)
+	require.Nil(t, target.TargetRevisionID)
+	require.Equal(t, result.BackupID, *target.IncompleteRestoreID)
 }

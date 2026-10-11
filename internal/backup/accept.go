@@ -21,6 +21,11 @@ const KindAccept = "restore-accept"
 // not the one the caller named (a later restore took the hold over).
 var ErrNoIncompleteRestore = errors.New("backup: the named restore does not hold the environment")
 
+// ErrRestoreStillRunning: the restore holding the environment has not
+// concluded; its worker may still be writing, even after its run was
+// cancelled, so its data cannot be accepted yet.
+var ErrRestoreStillRunning = errors.New("backup: the restore holding the environment is still running")
+
 // AcceptInput names the incomplete restore whose data the caller accepts:
 // the one they were shown, so a hold that changed in between stays.
 type AcceptInput struct {
@@ -116,6 +121,9 @@ func (c *Controller) heldBy(ctx context.Context, environmentID, restoreID uuid.U
 	row, err := c.deps.Store.GetBackup(ctx, restoreID)
 	if err != nil {
 		return nil, fmt.Errorf("backup: get the incomplete restore: %w", err)
+	}
+	if row.Status == StatusPending || row.Status == StatusRunning {
+		return nil, ErrRestoreStillRunning
 	}
 	return &heldRestore{Backup: row, components: target.IncompleteRestoreComponents}, nil
 }

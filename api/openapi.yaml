@@ -3280,8 +3280,8 @@ paths:
         "409":
           description: |
             The named restore does not hold the environment
-            (`no_incomplete_restore`), or another run is in flight
-            (`backup_in_flight`).
+            (`no_incomplete_restore`), or it is still running or another
+            run is in flight (`backup_in_flight`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }

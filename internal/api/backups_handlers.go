@@ -234,6 +234,9 @@ func writeBackupError(ctx context.Context, w http.ResponseWriter, err error) {
 	case errors.Is(err, backup.ErrEnvironmentNotActive):
 		writeError(w, http.StatusUnprocessableEntity, codeEnvironmentNotActive,
 			"the environment is not active; deploy it first")
+	case errors.Is(err, backup.ErrRestoreStillRunning):
+		writeError(w, http.StatusConflict, codeBackupInFlight,
+			"the restore is still running; wait for it to stop before accepting its data")
 	case errors.Is(err, backup.ErrNoIncompleteRestore):
 		writeError(w, http.StatusConflict, codeNoIncompleteRestore,
 			"that restore no longer holds the environment: it completed, its data was accepted, "+

@@ -243,6 +243,12 @@ func (c *Controller) executeRestore(ctx context.Context, scope *journal.Scope, r
 		}
 	}
 
+	// A cancel (or a teardown, which cancels the run) that lands after the
+	// last component keeps the environment down; resuming refuses a
+	// cancelled run as well, for one that lands after this check.
+	if scope.Cancelled(ctx) {
+		return errCancelled
+	}
 	if err := scope.Step(ctx, "start", "Resume environment", func(ctx context.Context, log *journal.StepLog) error {
 		if row.RevisionID == nil {
 			return errors.New("restore has no resume revision")

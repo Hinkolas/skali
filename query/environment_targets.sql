@@ -98,19 +98,25 @@ WHERE environment_id = $1 AND state <> 'releasing';
 UPDATE environment_targets
 SET state = 'down', target_revision_id = NULL, active_revision_id = NULL,
     incomplete_restore_id = sqlc.arg(restore_id)::uuid,
-    incomplete_restore_components = sqlc.arg(components)::text[],
+    incomplete_restore_components = COALESCE(sqlc.arg(components)::text[], '{}'),
     updated_at = now()
 WHERE environment_id = sqlc.arg(environment_id) AND state <> 'releasing';
 
 -- A completed restore's resume: the target moves back and the hold lifts in
--- the same write. Only the restore holding the environment resumes it.
+-- the same write. Only the restore holding the environment resumes it, and
+-- only while its run still runs: a teardown cancels the run before it takes
+-- the environment down, and a restore finishing its last component must
+-- not undo that.
 -- name: ResumeRestoredEnvironment :execrows
 UPDATE environment_targets
 SET target_revision_id = sqlc.arg(target_revision_id)::uuid, state = 'active',
     incomplete_restore_id = NULL, incomplete_restore_components = '{}',
     updated_at = now()
-WHERE environment_id = sqlc.arg(environment_id) AND state <> 'releasing'
-  AND incomplete_restore_id = sqlc.arg(restore_id)::uuid;
+WHERE environment_targets.environment_id = sqlc.arg(environment_id)
+  AND environment_targets.state <> 'releasing'
+  AND environment_targets.incomplete_restore_id = sqlc.arg(restore_id)::uuid
+  AND EXISTS (SELECT 1 FROM backups JOIN runs ON runs.id = backups.run_id
+              WHERE backups.id = sqlc.arg(restore_id)::uuid AND runs.status = 'running');
 
 -- Accepting the data an incomplete restore left: the hold lifts and the
 -- environment stays down until the next deployment. The restore id is the
