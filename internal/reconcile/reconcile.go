@@ -153,9 +153,11 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 	// Desired claims are recorded before health is read, so the projections
 	// the evaluation sees are at least as fresh as this pass's intent. The
 	// substrate provisions asynchronously; states carry readiness and the
-	// visible waiting reasons.
+	// visible waiting reasons. Claims the target dropped are released only
+	// once it is active (see ClaimEnsureInput.Release).
+	rolloutInFlight := target.ActiveRevisionID == nil || *target.ActiveRevisionID != *target.TargetRevisionID
 	repair := k.claimCheckDue(environmentID, attachment)
-	claimWaiting, err := k.ensureClaims(ctx, env.ProjectID, environmentID, rev, desired.bucketRoutes, outputs.Live, repair)
+	claimWaiting, retained, err := k.ensureClaims(ctx, env.ProjectID, environmentID, rev, desired.bucketRoutes, outputs.Live, repair, !rolloutInFlight)
 	if err != nil {
 		k.journalOpFailure(ctx, attachment, "claims", "Record database claims", nil, err)
 		return 0, err
@@ -171,7 +173,6 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 	// not the active revision). A converged environment never re-creates a
 	// release Job: drift healing that re-ran migrations spontaneously would
 	// turn an explanatory pass into a mutation nobody asked for.
-	rolloutInFlight := target.ActiveRevisionID == nil || *target.ActiveRevisionID != *target.TargetRevisionID
 	releaseWaiting := make(map[string]string)
 
 	// Environment-scoping objects first: namespace, the values Secret, the
@@ -426,7 +427,16 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 			// before the pass concludes, since nothing else is wrong.
 			attachment.finish(ctx, journal.RunFailed, tls.failure)
 		}
-		return soonest(retireRequeue, tls.requeue), k.activate(ctx, attachment, target, rev)
+		if err := k.activate(ctx, attachment, target, rev); err != nil {
+			return 0, err
+		}
+		if retained {
+			// The claims this pass kept for a possible fallback are the
+			// active revision's to release now; nothing else may come
+			// back to a converged environment soon.
+			k.EnqueueFor(environmentID, ReasonActivated)
+		}
+		return soonest(retireRequeue, tls.requeue), nil
 	}
 	if attachment.created {
 		// The healing work is recorded; health recovery arrives via watch
@@ -944,23 +954,27 @@ func resolveBucketRoutes(definition compiler.ProjectDefinition, variables map[st
 
 // ensureClaims records the revision's infrastructure claims (databases and
 // buckets) through the claim manager and returns the dotted-name waiting
-// reasons for every claim that is not provisioned. Without a substrate
-// every claim-backed service waits visibly.
+// reasons for every claim that is not provisioned, and whether claims the
+// revision dropped were retained because release was not allowed. Without
+// a substrate every claim-backed service waits visibly. A revision that
+// declares no claim still goes through the claim manager: the claims an
+// earlier revision declared are its to release, and the pass's outputs read
+// already holds them.
 func (k *Kernel) ensureClaims(ctx context.Context, projectID, environmentID uuid.UUID, rev *revision.Revision,
-	bucketRoutes map[string]BucketRoute, live any, repair bool) (map[string]string, error) {
+	bucketRoutes map[string]BucketRoute, live any, repair, release bool) (map[string]string, bool, error) {
 	total := len(rev.Definition.Databases) + len(rev.Definition.Buckets)
-	if total == 0 {
-		return nil, nil
-	}
-	claimWaiting := make(map[string]string, total)
 	if k.deps.Claims == nil {
+		if total == 0 {
+			return nil, false, nil
+		}
+		claimWaiting := make(map[string]string, total)
 		for key := range rev.Definition.Databases {
 			claimWaiting["databases."+key] = "the platform substrate is not available"
 		}
 		for key := range rev.Definition.Buckets {
 			claimWaiting["buckets."+key] = "the platform substrate is not available"
 		}
-		return claimWaiting, nil
+		return claimWaiting, false, nil
 	}
 	states, err := k.deps.Claims.Ensure(ctx, ClaimEnsureInput{
 		ProjectID:     projectID,
@@ -969,11 +983,18 @@ func (k *Kernel) ensureClaims(ctx context.Context, projectID, environmentID uuid
 		BucketRoutes:  bucketRoutes,
 		Live:          live,
 		Repair:        repair,
+		Release:       release,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("reconcile: ensure claims: %w", err)
+		return nil, false, fmt.Errorf("reconcile: ensure claims: %w", err)
 	}
+	claimWaiting := make(map[string]string, total)
+	retained := false
 	for _, state := range states {
+		if state.Retained {
+			retained = true
+			continue
+		}
 		if state.Provisioned {
 			continue
 		}
@@ -983,7 +1004,7 @@ func (k *Kernel) ensureClaims(ctx context.Context, projectID, environmentID uuid
 		}
 		claimWaiting[state.Service] = reason
 	}
-	return claimWaiting, nil
+	return claimWaiting, retained, nil
 }
 
 // claimCheckDue reports whether the pass asks for every claim of the

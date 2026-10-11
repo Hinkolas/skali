@@ -4528,6 +4528,12 @@ components:
               name:
                 type: string
               access: { $ref: "#/components/schemas/AccessRole" }
+              priority:
+                type: string
+                enum: [normal, high]
+                description: |
+                  The environment's configured scheduling priority.
+                  Unlocked only.
               state:
                 type: string
                 enum: [active, down, releasing]

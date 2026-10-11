@@ -2,6 +2,7 @@ package reconcile
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -36,14 +37,27 @@ type fakeClaims struct {
 	states      []ClaimState
 	generations map[string]string
 	calls       int
-	// repairs records each Ensure's Repair.
-	repairs []bool
+	// repairs and releases record each Ensure's Repair and Release.
+	repairs  []bool
+	releases []bool
+	// dropped lists claims the revisions no longer declare; Ensure reports
+	// them Retained until a pass allows their release.
+	dropped []string
 }
 
 func (f *fakeClaims) Ensure(_ context.Context, in ClaimEnsureInput) ([]ClaimState, error) {
 	f.calls++
 	f.repairs = append(f.repairs, in.Repair)
-	return f.states, nil
+	f.releases = append(f.releases, in.Release)
+	states := f.states
+	if !in.Release {
+		for _, service := range f.dropped {
+			states = append(states[:len(states):len(states)], ClaimState{Service: service, Retained: true})
+		}
+	} else {
+		f.dropped = nil
+	}
+	return states, nil
 }
 
 func (f *fakeClaims) Release(_ context.Context, _ uuid.UUID) (bool, []string, error) {
@@ -270,4 +284,86 @@ func flattenSteps(steps []*journal.TreeStep) map[string]string {
 	}
 	collect(steps)
 	return flat
+}
+
+// provisionData makes the database claim of databaseManifest provisioned in
+// both the fake claim manager and the observation.
+func (f *kernelFixture) provisionData(claims *fakeClaims) {
+	claims.states = []ClaimState{{Service: "databases.data", Provisioned: true}}
+	f.fake.SetDatabaseClaim(f.environmentID, "databases.data", uuid.Must(uuid.NewV7()),
+		module.ClaimStatus{Phase: "provisioned"})
+	f.fake.SetDatabaseTenant(f.environmentID, "databases.data", "pg17-shared", "db_data",
+		module.DatabaseTenantStatus{Applied: true})
+	f.fake.SetDatabasePool("pg17-shared",
+		module.DatabaseClusterStatus{Instances: 1, ReadyInstances: 1, Primary: "pg17-shared-1"})
+}
+
+// A revision that drops a database releases it only once it is active: the
+// passes of its rollout keep the claim, and the activation enqueues the
+// pass that releases it. A revision declaring no claim at all still goes
+// through the claim manager, or its predecessor's claims would never go.
+func TestDroppedClaimsReleaseAfterActivation(t *testing.T) {
+	t.Parallel()
+	f := newKernelFixture(t, Config{RolloutDeadline: time.Hour})
+	ctx := context.Background()
+	claims := &fakeClaims{}
+	f.kernel.deps.Claims = claims
+	f.executeDeploymentManifest(t, databaseManifest)
+	f.fake.SetFresh()
+	f.provisionData(claims)
+	pass := func() {
+		t.Helper()
+		_, err := f.kernel.reconcileEnvironment(ctx, f.environmentID)
+		require.NoError(t, err)
+	}
+	pass()
+	f.markHealthy(t)
+	pass()
+	require.Equal(t, *f.target(t).TargetRevisionID, *f.target(t).ActiveRevisionID)
+
+	f.executeDeploymentManifest(t, kernelManifest)
+	claims.states, claims.dropped = nil, []string{"databases.data"}
+	claims.releases = nil
+	f.drainQueue(t)
+	pass()
+	require.Equal(t, []bool{false}, claims.releases, "the rollout keeps the dropped claim")
+	require.Zero(t, f.kernel.queue.Len())
+
+	f.markHealthy(t)
+	pass()
+	require.Equal(t, *f.target(t).TargetRevisionID, *f.target(t).ActiveRevisionID)
+	require.Equal(t, []bool{false, false}, claims.releases, "the activating pass still ran a rollout")
+	require.Equal(t, 1, f.kernel.queue.Len(), "activation enqueues the release")
+
+	pass()
+	require.Equal(t, []bool{false, false, true}, claims.releases)
+	f.drainQueue(t)
+	pass()
+	require.Zero(t, f.kernel.queue.Len(), "nothing retained, nothing enqueued")
+}
+
+// A rollout that drops a database and falls back never allows its release:
+// the fallback target declares it again.
+func TestDroppedClaimsSurviveFallback(t *testing.T) {
+	t.Parallel()
+	f := newKernelFixture(t, Config{RolloutDeadline: time.Nanosecond})
+	ctx := context.Background()
+	claims := &fakeClaims{}
+	f.kernel.deps.Claims = claims
+	f.executeDeploymentManifest(t, databaseManifest)
+	f.fake.SetFresh()
+	f.provisionData(claims)
+	f.markHealthy(t)
+	_, err := f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	active := *f.target(t).ActiveRevisionID
+
+	f.executeDeploymentManifest(t, strings.Replace(kernelManifest, ":1.0.0", ":2.0.0", 1))
+	claims.states, claims.dropped = nil, []string{"databases.data"}
+	claims.releases = nil
+	_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	require.Equal(t, active, *f.target(t).TargetRevisionID, "the rollout fell back")
+	require.Equal(t, []bool{false}, claims.releases)
+	require.Equal(t, []string{"databases.data"}, claims.dropped, "nothing was released")
 }

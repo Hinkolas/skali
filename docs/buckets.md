@@ -410,5 +410,6 @@ Databases rotate the same way with a login role instead of a keypair; see
 
 Removing a bucket from the definition is a destructive change: the plan
 marks it, deploy requires explicit confirmation, and teardown removes the
-access identity, the bucket, and its objects immediately. The platform
-store itself remains for the next bucket.
+access identity, the bucket, and its objects as soon as the revision that
+removes it is active; a rollout that fails and falls back finds it
+untouched. The platform store itself remains for the next bucket.

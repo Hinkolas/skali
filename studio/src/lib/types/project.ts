@@ -79,6 +79,8 @@ export interface SummaryEnvironment {
 	id: string;
 	name: string;
 	access: AccessRole;
+	/** The configured priority; absent on a locked environment. */
+	priority?: EnvironmentSettings['priority'];
 	/** Absent on a locked environment. */
 	state?: EnvironmentState;
 	/** The kernel's cached verdict from its last reconcile pass. */

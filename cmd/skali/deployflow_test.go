@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -1215,4 +1216,52 @@ func TestStepLogSinkShipsBesideTheEngine(t *testing.T) {
 		want[index] = fmt.Sprintf("line %d", index)
 	}
 	require.Equal(t, want, got)
+}
+
+// Each application's artifacts step starts with its children and ends with
+// their outcome; left pending, the journal would close it as skipped.
+func TestArtifactStepFollowsItsChildren(t *testing.T) {
+	var mu sync.Mutex
+	var statuses []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/runs/r1/steps":
+			var body map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if body["key"] != "artifacts.web" || body["parent_key"] != "artifacts" {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(client.Step{ID: "s1", Key: body["key"], Status: "pending"})
+		case r.Method == http.MethodPatch && r.URL.Path == "/v1/steps/s1":
+			var body map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			mu.Lock()
+			statuses = append(statuses, body["status"])
+			mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	api := client.New(srv.URL, "token", client.Caller{UserAgent: "test"})
+	action := client.ArtifactAction{Application: "web", StepKey: "artifacts.web"}
+
+	var during []string
+	err := artifactStep(context.Background(), api, "r1", action, func() error {
+		mu.Lock()
+		during = slices.Clone(statuses)
+		mu.Unlock()
+		return nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, []string{"running"}, during, "running before the first child")
+	require.Equal(t, []string{"running", "succeeded"}, statuses)
+
+	statuses = nil
+	cause := errors.New("build for web failed")
+	err = artifactStep(context.Background(), api, "r1", action, func() error { return cause })
+	require.ErrorIs(t, err, cause)
+	require.Equal(t, []string{"running", "failed"}, statuses)
 }
