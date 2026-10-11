@@ -7,6 +7,7 @@ package store
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -104,6 +105,34 @@ func (q *Queries) GetBackup(ctx context.Context, id uuid.UUID) (Backup, error) {
 	return i, err
 }
 
+const getBackupByRun = `-- name: GetBackupByRun :one
+SELECT id, kind, environment_id, project_name, environment_name, status, snapshot_key, revision_id, run_id, error, created_at, finished_at, trigger, strategy, retention_seconds, environment_namespace FROM backups WHERE run_id = $1
+`
+
+func (q *Queries) GetBackupByRun(ctx context.Context, runID *uuid.UUID) (Backup, error) {
+	row := q.db.QueryRow(ctx, getBackupByRun, runID)
+	var i Backup
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.EnvironmentID,
+		&i.ProjectName,
+		&i.EnvironmentName,
+		&i.Status,
+		&i.SnapshotKey,
+		&i.RevisionID,
+		&i.RunID,
+		&i.Error,
+		&i.CreatedAt,
+		&i.FinishedAt,
+		&i.Trigger,
+		&i.Strategy,
+		&i.RetentionSeconds,
+		&i.EnvironmentNamespace,
+	)
+	return i, err
+}
+
 const listBackupsByEnvironment = `-- name: ListBackupsByEnvironment :many
 SELECT id, kind, environment_id, project_name, environment_name, status, snapshot_key, revision_id, run_id, error, created_at, finished_at, trigger, strategy, retention_seconds, environment_namespace FROM backups
 WHERE environment_id = $1
@@ -137,6 +166,44 @@ func (q *Queries) ListBackupsByEnvironment(ctx context.Context, environmentID uu
 			&i.RetentionSeconds,
 			&i.EnvironmentNamespace,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listStrandedBackupRuns = `-- name: ListStrandedBackupRuns :many
+SELECT runs.id, runs.kind FROM runs
+LEFT JOIN backups ON backups.run_id = runs.id
+WHERE runs.kind IN ('backup', 'restore') AND runs.status = 'running'
+  AND runs.created_at < $1::timestamptz
+  AND (backups.id IS NULL OR backups.status IN ('succeeded', 'failed', 'cancelled'))
+ORDER BY runs.created_at
+`
+
+type ListStrandedBackupRunsRow struct {
+	ID   uuid.UUID
+	Kind string
+}
+
+// A backup or restore run holds its environment's one run slot until the
+// worker driving its row finishes it, and the worker finishes the run
+// before the row. A running run whose row is already terminal, or that has
+// no row at all once the accept path had time to record one, is stranded.
+func (q *Queries) ListStrandedBackupRuns(ctx context.Context, cutoff time.Time) ([]ListStrandedBackupRunsRow, error) {
+	rows, err := q.db.Query(ctx, listStrandedBackupRuns, cutoff)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListStrandedBackupRunsRow
+	for rows.Next() {
+		var i ListStrandedBackupRunsRow
+		if err := rows.Scan(&i.ID, &i.Kind); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -221,7 +288,7 @@ const setBackupStatus = `-- name: SetBackupStatus :execrows
 UPDATE backups
 SET status = $2,
     error = $3,
-    finished_at = CASE WHEN $2 IN ('succeeded', 'failed')
+    finished_at = CASE WHEN $2 IN ('succeeded', 'failed', 'cancelled')
                        THEN now() END
 WHERE id = $1 AND status = $4
 `

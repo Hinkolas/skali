@@ -142,6 +142,12 @@ func (c *Controller) CreateBackup(ctx context.Context, in BackupInput) (*CreateR
 		return nil, err
 	}
 
+	// Everything that can fail before the row exists runs before the run
+	// begins: a run without its row holds the environment's run slot.
+	id, err := uuid.NewV7()
+	if err != nil {
+		return nil, fmt.Errorf("backup: generate id: %w", err)
+	}
 	run, err := c.deps.Journal.BeginRun(ctx, journal.RunInput{
 		Kind:          KindBackup,
 		ProjectID:     names.projectID,
@@ -155,10 +161,6 @@ func (c *Controller) CreateBackup(ctx context.Context, in BackupInput) (*CreateR
 		return nil, fmt.Errorf("backup: begin run: %w", err)
 	}
 
-	id, err := uuid.NewV7()
-	if err != nil {
-		return nil, fmt.Errorf("backup: generate id: %w", err)
-	}
 	runID := run.ID
 	row, err := c.deps.Store.CreateBackup(ctx, store.CreateBackupParams{
 		ID:               id,
@@ -173,7 +175,7 @@ func (c *Controller) CreateBackup(ctx context.Context, in BackupInput) (*CreateR
 		RetentionSeconds: retention,
 	})
 	if err != nil {
-		_ = c.deps.Journal.FailRun(ctx, run.ID, nil, "recording the backup failed: "+err.Error())
+		c.abandon(ctx, run.ID, nil, "recording the backup failed: "+err.Error())
 		return nil, fmt.Errorf("backup: create row: %w", err)
 	}
 	c.Enqueue(row.ID)

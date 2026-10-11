@@ -14,9 +14,12 @@ SELECT * FROM backups WHERE id = $1;
 UPDATE backups
 SET status = sqlc.arg(to_status),
     error = sqlc.arg(error),
-    finished_at = CASE WHEN sqlc.arg(to_status) IN ('succeeded', 'failed')
+    finished_at = CASE WHEN sqlc.arg(to_status) IN ('succeeded', 'failed', 'cancelled')
                        THEN now() END
 WHERE id = $1 AND status = sqlc.arg(from_status);
+
+-- name: GetBackupByRun :one
+SELECT * FROM backups WHERE run_id = $1;
 
 -- name: SetBackupSnapshotKey :exec
 UPDATE backups SET snapshot_key = $2 WHERE id = $1;
@@ -35,3 +38,15 @@ SELECT * FROM backups WHERE status IN ('pending', 'running');
 SELECT * FROM backups
 WHERE environment_id = $1
 ORDER BY created_at DESC;
+
+-- A backup or restore run holds its environment's one run slot until the
+-- worker driving its row finishes it, and the worker finishes the run
+-- before the row. A running run whose row is already terminal, or that has
+-- no row at all once the accept path had time to record one, is stranded.
+-- name: ListStrandedBackupRuns :many
+SELECT runs.id, runs.kind FROM runs
+LEFT JOIN backups ON backups.run_id = runs.id
+WHERE runs.kind IN ('backup', 'restore') AND runs.status = 'running'
+  AND runs.created_at < sqlc.arg(cutoff)::timestamptz
+  AND (backups.id IS NULL OR backups.status IN ('succeeded', 'failed', 'cancelled'))
+ORDER BY runs.created_at;

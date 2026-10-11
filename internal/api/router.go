@@ -212,7 +212,7 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 	dh := &deploymentsHandlers{
 		st: d.Store, deploy: d.Deploy, artifacts: d.Artifacts, builds: d.Builds,
 		journal: d.Journal, registry: d.Registry, reconcile: d.Reconcile,
-		capabilities: d.Capabilities, managed: d.ManagedCluster,
+		backups: d.Backups, capabilities: d.Capabilities, managed: d.ManagedCluster,
 		storageClass: d.StorageClass, auth: d.Auth,
 	}
 	ch := &clientStepsHandlers{st: d.Store, journal: d.Journal, values: d.Values}

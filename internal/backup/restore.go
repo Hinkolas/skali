@@ -85,6 +85,12 @@ func (c *Controller) CreateRestore(ctx context.Context, in RestoreInput) (*Creat
 		}
 	}
 
+	// Everything that can fail before the row exists runs before the run
+	// begins: a run without its row holds the environment's run slot.
+	id, err := uuid.NewV7()
+	if err != nil {
+		return nil, fmt.Errorf("backup: generate id: %w", err)
+	}
 	run, err := c.deps.Journal.BeginRun(ctx, journal.RunInput{
 		Kind:          KindRestore,
 		ProjectID:     names.projectID,
@@ -98,10 +104,6 @@ func (c *Controller) CreateRestore(ctx context.Context, in RestoreInput) (*Creat
 		return nil, fmt.Errorf("backup: begin run: %w", err)
 	}
 
-	id, err := uuid.NewV7()
-	if err != nil {
-		return nil, fmt.Errorf("backup: generate id: %w", err)
-	}
 	runID := run.ID
 	row, err := c.deps.Store.CreateBackup(ctx, store.CreateBackupParams{
 		ID:              id,
@@ -116,13 +118,13 @@ func (c *Controller) CreateRestore(ctx context.Context, in RestoreInput) (*Creat
 		Strategy:   StrategyComplete,
 	})
 	if err != nil {
-		_ = c.deps.Journal.FailRun(ctx, run.ID, nil, "recording the restore failed: "+err.Error())
+		c.abandon(ctx, run.ID, nil, "recording the restore failed: "+err.Error())
 		return nil, fmt.Errorf("backup: create row: %w", err)
 	}
 	if err := c.deps.Store.SetBackupSnapshotKey(ctx, store.SetBackupSnapshotKeyParams{
 		ID: row.ID, SnapshotKey: manifestObjectKey,
 	}); err != nil {
-		_ = c.deps.Journal.FailRun(ctx, run.ID, nil, "recording the snapshot key failed: "+err.Error())
+		c.abandon(ctx, run.ID, &row.ID, "recording the snapshot key failed: "+err.Error())
 		return nil, fmt.Errorf("backup: record snapshot key: %w", err)
 	}
 	c.Enqueue(row.ID)
@@ -142,7 +144,7 @@ func (c *Controller) executeRestore(ctx context.Context, scope *journal.Scope, r
 	}
 	bctx := &backupContext{row: row, credentials: credentials}
 	if err := scope.Step(ctx, "target", "Check backup target", func(ctx context.Context, log *journal.StepLog) error {
-		bctx.target, err = newObjectStore(targetLocation(credentials))
+		bctx.target, err = c.openStore(targetLocation(credentials))
 		if err != nil {
 			return err
 		}
@@ -173,11 +175,16 @@ func (c *Controller) executeRestore(ctx context.Context, scope *journal.Scope, r
 	if row.RevisionID == nil {
 		return errors.New("backup: restore row carries no revision")
 	}
-	revisionDoc, err := c.deps.Deploy.GetRevision(ctx, *row.RevisionID)
+	revisionDoc, err := c.revisions.GetRevision(ctx, *row.RevisionID)
 	if err != nil {
 		return fmt.Errorf("backup: load revision: %w", err)
 	}
 
+	// The last moment a cancel leaves the environment as it was: from here
+	// on, a restore that stops halfway keeps it down.
+	if ctx.Err() != nil || scope.Cancelled(ctx) {
+		return errCancelled
+	}
 	if err := scope.Step(ctx, "stop", "Stop environment workloads", func(ctx context.Context, log *journal.StepLog) error {
 		return c.stopEnvironment(ctx, log, row)
 	}); err != nil {

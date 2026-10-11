@@ -357,7 +357,9 @@ moment, because the key that signed them is the same key. Only a
 restore that fails leaves the environment down and the bucket fenced on
 purpose; re-running the restore is the way forward, and a deploy that
 brings the environment back instead finds the fence lifted within one
-probe interval.
+probe interval. Cancelling a restore before it stops the environment
+changes nothing; cancelling it later interrupts the copy and leaves the
+environment down and the bucket fenced, like a failure.
 
 ## Credential rotation
 
