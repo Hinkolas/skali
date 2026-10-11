@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"sort"
 	"strings"
 	"testing"
@@ -127,34 +129,68 @@ func (f *matrixFixture) path(template string) string {
 // held the connection open instead of refusing it.
 const statusStreaming = -1
 
-// probe sends one request and returns the status and, for non-streaming
-// answers, the decoded body. A stream that neither refuses nor answers
-// within the deadline reports statusStreaming.
-func (f *matrixFixture) probe(t *testing.T, method, path, token string, readBody bool) (int, map[string]any) {
+// probeDeadlines bound one probe by what the route can do. A stream the
+// handler lets through holds the connection open, so its probe is short
+// and running out reads as statusStreaming. A finite handler always
+// answers; its deadline only catches one that never does, so it leaves
+// room for the slowest of them on a loaded CI runner: enabling 2FA hashes
+// ten backup codes in sequence with the password Argon2id parameters
+// (64 MiB, 3 passes), about 400 ms each there.
+type probeDeadlines struct {
+	stream time.Duration
+	finite time.Duration
+}
+
+var matrixDeadlines = probeDeadlines{stream: 2 * time.Second, finite: 30 * time.Second}
+
+// probe sends one request and returns the status and, for finite answers,
+// the decoded body. stream marks a probe that expects to be let into a
+// stream; every other probe must answer within the finite deadline.
+func (f *matrixFixture) probe(t *testing.T, method, path, token string, stream bool) (int, map[string]any) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	status, body, err := sendProbe(f.a.srv.Client(), method, f.a.srv.URL+path, token, stream, matrixDeadlines)
+	require.NoError(t, err, "%s %s", method, path)
+	return status, body
+}
+
+// sendProbe is probe without the test: a stream that neither refuses nor
+// answers within the stream deadline reports statusStreaming, and a finite
+// request that does not answer within the finite deadline is an error.
+func sendProbe(client *http.Client, method, url, token string, stream bool, deadlines probeDeadlines) (int, map[string]any, error) {
+	deadline := deadlines.finite
+	if stream {
+		deadline = deadlines.stream
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), deadline)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, method, f.a.srv.URL+path, nil)
-	require.NoError(t, err)
-	req.Header.Set("Authorization", "Bearer "+token)
-	res, err := f.a.srv.Client().Do(req)
+	req, err := http.NewRequestWithContext(ctx, method, url, nil)
 	if err != nil {
-		if !readBody && errors.Is(err, context.DeadlineExceeded) {
-			return statusStreaming, nil
+		return 0, nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	res, err := client.Do(req)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			if stream {
+				return statusStreaming, nil, nil
+			}
+			return 0, nil, fmt.Errorf("no answer within %s: %w", deadline, err)
 		}
-		require.NoError(t, err)
+		return 0, nil, err
 	}
 	defer res.Body.Close()
-	if !readBody {
-		return res.StatusCode, nil
+	if stream {
+		return res.StatusCode, nil, nil
 	}
 	raw, err := io.ReadAll(io.LimitReader(res.Body, 1<<20))
-	require.NoError(t, err)
+	if err != nil {
+		return 0, nil, err
+	}
 	var body map[string]any
 	if len(raw) > 0 {
 		_ = json.Unmarshal(raw, &body)
 	}
-	return res.StatusCode, body
+	return res.StatusCode, body, nil
 }
 
 // expectation names, per access class, the fixtures that must be refused
@@ -240,12 +276,12 @@ func TestAccessMatrix(t *testing.T) {
 		stream := strings.HasSuffix(template, "/stream")
 		t.Run(route, func(t *testing.T) {
 			for _, name := range expect.notFound {
-				status, body := f.probe(t, method, path, f.tokens[name], true)
+				status, body := f.probe(t, method, path, f.tokens[name], false)
 				require.Equal(t, http.StatusNotFound, status, "%s as %s: %v", route, name, body)
 				require.Equal(t, "not_found", errorCode(t, body), "%s as %s", route, name)
 			}
 			for _, name := range expect.forbidden {
-				status, body := f.probe(t, method, path, f.tokens[name], true)
+				status, body := f.probe(t, method, path, f.tokens[name], false)
 				require.Equal(t, http.StatusForbidden, status, "%s as %s: %v", route, name, body)
 				require.Equal(t, "forbidden", errorCode(t, body), "%s as %s", route, name)
 			}
@@ -253,7 +289,7 @@ func TestAccessMatrix(t *testing.T) {
 				return
 			}
 			for _, name := range expect.allowed {
-				status, body := f.probe(t, method, path, f.tokens[name], !stream)
+				status, body := f.probe(t, method, path, f.tokens[name], stream)
 				require.NotEqual(t, http.StatusUnauthorized, status, "%s as %s: %v", route, name, body)
 				require.NotEqual(t, http.StatusForbidden, status, "%s as %s: %v", route, name, body)
 				if method == http.MethodGet && !notFoundAllowed[route] {
@@ -262,4 +298,55 @@ func TestAccessMatrix(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A finite handler slower than the stream deadline still answers with its
+// own status and body instead of passing for an accepted stream; only a
+// stream probe reads a deadline as statusStreaming, and a finite handler
+// that never answers fails the probe.
+func TestProbeTellsSlowAnswersFromStreams(t *testing.T) {
+	arrived := make(chan struct{})
+	proceed := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/slow":
+			close(arrived)
+			<-proceed
+			w.WriteHeader(http.StatusCreated)
+			_, _ = io.WriteString(w, `{"ok":true}`)
+		case "/hang":
+			<-r.Context().Done()
+		}
+	}))
+	defer srv.Close()
+	deadlines := probeDeadlines{stream: 50 * time.Millisecond, finite: 30 * time.Second}
+
+	type answer struct {
+		status int
+		body   map[string]any
+		err    error
+	}
+	slow := make(chan answer, 1)
+	go func() {
+		status, body, err := sendProbe(srv.Client(), http.MethodPost, srv.URL+"/slow", "token", false, deadlines)
+		slow <- answer{status, body, err}
+	}()
+	<-arrived
+	// The slow request is in flight for the whole stream deadline this
+	// stream probe runs out, and only answers after it.
+	status, body, err := sendProbe(srv.Client(), http.MethodGet, srv.URL+"/hang", "token", true, deadlines)
+	require.NoError(t, err)
+	require.Equal(t, statusStreaming, status)
+	require.Nil(t, body)
+	close(proceed)
+
+	got := <-slow
+	require.NoError(t, got.err)
+	require.Equal(t, http.StatusCreated, got.status)
+	require.Equal(t, map[string]any{"ok": true}, got.body)
+
+	// A finite route that never answers is a failure, not a stream.
+	_, _, err = sendProbe(srv.Client(), http.MethodGet, srv.URL+"/hang", "token", false,
+		probeDeadlines{stream: time.Minute, finite: 50 * time.Millisecond})
+	require.ErrorIs(t, err, context.DeadlineExceeded)
 }
