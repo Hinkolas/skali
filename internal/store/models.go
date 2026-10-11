@@ -330,12 +330,14 @@ type EnvironmentSecret struct {
 }
 
 type EnvironmentTarget struct {
-	EnvironmentID    uuid.UUID
-	TargetRevisionID *uuid.UUID
-	ActiveRevisionID *uuid.UUID
-	UpdatedAt        time.Time
-	State            string
-	RestartedAt      *time.Time
+	EnvironmentID               uuid.UUID
+	TargetRevisionID            *uuid.UUID
+	ActiveRevisionID            *uuid.UUID
+	UpdatedAt                   time.Time
+	State                       string
+	RestartedAt                 *time.Time
+	IncompleteRestoreID         *uuid.UUID
+	IncompleteRestoreComponents []string
 }
 
 type HostnameClaim struct {

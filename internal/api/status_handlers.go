@@ -113,6 +113,23 @@ type environmentStatusPayload struct {
 	Platforms          []string               `json:"platforms"`
 	PlatformPreference []string               `json:"platform_preference"`
 	Services           []serviceStatusPayload `json:"services"`
+	// IncompleteRestore is the restore holding the environment down, null
+	// when none does.
+	IncompleteRestore *incompleteRestorePayload `json:"incomplete_restore"`
+}
+
+// incompleteRestorePayload is a restore that stopped the environment and
+// did not complete: deployments are refused until a restore completes or
+// its data is accepted.
+type incompleteRestorePayload struct {
+	ID         string     `json:"id"`
+	RunID      *string    `json:"run_id"`
+	SnapshotID string     `json:"snapshot_id"`
+	Status     string     `json:"status"`
+	Error      string     `json:"error,omitempty"`
+	StartedAt  time.Time  `json:"started_at"`
+	FinishedAt *time.Time `json:"finished_at"`
+	Components []string   `json:"components"`
 }
 
 func newObservationPayload(source module.SourceStatus) observationPayload {
@@ -142,6 +159,21 @@ func newEnvironmentStatusPayload(status *reconcile.Status) environmentStatusPayl
 	}
 	if status.Active != nil {
 		payload.ActiveRevision = &revisionRefPayload{ID: status.Active.ID.String(), Checksum: status.Active.Checksum}
+	}
+	if held := status.IncompleteRestore; held != nil {
+		payload.IncompleteRestore = &incompleteRestorePayload{
+			ID:         held.ID.String(),
+			SnapshotID: held.Snapshot,
+			Status:     held.Status,
+			Error:      held.Error,
+			StartedAt:  held.StartedAt,
+			FinishedAt: held.FinishedAt,
+			Components: append([]string{}, held.Components...),
+		}
+		if held.RunID != nil {
+			runID := held.RunID.String()
+			payload.IncompleteRestore.RunID = &runID
+		}
 	}
 	for _, service := range status.Services {
 		servicePayload := serviceStatusPayload{

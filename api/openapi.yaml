@@ -1562,6 +1562,8 @@ paths:
             written by another build and cannot be targeted.
             `environment_busy`: a reconcile pass or another change held
             the environment for 10 seconds; retry shortly.
+            `restore_incomplete`: an incomplete restore holds the
+            environment; re-run a restore or accept its data first.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -3166,15 +3168,22 @@ paths:
       operationId: restoreBackup
       summary: Restore a snapshot into the environment
       description: |
-        Destructive: stops the environment, replaces every matching
-        database, bucket, and volume with the snapshot's data, then
-        resumes the current revision, all as a journaled run of kind
-        `restore`. The snapshot may come from any environment of the
-        project (ids are unique across environments), so a production
-        snapshot restores into staging. Components whose service key no
-        longer exists are skipped visibly. The environment must be active; on failure it
-        deliberately stays down rather than resuming over partial data.
-        Requires recent authentication (sudo mode).
+        Destructive: verifies the snapshot's data against its manifest,
+        stops the environment, replaces every matching database, bucket,
+        and volume with the snapshot's data, then resumes the current
+        revision, all as a journaled run of kind `restore`. The snapshot
+        may come from any environment of the project (ids are unique
+        across environments), so a production snapshot restores into
+        staging. Components whose service key no longer exists are
+        skipped visibly. A damaged snapshot fails the run before anything
+        is stopped. The environment must be active, or held by an
+        incomplete restore (see `incomplete_restore` on the environment
+        status): a restore re-run over one resumes the revision that one
+        was to resume, and must restore every component it set out to
+        rewrite. From the stop on, the environment is held: a restore that
+        fails or is cancelled leaves it down, and deployments are refused
+        (`restore_incomplete`) until a restore completes or its data is
+        accepted. Requires recent authentication (sudo mode).
       tags: [backups]
       requestBody:
         required: true
@@ -3210,7 +3219,9 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "422":
-          description: The environment is not active (`environment_not_active`).
+          description: |
+            The environment is neither active nor held by an incomplete
+            restore (`environment_not_active`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -3220,6 +3231,57 @@ paths:
             or it did not answer (`backup_target_unreachable`),
             or the environment declares buckets while object storage is still
             converging, typically right after an upgrade (`object_storage_not_ready`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /v1/environments/{id}/restore/accept:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: acceptIncompleteRestore
+      summary: Accept the data an incomplete restore left
+      description: |
+        Lifts the hold an incomplete restore keeps on the environment and
+        accepts its data as it is: components the restore rewrote may hold
+        partial data, and the others still hold what they held before. The
+        environment stays down; the next deployment brings it back and
+        lifts the bucket fences. Name the restore from the environment
+        status's `incomplete_restore.id`; a hold that changed since is
+        refused. Recorded as a journaled run of kind `restore-accept`.
+        Requires recent authentication (sudo mode).
+      tags: [backups]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [restore_id]
+              properties:
+                restore_id: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The hold is lifted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [run_id]
+                properties:
+                  run_id: { type: string, format: uuid }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/ReauthRequired" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: |
+            The named restore does not hold the environment
+            (`no_incomplete_restore`), or it is still running or another
+            run is in flight (`backup_in_flight`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -3395,7 +3457,9 @@ paths:
             `deployment_in_flight` or `destructive_change`, or `conflict`
             when the promotion source environment has no active revision, or
             `unsupported_schema` when a stored revision or definition
-            document was written by another build.
+            document was written by another build, or `restore_incomplete`
+            when an incomplete restore holds the environment (re-run a
+            restore or accept its data first).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -5180,6 +5244,52 @@ components:
         services:
           type: array
           items: { $ref: "#/components/schemas/ServiceStatus" }
+        incomplete_restore:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/IncompleteRestore"
+          description: >
+            The restore holding the environment down: it stopped the
+            environment and did not complete, so its data may be partial.
+            Deployments are refused until a restore completes or its data
+            is accepted. Null when no restore holds the environment.
+
+    IncompleteRestore:
+      type: object
+      required: [id, run_id, snapshot_id, status, started_at, finished_at, components]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: The restore; name it to accept its data.
+        run_id:
+          oneOf:
+            - type: "null"
+            - type: string
+              format: uuid
+        snapshot_id:
+          type: string
+        status:
+          type: string
+          enum: [running, failed, cancelled]
+          description: running while the restore still runs.
+        error:
+          type: string
+          description: Why the restore failed, when it did.
+        started_at:
+          type: string
+          format: date-time
+        finished_at:
+          oneOf:
+            - type: "null"
+            - type: string
+              format: date-time
+        components:
+          type: array
+          items: { type: string }
+          description: >
+            The components the restore set out to rewrite, as
+            `db:<key>`, `bucket:<key>`, or `volume:<app>.<volume>`.
 
     RevisionRef:
       type: object

@@ -145,6 +145,26 @@ type databaseJobIdentity struct {
 	WorkerImage    string
 	TargetSecret   string
 	SnapshotObject string
+	// Expect is what a restore's download must find: the dump's size and
+	// checksum as the manifest records them.
+	Expect objectCheck
+}
+
+// objectCheck is what a worker verifies a snapshot object against before
+// its contents are used: the size and, when recorded, the sha256 of the
+// stored bytes.
+type objectCheck struct {
+	Bytes  int64
+	SHA256 string
+}
+
+// args renders the check as worker flags.
+func (c objectCheck) args() []string {
+	args := []string{"--size", strconv.FormatInt(c.Bytes, 10)}
+	if c.SHA256 != "" {
+		args = append(args, "--sha256", c.SHA256)
+	}
+	return args
 }
 
 func databaseClientEnv(identity databaseJobIdentity) []corev1.EnvVar {
@@ -211,13 +231,16 @@ const databaseBackupScript = databaseReadyWait + `exec pg_dump -Fc --no-owner --
 `
 
 // databaseRestoreScript replays a dump into the tenant's database as its
-// owning role. The list filter drops EXTENSION and COMMENT entries: CNPG
-// declares extensions on the cluster and the tenant role can neither drop
-// nor recreate them, while --clean plus --if-exists resets everything the
-// role owns.
+// owning role. Reading the table of contents first refuses an unreadable
+// dump before the database is touched. The list filter drops EXTENSION and
+// COMMENT entries: CNPG declares extensions on the cluster and the tenant
+// role can neither drop nor recreate them, while --clean plus --if-exists
+// resets everything the role owns. The restore is one transaction: a
+// failure anywhere rolls it back and leaves the database as it was.
 const databaseRestoreScript = databaseReadyWait + `set -e
-pg_restore -l /work/db.dump | grep -vE ' (EXTENSION|COMMENT) ' > /work/list
-exec pg_restore --clean --if-exists --no-owner --no-privileges --exit-on-error -L /work/list -d "$PGDATABASE" /work/db.dump
+pg_restore -l /work/db.dump > /work/toc
+grep -vE ' (EXTENSION|COMMENT) ' /work/toc > /work/list
+exec pg_restore --clean --if-exists --no-owner --no-privileges --single-transaction --exit-on-error -L /work/list -d "$PGDATABASE" /work/db.dump
 `
 
 func renderDatabaseRestoreJob(name, namespace, backupID string, identity databaseJobIdentity) *batchv1.Job {
@@ -229,8 +252,8 @@ func renderDatabaseRestoreJob(name, namespace, backupID string, identity databas
 				InitContainers: []corev1.Container{{
 					Name:  "download",
 					Image: identity.WorkerImage,
-					Args: []string{"backup-worker", "download",
-						"--key", identity.SnapshotObject, "--file", "/work/db.dump"},
+					Args: append([]string{"backup-worker", "download",
+						"--key", identity.SnapshotObject, "--file", "/work/db.dump"}, identity.Expect.args()...),
 					EnvFrom:      workerEnvFrom(identity.TargetSecret),
 					VolumeMounts: []corev1.VolumeMount{workMount()},
 				}},
@@ -246,6 +269,16 @@ func renderDatabaseRestoreJob(name, namespace, backupID string, identity databas
 			}},
 		},
 	}
+}
+
+// renderVolumeRestoreJob is the volume Job of a restore: the worker
+// verifies the archive against expect, then replaces the volume's contents
+// with it.
+func renderVolumeRestoreJob(name, namespace, backupID, workerImage, targetSecret, claimName, objectKey string, expect objectCheck) *batchv1.Job {
+	job := renderVolumeJob(name, namespace, backupID, workerImage, targetSecret, claimName, objectKey, true)
+	container := &job.Spec.Template.Spec.Containers[0]
+	container.Args = append(container.Args, expect.args()...)
+	return job
 }
 
 func renderVolumeJob(name, namespace, backupID, workerImage, targetSecret, claimName, objectKey string, restore bool) *batchv1.Job {

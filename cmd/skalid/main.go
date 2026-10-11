@@ -376,16 +376,17 @@ func runServe() error {
 	var backupCtl *backup.Controller
 	if kubeClient != nil {
 		backupCtl = backup.New(backup.Deps{
-			Store:   st,
-			Journal: journalSvc,
-			Values:  valueSvc,
-			DB:      dbstore.New(st),
-			Deploy:  deploySvc,
-			Kube:    kubeClient,
-			Targets: backupTargets,
-			Buckets: substrateCtl,
-			Enqueue: func(environmentID uuid.UUID) { kernel.EnqueueFor(environmentID, reconcile.ReasonBackup) },
-			Version: versionpkg.Version,
+			Store:         st,
+			Journal:       journalSvc,
+			Values:        valueSvc,
+			DB:            dbstore.New(st),
+			Deploy:        deploySvc,
+			Kube:          kubeClient,
+			Targets:       backupTargets,
+			Buckets:       substrateCtl,
+			Enqueue:       func(environmentID uuid.UUID) { kernel.EnqueueFor(environmentID, reconcile.ReasonBackup) },
+			StatusChanged: observed.Invalidate,
+			Version:       versionpkg.Version,
 		}, backup.Config{
 			WorkerImage:     cfg.BackupWorkerImage,
 			JobTimeout:      cfg.BackupJobTimeout,

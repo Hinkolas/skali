@@ -118,12 +118,16 @@ func workerUpload(ctx context.Context, args []string) error {
 	return nil
 }
 
-// workerDownload fetches one object to a file and verifies its recorded
-// sha256 when present.
+// workerDownload fetches one object to a file and verifies it: against
+// the size and sha256 the snapshot manifest records when they are given
+// (a restore always gives them), else against the sha256 recorded on the
+// object. A dump that fails either check never reaches pg_restore.
 func workerDownload(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("download", flag.ContinueOnError)
 	key := flags.String("key", "", "object key")
 	file := flags.String("file", "", "destination file")
+	expectSize := flags.Int64("size", -1, "expected size in bytes")
+	expectSHA256 := flags.String("sha256", "", "expected sha256")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -156,10 +160,28 @@ func workerDownload(ctx context.Context, args []string) error {
 		return fmt.Errorf("backup-worker: download %s: %w", *key, err)
 	}
 	digest := hex.EncodeToString(hash.Sum(nil))
-	if want := stat.UserMetadata["Sha256"]; want != "" && want != digest {
-		return fmt.Errorf("backup-worker: %s sha256 mismatch: stored %s, downloaded %s", *key, want, digest)
+	expect := objectCheck{Bytes: *expectSize, SHA256: *expectSHA256}
+	if err := verifyDownload(*key, written, digest, expect, stat.UserMetadata["Sha256"]); err != nil {
+		return err
 	}
-	slog.Info("downloaded", "key", *key, "bytes", written, "sha256", digest)
+	slog.Info("downloaded and verified", "key", *key, "bytes", written, "sha256", digest)
+	return nil
+}
+
+// verifyDownload checks a downloaded object against expect: its size when
+// known (not negative), and its sha256, else the sha256 recorded on the
+// object when there is one.
+func verifyDownload(key string, written int64, digest string, expect objectCheck, recorded string) error {
+	if expect.Bytes >= 0 && written != expect.Bytes {
+		return fmt.Errorf("backup-worker: %s is %d bytes; the snapshot records %d", key, written, expect.Bytes)
+	}
+	want := expect.SHA256
+	if want == "" {
+		want = recorded
+	}
+	if want != "" && !strings.EqualFold(want, digest) {
+		return fmt.Errorf("backup-worker: %s sha256 mismatch: expected %s, downloaded %s", key, want, digest)
+	}
 	return nil
 }
 
@@ -265,11 +287,17 @@ func writeTar(root string, out io.Writer) error {
 }
 
 // workerUntar restores an archive into the mounted path, clearing previous
-// contents first so the volume matches the snapshot exactly.
+// contents first so the volume matches the snapshot exactly. The archive
+// is read through once before anything is cleared: it must be the size
+// (and sha256, when recorded) the snapshot manifest gives, decompress with
+// a valid checksum, and hold only entries extraction accepts. Streaming it
+// twice keeps the volume's free space out of the picture.
 func workerUntar(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("untar", flag.ContinueOnError)
 	key := flags.String("key", "", "object key")
 	root := flags.String("path", "", "destination directory")
+	expectSize := flags.Int64("size", -1, "expected archive size in bytes")
+	expectSHA256 := flags.String("sha256", "", "expected archive sha256")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -280,18 +308,40 @@ func workerUntar(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	object, err := client.GetObject(ctx, bucket, *key, minio.GetObjectOptions{})
+	open := func() (io.ReadCloser, error) {
+		object, err := client.GetObject(ctx, bucket, *key, minio.GetObjectOptions{})
+		if err != nil {
+			return nil, fmt.Errorf("backup-worker: get %s: %w", *key, err)
+		}
+		return object, nil
+	}
+	return restoreArchive(*root, open, objectCheck{Bytes: *expectSize, SHA256: *expectSHA256})
+}
+
+// restoreArchive verifies the archive open returns, then replaces root's
+// contents with it, opening it once for each pass.
+func restoreArchive(root string, open func() (io.ReadCloser, error), expect objectCheck) error {
+	object, err := open()
 	if err != nil {
-		return fmt.Errorf("backup-worker: get %s: %w", *key, err)
+		return err
+	}
+	summary, err := verifyArchive(object, expect)
+	object.Close()
+	if err != nil {
+		return fmt.Errorf("backup-worker: verify archive: %w; the volume was not touched", err)
+	}
+	slog.Info("verified", "entries", summary.Entries, "bytes", summary.Bytes)
+	if object, err = open(); err != nil {
+		return err
 	}
 	defer object.Close()
-	if err := clearDirectory(*root); err != nil {
+	if err := clearDirectory(root); err != nil {
 		return err
 	}
-	if err := extractTar(*root, object); err != nil {
+	if err := extractTar(root, object); err != nil {
 		return err
 	}
-	slog.Info("restored", "key", *key, "path", *root)
+	slog.Info("restored", "path", root, "entries", summary.Entries)
 	return nil
 }
 

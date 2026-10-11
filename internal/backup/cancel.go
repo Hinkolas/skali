@@ -129,7 +129,18 @@ func (c *Controller) conclude(ctx context.Context, row *store.Backup, scope *jou
 	}); err != nil {
 		return fmt.Errorf("backup: finish row: %w", err)
 	}
+	if row.Kind == KindRestore {
+		// A restore that stopped the environment shows in its status
+		// until it completes; the row's outcome is part of that.
+		c.statusChanged(row.EnvironmentID)
+	}
 	return nil
+}
+
+func (c *Controller) statusChanged(environmentID uuid.UUID) {
+	if c.deps.StatusChanged != nil {
+		c.deps.StatusChanged(environmentID)
+	}
 }
 
 // abandon fails a run the accept path began but could not hand to a
@@ -152,9 +163,9 @@ func (c *Controller) abandon(ctx context.Context, runID uuid.UUID, rowID *uuid.U
 }
 
 // sweep fails every backup and restore run whose row already finished or
-// was never recorded. Such a run can only come from a failure between the
-// two writes, and it would hold the environment's run slot until someone
-// cancelled it by hand.
+// was never recorded, and every accept run left running. Such a run can
+// only come from a failure between two writes, and it would hold the
+// environment's run slot until someone cancelled it by hand.
 func (c *Controller) sweep(ctx context.Context) error {
 	runs, err := c.deps.Store.ListStrandedBackupRuns(ctx, time.Now().Add(-strandedRunGrace))
 	if err != nil {

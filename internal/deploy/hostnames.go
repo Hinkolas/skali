@@ -163,8 +163,10 @@ func (s *Service) ReleaseAbsentHostnames(ctx context.Context, env uuid.UUID, liv
 }
 
 // ResumeRevision is the restore controller's target transition. It has the
-// same claim transaction as deployment without creating a second run.
-func (s *Service) ResumeRevision(ctx context.Context, env, id uuid.UUID) error {
+// same claim transaction as deployment without creating a second run, and
+// lifts the hold the restore took when it stopped the environment: only
+// the restore holding the environment resumes it.
+func (s *Service) ResumeRevision(ctx context.Context, env, id, restoreID uuid.UUID) error {
 	unlock, err := s.st.LockEnvironment(ctx, env)
 	if err != nil {
 		return err
@@ -189,14 +191,23 @@ func (s *Service) ResumeRevision(ctx context.Context, env, id uuid.UUID) error {
 		if err := s.claimRoutesTx(ctx, q, env, id, routes); err != nil {
 			return err
 		}
-		n, err := q.SetEnvironmentTarget(ctx, store.SetEnvironmentTargetParams{EnvironmentID: env, TargetRevisionID: &id})
+		n, err := q.ResumeRestoredEnvironment(ctx, store.ResumeRestoredEnvironmentParams{
+			EnvironmentID: env, TargetRevisionID: id, RestoreID: restoreID,
+		})
 		if err != nil {
 			return err
 		}
-		if n == 0 {
+		if n > 0 {
+			return nil
+		}
+		target, err := q.GetEnvironmentTarget(ctx, env)
+		if err != nil {
+			return err
+		}
+		if target.State == EnvironmentStateReleasing {
 			return ErrEnvironmentReleasing
 		}
-		return nil
+		return ErrRestoreHoldLost
 	})
 }
 

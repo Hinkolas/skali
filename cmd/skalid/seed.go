@@ -201,6 +201,10 @@ const (
 	runBackup
 	runRestoreFailed
 	runDeployInFlight
+	// runRestoreHeld is a restore that stopped the environment and failed
+	// halfway: the environment stays down, held until a restore completes
+	// or its data is accepted. It ends the environment's history.
+	runRestoreHeld
 )
 
 type seedRun struct {
@@ -356,7 +360,9 @@ var seedProjects = []seedProject{
 					{kind: runDeploy, age: 0.92, actor: "ken@seed.skali.local", manifest: 0},
 					{kind: runDeploy, age: 0.40, actor: "grace@seed.skali.local", manifest: 1},
 					{kind: runDeployFailed, age: 0.15, actor: "grace@seed.skali.local", manifest: 1},
+					{kind: runRestoreHeld, age: 0.04, actor: "grace@seed.skali.local"},
 				},
+				down: true,
 				metrics: map[string]appLoad{
 					"ingest":    {cpuMillicores: 90, memoryBytes: 400 * mib, replicas: 1, requestsPerMinute: 400},
 					"dashboard": {cpuMillicores: 30, memoryBytes: 220 * mib, replicas: 1, requestsPerMinute: 20},
@@ -640,7 +646,7 @@ func (s *seeder) seedEnvironment(ctx context.Context, proj *store.Project, env *
 			if err := s.runRestart(ctx, env, r, at); err != nil {
 				return err
 			}
-		case runBackup, runRestoreFailed:
+		case runBackup, runRestoreFailed, runRestoreHeld:
 			if err := s.runBackup(ctx, proj, env, r, lastGood, at); err != nil {
 				return err
 			}
@@ -863,7 +869,7 @@ func (s *seeder) finishRollout(ctx context.Context, runID, envID uuid.UUID, appl
 // runBackup journals a backup (or a failed restore) run with its backup row.
 func (s *seeder) runBackup(ctx context.Context, proj *store.Project, env *store.Environment, r seedRun, revisionID uuid.UUID, at time.Time) error {
 	kind := backup.KindBackup
-	if r.kind == runRestoreFailed {
+	if r.kind == runRestoreFailed || r.kind == runRestoreHeld {
 		kind = backup.KindRestore
 	}
 	run, err := s.journal.BeginRun(ctx, journal.RunInput{
@@ -898,6 +904,9 @@ func (s *seeder) runBackup(ctx context.Context, proj *store.Project, env *store.
 	if err := s.completeStep(ctx, run.ID, nil, "target", "Check backup target", redactor,
 		[]string{"backup target s3-offsite reachable"}); err != nil {
 		return err
+	}
+	if r.kind == runRestoreHeld {
+		return s.holdRestore(ctx, env, run.ID, row.ID, snapshot, redactor, at)
 	}
 	if r.kind == runRestoreFailed {
 		if err := s.failStep(ctx, run.ID, nil, "restore:databases.main", "Restore databases.main", redactor, []string{
@@ -949,6 +958,54 @@ func (s *seeder) runBackup(ctx context.Context, proj *store.Project, env *store.
 		return err
 	}
 	return s.backdateRun(ctx, run.ID, at, 6*time.Minute)
+}
+
+// holdRestore journals a restore that verified its snapshot, stopped the
+// environment, restored the database, and failed on the bucket, and
+// leaves the environment held the way the restore's stop does.
+func (s *seeder) holdRestore(ctx context.Context, env *store.Environment, runID, restoreID uuid.UUID,
+	snapshot string, redactor *redact.Redactor, at time.Time) error {
+	steps := []struct {
+		key, title string
+		lines      []string
+	}{
+		{"snapshot", "Load snapshot manifest", []string{"snapshot " + snapshot}},
+		{"verify", "Verify snapshot data", []string{"db:events: 412MiB as recorded, sha256 3f9a0c2d1e7b",
+			"bucket:raw: 18204 objects (6.2GiB) as recorded", "snapshot verified: 2 of 2 components to restore"}},
+		{"stop", "Stop environment workloads", []string{"deployments are refused until the restore completes",
+			"waiting for workloads to stop", "workloads stopped; volumes and databases remain"}},
+		{"db:events", "Restore database events", []string{"restoring into database events in one transaction"}},
+	}
+	for _, step := range steps {
+		if err := s.completeStep(ctx, runID, nil, step.key, step.title, redactor, step.lines); err != nil {
+			return err
+		}
+	}
+	msg := "copy raw/2026/10/08/batch-0412.parquet: backup: put raw/2026/10/08/batch-0412.parquet: " +
+		"connection reset by peer; the bucket remains fenced"
+	if err := s.failStep(ctx, runID, nil, "bucket:raw", "Restore bucket raw", redactor, []string{
+		"bucket fenced: the environment's credentials are refused until the restore completes",
+		"clearing bucket raw", "cleared 18190 objects from bucket raw", msg,
+	}); err != nil {
+		return err
+	}
+	if err := s.st.SetBackupSnapshotKey(ctx, store.SetBackupSnapshotKeyParams{ID: restoreID, SnapshotKey: snapshot + ".json"}); err != nil {
+		return err
+	}
+	if _, err := s.st.MarkEnvironmentRestoring(ctx, store.MarkEnvironmentRestoringParams{
+		EnvironmentID: env.ID, RestoreID: restoreID, Components: []string{"db:events", "bucket:raw"},
+	}); err != nil {
+		return err
+	}
+	if err := s.journal.FailRun(ctx, runID, nil, msg); err != nil {
+		return err
+	}
+	if _, err := s.st.SetBackupStatus(ctx, store.SetBackupStatusParams{
+		ID: restoreID, FromStatus: "running", ToStatus: "failed", Error: &msg,
+	}); err != nil {
+		return err
+	}
+	return s.backdateRun(ctx, runID, at, 9*time.Minute)
 }
 
 // --- Journal helpers ---

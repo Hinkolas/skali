@@ -2,8 +2,11 @@ package backup
 
 import (
 	"archive/tar"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"io/fs"
 	"os"
@@ -111,12 +114,16 @@ func restoreMetadata(root *os.Root, name string, h *tar.Header) error {
 	return root.Chtimes(name, h.ModTime, h.ModTime)
 }
 
-func extractTar(path string, in io.Reader) error {
-	root, err := os.OpenRoot(path)
-	if err != nil {
-		return err
-	}
-	defer root.Close()
+// walkArchive reads a zstd-compressed tar from in and calls visit for
+// every entry, with its validated local name and its content. Every shape
+// extraction refuses is refused here, before visit sees the entry: names
+// that are absolute, traverse a parent, or reach into lost+found;
+// duplicates; entries beneath a non-directory or over earlier children;
+// a non-directory root; types other than directories, regular files, and
+// symlinks. The stream is read to its end, so the compression frame's
+// checksum is verified too: a walk that returns nil has seen an intact
+// archive.
+func walkArchive(in io.Reader, visit func(name string, header *tar.Header, content io.Reader) error) error {
 	decompressor, err := zstd.NewReader(in)
 	if err != nil {
 		return err
@@ -124,7 +131,6 @@ func extractTar(path string, in io.Reader) error {
 	defer decompressor.Close()
 	archive := tar.NewReader(decompressor)
 	entries := map[string]*tar.Header{}
-	var directories, links []string
 	for {
 		header, err := archive.Next()
 		if errors.Is(err, io.EOF) {
@@ -155,8 +161,84 @@ func extractTar(path string, in io.Reader) error {
 				}
 			}
 		}
+		switch header.Typeflag {
+		case tar.TypeDir, tar.TypeReg, tar.TypeRegA, tar.TypeSymlink:
+		default:
+			return fmt.Errorf("unsupported archive entry type %d", header.Typeflag)
+		}
 		copied := *header
 		entries[name] = &copied
+		if err := visit(name, &copied, archive); err != nil {
+			return err
+		}
+	}
+	// The tar's end marker can come before the end of the compressed
+	// stream; the frame checksum is only checked at the stream's end.
+	if _, err := io.Copy(io.Discard, decompressor); err != nil {
+		return fmt.Errorf("read archive: %w", err)
+	}
+	return nil
+}
+
+// archiveSummary is what verifying an archive found.
+type archiveSummary struct {
+	Entries int64
+	Bytes   int64
+}
+
+// verifyArchive reads a whole archive without writing anything: it must
+// be exactly the bytes expect records (a negative size is unknown), and an
+// archive extraction would accept. The restore runs it before it clears
+// the volume.
+func verifyArchive(in io.Reader, expect objectCheck) (archiveSummary, error) {
+	stored := &countingReader{reader: in, hash: sha256.New()}
+	var summary archiveSummary
+	err := walkArchive(stored, func(_ string, header *tar.Header, content io.Reader) error {
+		summary.Entries++
+		written, err := io.Copy(io.Discard, content)
+		summary.Bytes += written
+		return err
+	})
+	if err != nil {
+		return summary, err
+	}
+	// Whatever follows the compressed stream is still part of the object.
+	if _, err := io.Copy(io.Discard, stored); err != nil {
+		return summary, fmt.Errorf("read archive: %w", err)
+	}
+	if expect.Bytes >= 0 && stored.read != expect.Bytes {
+		return summary, fmt.Errorf("archive is %d bytes; the snapshot records %d", stored.read, expect.Bytes)
+	}
+	if digest := hex.EncodeToString(stored.hash.Sum(nil)); expect.SHA256 != "" && !strings.EqualFold(digest, expect.SHA256) {
+		return summary, fmt.Errorf("archive sha256 is %s; the snapshot records %s", digest, expect.SHA256)
+	}
+	return summary, nil
+}
+
+// countingReader counts and hashes what passes through it.
+type countingReader struct {
+	reader io.Reader
+	hash   hash.Hash
+	read   int64
+}
+
+func (r *countingReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	r.read += int64(n)
+	r.hash.Write(p[:n])
+	return n, err
+}
+
+func extractTar(path string, in io.Reader) error {
+	root, err := os.OpenRoot(path)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	entries := map[string]*tar.Header{}
+	var directories, links []string
+	err = walkArchive(in, func(name string, header *tar.Header, content io.Reader) error {
+		entries[name] = header
 		switch header.Typeflag {
 		case tar.TypeDir:
 			if err := root.MkdirAll(name, 0700); err != nil {
@@ -171,7 +253,7 @@ func extractTar(path string, in io.Reader) error {
 			if err != nil {
 				return err
 			}
-			_, copyErr := io.Copy(file, archive)
+			_, copyErr := io.Copy(file, content)
 			closeErr := file.Close()
 			if copyErr != nil {
 				return copyErr
@@ -187,9 +269,11 @@ func extractTar(path string, in io.Reader) error {
 				return err
 			}
 			links = append(links, name)
-		default:
-			return fmt.Errorf("unsupported archive entry type %d", header.Typeflag)
 		}
+		return nil
+	})
+	if err != nil {
+		return err
 	}
 	for _, name := range links {
 		header := entries[name]

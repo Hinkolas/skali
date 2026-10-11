@@ -16,12 +16,23 @@ type memoryStore struct {
 	mu      sync.Mutex
 	objects map[string][]byte
 	meta    map[string]objectMeta
+	// checksums is the sha256 an uploader recorded on an object, which
+	// Stat reports the way the S3 store reports its user metadata.
+	checksums map[string]string
 	// ops records Put/Remove/RemovePrefix calls in order, as "verb key".
 	ops []string
 }
 
 func newMemoryStore() *memoryStore {
-	return &memoryStore{objects: make(map[string][]byte), meta: make(map[string]objectMeta)}
+	return &memoryStore{objects: make(map[string][]byte), meta: make(map[string]objectMeta),
+		checksums: make(map[string]string)}
+}
+
+// record sets the sha256 an uploader recorded on key.
+func (m *memoryStore) record(key, sha256 string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.checksums[key] = sha256
 }
 
 func (m *memoryStore) Put(ctx context.Context, key string, r io.Reader, size int64) error {
@@ -63,7 +74,7 @@ func (m *memoryStore) Stat(_ context.Context, key string) (objectStat, error) {
 	if !ok {
 		return objectStat{}, errNotFound
 	}
-	return objectStat{Size: int64(len(data))}, nil
+	return objectStat{Size: int64(len(data)), SHA256: m.checksums[key]}, nil
 }
 
 func (m *memoryStore) keys(prefix string) []string {

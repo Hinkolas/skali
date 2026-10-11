@@ -33,13 +33,17 @@ WHERE environments.id = $1;
 -- The single writer of the target pointer; runs only inside the deploy
 -- promotion or rollback transaction. Promoting resurrects an environment
 -- that was taken down, but never one that is releasing: purge is one-way,
--- so a promote racing a purge fails on the 0-row result. With restart set,
--- the same write stamps a workload restart (a forced deployment).
+-- so a promote racing a purge fails on the 0-row result. Nor one an
+-- incomplete restore holds: its data may be partial, and only a restore
+-- that completes (ResumeRestoredEnvironment) or an explicit acceptance
+-- (ClearIncompleteRestore) lifts the hold. With restart set, the same
+-- write stamps a workload restart (a forced deployment).
 -- name: SetEnvironmentTarget :execrows
 UPDATE environment_targets
 SET target_revision_id = sqlc.narg(target_revision_id), state = 'active', updated_at = now(),
     restarted_at = CASE WHEN sqlc.arg(restart)::boolean THEN now() ELSE restarted_at END
-WHERE environment_id = sqlc.arg(environment_id) AND state <> 'releasing';
+WHERE environment_id = sqlc.arg(environment_id) AND state <> 'releasing'
+  AND incomplete_restore_id IS NULL;
 
 -- The single writer of the active pointer; only reconciliation calls it, and
 -- only after the revision's required health conditions pass. The target guard
@@ -85,6 +89,43 @@ UPDATE environment_targets
 SET state = 'down', target_revision_id = NULL, active_revision_id = NULL,
     updated_at = now()
 WHERE environment_id = $1 AND state <> 'releasing';
+
+-- A restore's stop: MarkEnvironmentDown plus the restore hold, in one
+-- statement, so the environment is never down for a restore without the
+-- hold that keeps deployments from resuming it on partial data. A restore
+-- re-run over an earlier one's hold takes the hold over.
+-- name: MarkEnvironmentRestoring :execrows
+UPDATE environment_targets
+SET state = 'down', target_revision_id = NULL, active_revision_id = NULL,
+    incomplete_restore_id = sqlc.arg(restore_id)::uuid,
+    incomplete_restore_components = COALESCE(sqlc.arg(components)::text[], '{}'),
+    updated_at = now()
+WHERE environment_id = sqlc.arg(environment_id) AND state <> 'releasing';
+
+-- A completed restore's resume: the target moves back and the hold lifts in
+-- the same write. Only the restore holding the environment resumes it, and
+-- only while its run still runs: a teardown cancels the run before it takes
+-- the environment down, and a restore finishing its last component must
+-- not undo that.
+-- name: ResumeRestoredEnvironment :execrows
+UPDATE environment_targets
+SET target_revision_id = sqlc.arg(target_revision_id)::uuid, state = 'active',
+    incomplete_restore_id = NULL, incomplete_restore_components = '{}',
+    updated_at = now()
+WHERE environment_targets.environment_id = sqlc.arg(environment_id)
+  AND environment_targets.state <> 'releasing'
+  AND environment_targets.incomplete_restore_id = sqlc.arg(restore_id)::uuid
+  AND EXISTS (SELECT 1 FROM backups JOIN runs ON runs.id = backups.run_id
+              WHERE backups.id = sqlc.arg(restore_id)::uuid AND runs.status = 'running');
+
+-- Accepting the data an incomplete restore left: the hold lifts and the
+-- environment stays down until the next deployment. The restore id is the
+-- one the caller was shown, so a hold a newer restore took over stays.
+-- name: ClearIncompleteRestore :execrows
+UPDATE environment_targets
+SET incomplete_restore_id = NULL, incomplete_restore_components = '{}'
+WHERE environment_id = sqlc.arg(environment_id)
+  AND incomplete_restore_id = sqlc.arg(restore_id)::uuid;
 
 -- name: MarkEnvironmentReleasing :execrows
 UPDATE environment_targets

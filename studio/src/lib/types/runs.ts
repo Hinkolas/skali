@@ -8,6 +8,7 @@ export type RunKind =
 	| 'reconcile'
 	| 'backup'
 	| 'restore'
+	| 'restore-accept'
 	| 'rotation';
 
 export type RunStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled';

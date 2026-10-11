@@ -196,7 +196,9 @@ run fails and can be re-run.
 Rotation and restore exclude each other through the environment's run
 slot: one waits for the other. A restore runs as the current login role
 acting as the owner, so it drops and recreates the database's objects
-exactly as before. The connection projection (the Studio's connection
+exactly as before. It runs in one transaction: a restore that fails
+partway, on a damaged dump or a statement the database refuses, rolls
+back and leaves the database as it was. The connection projection (the Studio's connection
 panel, the connection API) shows the credential version and, inside a
 window, the instant the previous login role retires.
 

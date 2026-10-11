@@ -311,7 +311,7 @@ role x or higher on the environment in question; D deployer; S sudo mode.
 | delete, teardown (S) | E:admin |
 | status, deployments, revisions, runs, run logs, runtime logs, value names, connection info, backups list, settings, access list | E:read |
 | promote into, rollback, restart, redeploy, run cancel, route probe, backup create, direct deploy with unchanged definition | E:deploy |
-| direct deploy with definition changes, values set/prune, restore (S), snapshot delete (S; project admin for snapshots of environments that no longer exist) | E:maintain |
+| direct deploy with definition changes, values set/prune, restore (S), accept an incomplete restore's data (S), snapshot delete (S; project admin for snapshots of environments that no longer exist) | E:maintain |
 | exec (S on promote-only environments), resolved application environment (S), credential reveal (S), credential rotation (S) | E:maintain |
 | bypass protection (S) | E:admin |
 | user management writes, nodes, system observation, backup target (S for writes) | IA |
@@ -425,6 +425,7 @@ their environment first):
 | `POST .../backups` | E:deploy |
 | `GET .../backups` | E:read |
 | `POST .../restore` (S) | E:maintain on the target, E:read on the snapshot's environment (a source the control plane no longer has is nobody's to protect) |
+| `POST .../restore/accept` (S) | E:maintain |
 
 ## Registry token scope
 

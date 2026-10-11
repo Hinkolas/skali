@@ -38,10 +38,10 @@ type objectStore interface {
 	// RemovePrefix deletes every object under prefix (which must end in a
 	// slash) and returns how many it removed.
 	RemovePrefix(ctx context.Context, prefix string) (int64, error)
-	// RemoveAll deletes every object in the bucket and returns how many it
-	// removed. Only the restore's clear of a fenced service bucket uses it;
-	// RemovePrefix keeps refusing the empty prefix so nothing wipes the
-	// backup target by accident.
+	// RemoveAll deletes every object in the bucket, and every folder that
+	// leaves empty, and returns how many it removed. Only the restore's
+	// clear of a fenced service bucket uses it; RemovePrefix keeps refusing
+	// the empty prefix so nothing wipes the backup target by accident.
 	RemoveAll(ctx context.Context) (int64, error)
 	// Reachable verifies the bucket exists and answers.
 	Reachable(ctx context.Context) error
@@ -385,8 +385,25 @@ func (s *minioStore) RemovePrefix(ctx context.Context, prefix string) (int64, er
 	return s.removeListing(ctx, prefix)
 }
 
+// removeAllPasses bounds how many listings RemoveAll deletes: one for the
+// objects, then one per level of folders they leave empty.
+const removeAllPasses = 64
+
+// RemoveAll empties the bucket entirely. SeaweedFS keeps a folder after
+// its last object is deleted, and a listing one level at a time reports
+// the empty folder as an object of its own, so the bucket is listed and
+// cleared again until a listing finds nothing: each pass removes the
+// folders the one before emptied.
 func (s *minioStore) RemoveAll(ctx context.Context) (int64, error) {
-	return s.removeListing(ctx, "")
+	var removed int64
+	for range removeAllPasses {
+		cleared, err := s.removeListing(ctx, "")
+		removed += cleared
+		if err != nil || cleared == 0 {
+			return removed, err
+		}
+	}
+	return removed, fmt.Errorf("backup: bucket %s still lists objects after %d passes", s.bucket, removeAllPasses)
 }
 
 // removeListing streams the listing under prefix into minio's bulk delete

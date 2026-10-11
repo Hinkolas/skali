@@ -16,6 +16,7 @@
 	import StackedBar from '$lib/components/ui/StackedBar.svelte';
 	import StatCard from '$lib/components/ui/StatCard.svelte';
 	import ServiceCard from '$lib/components/service/ServiceCard.svelte';
+	import IncompleteRestoreBanner from '$lib/components/run/IncompleteRestoreBanner.svelte';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -98,6 +99,14 @@
 		{subtitleText}
 	{/snippet}
 </PageHeader>
+
+{#if status?.incomplete_restore && data.env}
+	<IncompleteRestoreBanner
+		restore={status.incomplete_restore}
+		env={data.env}
+		project={data.project}
+	/>
+{/if}
 
 <div class="mb-6.5 grid grid-cols-2 gap-3.5 @4xl:grid-cols-4">
 	{#each stats as stat (stat.label)}

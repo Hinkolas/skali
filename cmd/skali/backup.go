@@ -29,7 +29,7 @@ func newBackupCommand() *cobra.Command {
 		Short: "Back up and restore environment data",
 	}
 	command.AddCommand(newBackupTargetCommand(), newBackupScheduleCommand(), newBackupCreateCommand(),
-		newBackupLsCommand(), newBackupRestoreCommand(), newBackupRemoveCommand())
+		newBackupLsCommand(), newBackupRestoreCommand(), newBackupAcceptCommand(), newBackupRemoveCommand())
 	return command
 }
 
@@ -120,10 +120,13 @@ func newBackupRestoreCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "restore [snapshot-id]",
 		Short: "Restore a snapshot's data into an environment",
-		Long: "Stops the environment, replaces every matching database, bucket,\n" +
-			"and volume with the snapshot's data, then resumes the current\n" +
-			"revision. Current data is overwritten. The environment must be\n" +
-			"deployed first; restore moves data, not configuration.\n\n" +
+		Long: "Verifies the snapshot's data, stops the environment, replaces every\n" +
+			"matching database, bucket, and volume with the snapshot's data, then\n" +
+			"resumes the current revision. Current data is overwritten. The\n" +
+			"environment must be deployed first; restore moves data, not\n" +
+			"configuration. A restore that stops the environment and does not\n" +
+			"complete keeps it down and refuses deploys until a restore\n" +
+			"completes, or until its data is accepted (skali backup accept).\n\n" +
 			"Without a snapshot id the project's snapshots are offered to pick\n" +
 			"from. The snapshot restores into the environment it was taken from\n" +
 			"unless --environment names another environment of the same project.\n" +
@@ -196,18 +199,23 @@ func newBackupRestoreCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			var cause error
 			switch outcome.Status {
 			case "succeeded":
 				fmt.Fprintf(out, "\n%s%s\n", style.Check(), style.Bold(style.Green("restore complete")))
 				return nil
 			case "failed":
-				return fmt.Errorf("%w; the environment stays down until a restore succeeds or it is redeployed",
-					failedRunError(runID, outcome.Failure))
+				cause = failedRunError(runID, outcome.Failure)
 			case "cancelled":
-				return fmt.Errorf("run %s was cancelled; the environment stays down until a restore succeeds or it is redeployed", runID)
+				cause = fmt.Errorf("run %s was cancelled", runID)
 			default:
 				return nil
 			}
+			status, err := scope.api.EnvironmentStatus(ctx, targetEnvironment.ID)
+			if err != nil {
+				return cause
+			}
+			return restoreHoldError(status, runID, targetEnvironment.Name, cause)
 		},
 	}
 	command.Flags().StringVar(&project, "project", "", "project holding the snapshot; defaults to the checkout's project")

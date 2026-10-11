@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path"
 	"sort"
 	"strings"
 	"time"
@@ -34,6 +35,26 @@ type Status struct {
 	// preference from the kernel config; empty means multi-arch builds.
 	PlatformPreference []string
 	Services           []ServiceStatus
+	// IncompleteRestore is the restore holding the environment, nil when
+	// none does: it stopped the environment and did not complete, so its
+	// data may be partial and deployments are refused until a restore
+	// completes or the data is accepted.
+	IncompleteRestore *IncompleteRestore
+}
+
+// IncompleteRestore describes the restore holding an environment: its row,
+// the run that journals it, the snapshot it restores, and the components
+// it set out to rewrite. Status is the row's: running while the restore
+// still runs, else failed or cancelled.
+type IncompleteRestore struct {
+	ID         uuid.UUID
+	RunID      *uuid.UUID
+	Snapshot   string
+	Status     string
+	Error      string
+	StartedAt  time.Time
+	FinishedAt *time.Time
+	Components []string
 }
 
 type RevisionRef struct {
@@ -138,6 +159,24 @@ func (k *Kernel) Status(ctx context.Context, environmentID uuid.UUID) (*Status, 
 		Observation:        k.deps.Observed.Source(),
 		Platforms:          k.deps.Observed.NodePlatforms(),
 		PlatformPreference: k.cfg.PlatformPreference,
+	}
+	if target.IncompleteRestoreID != nil {
+		row, err := k.deps.Store.GetBackup(ctx, *target.IncompleteRestoreID)
+		if err != nil {
+			return nil, fmt.Errorf("reconcile: get incomplete restore: %w", err)
+		}
+		status.IncompleteRestore = &IncompleteRestore{
+			ID:         row.ID,
+			RunID:      row.RunID,
+			Snapshot:   strings.TrimSuffix(path.Base(row.SnapshotKey), ".json"),
+			Status:     row.Status,
+			StartedAt:  row.CreatedAt,
+			FinishedAt: row.FinishedAt,
+			Components: target.IncompleteRestoreComponents,
+		}
+		if row.Error != nil {
+			status.IncompleteRestore.Error = *row.Error
+		}
 	}
 	var targetRevision *revision.Revision
 	if target.TargetRevisionID != nil {

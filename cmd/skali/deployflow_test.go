@@ -336,6 +336,8 @@ type fakeInstall struct {
 	steps     map[string][]client.Step
 	revisions map[string][]client.RevisionSummary
 	posts     []string
+	// held is the incomplete restore holding an environment, by its id.
+	held map[string]*client.IncompleteRestore
 	// reauthRequired makes every gated write answer reauth_required until
 	// the session reauthenticates once; reauths counts those calls.
 	reauthRequired bool
@@ -353,6 +355,7 @@ func newFakeInstall(t *testing.T) *fakeInstall {
 		runs:      map[string]client.Run{},
 		steps:     map[string][]client.Step{},
 		revisions: map[string][]client.RevisionSummary{},
+		held:      map[string]*client.IncompleteRestore{},
 	}
 	writeError := func(w http.ResponseWriter, status int, code, message string) {
 		w.WriteHeader(status)
@@ -609,6 +612,26 @@ func newFakeInstall(t *testing.T) *fakeInstall {
 			}
 			f.posts = append(f.posts, "cell:"+env.ID+":"+user+":"+req.Role)
 			_ = json.NewEncoder(w).Encode(map[string]any{"access": client.Member{Email: user, Role: req.Role}})
+		case sub == "status":
+			state := "active"
+			if f.held[env.ID] != nil {
+				state = "down"
+			}
+			_ = json.NewEncoder(w).Encode(client.EnvironmentStatus{EnvironmentID: env.ID, State: state,
+				IncompleteRestore: f.held[env.ID]})
+		case sub == "restore" && len(parts) == 3 && parts[2] == "accept":
+			if !gate(w) {
+				return
+			}
+			var req map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			if held := f.held[env.ID]; held == nil || held.ID != req["restore_id"] {
+				writeError(w, http.StatusConflict, "no_incomplete_restore", "that restore no longer holds the environment")
+				return
+			}
+			delete(f.held, env.ID)
+			f.posts = append(f.posts, "accept:"+env.ID+":"+req["restore_id"])
+			_ = json.NewEncoder(w).Encode(map[string]any{"run_id": "run-accept-1"})
 		case sub == "teardown":
 			if !gate(w) {
 				return

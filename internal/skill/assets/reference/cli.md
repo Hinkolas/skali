@@ -91,10 +91,14 @@ can remove them. Invalid YAML diagnostics identify the configuration file to edi
   environment and origin (`manual` or `scheduled`); `--environment`
   filters. `skali backup restore [<snapshot-id>]` restores into the
   environment the snapshot came from (or `--environment <other>`) after a
-  typed confirmation; the environment stops while data is written and stays
-  down if the restore fails. `skali backup remove <snapshot-id>` deletes a
-  snapshot for good. Restore and remove need `maintain` on the environment
-  and a recent login. Snapshots whose original environment was purged need
+  typed confirmation; the snapshot is verified first, and the environment
+  stops while data is written. A restore that fails after the stop keeps
+  the environment down and refuses deploys (`restore_incomplete`) until a
+  restore completes; `skali backup accept [--environment <name>]` accepts
+  the data as it is instead, and the next deploy brings the environment
+  back. `skali backup remove <snapshot-id>` deletes a snapshot for good.
+  Restore, accept, and remove need `maintain` on the environment and a
+  recent login. Snapshots whose original environment was purged need
   project admin; restore requires an explicit `--environment` target. Renamed
   environments keep their snapshots and list them under their current name.
 

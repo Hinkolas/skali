@@ -13,6 +13,7 @@ import (
 
 	"github.com/Hinkolas/skali/internal/authz"
 	"github.com/Hinkolas/skali/internal/compiler"
+	"github.com/Hinkolas/skali/internal/deploy"
 	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/substrate"
@@ -120,6 +121,12 @@ func (c *Controller) CreateBackup(ctx context.Context, in BackupInput) (*CreateR
 		}
 		return nil, fmt.Errorf("backup: get environment target: %w", err)
 	}
+	if target.IncompleteRestoreID != nil {
+		// Down like any inactive environment, but no deploy brings it
+		// back: say what does.
+		return nil, fmt.Errorf("%w: %w", ErrEnvironmentNotActive,
+			&deploy.RestoreIncompleteError{RestoreID: *target.IncompleteRestoreID})
+	}
 	if target.State != "active" || target.ActiveRevisionID == nil {
 		return nil, ErrEnvironmentNotActive
 	}
@@ -193,6 +200,9 @@ func (c *Controller) RecoverOnBoot(ctx context.Context) error {
 	}
 	for _, row := range rows {
 		message := row.Kind + " interrupted: the daemon restarted while it was running"
+		if row.Kind == KindRestore && c.holds(ctx, row) {
+			message += "; the environment stays down until a restore completes or its data is accepted"
+		}
 		if row.RunID != nil {
 			if err := c.deps.Journal.FailRun(ctx, *row.RunID, nil, message); err != nil &&
 				!errors.Is(err, journal.ErrInvalidTransition) && !errors.Is(err, journal.ErrNotFound) {
@@ -212,6 +222,13 @@ func (c *Controller) RecoverOnBoot(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// holds reports whether the restore row holds its environment: it stopped
+// the environment and nothing completed or accepted it since.
+func (c *Controller) holds(ctx context.Context, row store.Backup) bool {
+	target, err := c.deps.Store.GetEnvironmentTarget(ctx, row.EnvironmentID)
+	return err == nil && target.IncompleteRestoreID != nil && *target.IncompleteRestoreID == row.ID
 }
 
 // SnapshotSummary is one listable snapshot, read from its S3 manifest.
