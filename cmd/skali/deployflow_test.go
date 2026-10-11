@@ -1159,3 +1159,60 @@ func TestCheckDeployPolicy(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, consumed)
 }
+
+// The build engine's output feeds the step log sink; a slow journal must
+// not hold up the engine, and every line still arrives, in order.
+func TestStepLogSinkShipsBesideTheEngine(t *testing.T) {
+	gate := make(chan struct{})
+	release := sync.OnceFunc(func() { close(gate) })
+	var mu sync.Mutex
+	var batches [][]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-gate
+		var body struct {
+			Lines []client.LogLine `json:"lines"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		batch := make([]string, len(body.Lines))
+		for index, line := range body.Lines {
+			batch[index] = line.Message
+		}
+		mu.Lock()
+		batches = append(batches, batch)
+		mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	defer release()
+	api := client.New(srv.URL, "token", client.Caller{UserAgent: "test"})
+
+	sink := newStepLogSink(context.Background(), api, "s1")
+	wrote := make(chan struct{})
+	go func() {
+		for index := range 60 {
+			sink.Line("info", fmt.Sprintf("line %d", index))
+		}
+		close(wrote)
+	}()
+	select {
+	case <-wrote:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Line waited on the journal")
+	}
+	release()
+	sink.Flush()
+
+	var got []string
+	for _, batch := range batches {
+		require.LessOrEqual(t, len(batch), stepLogBatch)
+		got = append(got, batch...)
+	}
+	want := make([]string, 60)
+	for index := range want {
+		want[index] = fmt.Sprintf("line %d", index)
+	}
+	require.Equal(t, want, got)
+}

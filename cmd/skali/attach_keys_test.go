@@ -121,3 +121,118 @@ func TestAttachRunDetachKeyAndDoubleInterrupt(t *testing.T) {
 		require.Equal(t, "cancelled", got.status)
 	})
 }
+
+// frames counts the synchronized-output frames the renderer has written.
+func (term *attachTerminal) frames() int {
+	term.mu.Lock()
+	defer term.mu.Unlock()
+	return strings.Count(term.text.String(), "\x1b[?2026h")
+}
+
+// The observer owns the network and the view owns the terminal: a poll
+// stuck on the server must not freeze the spinner, the elapsed timers, or
+// the keys, and a detach drops the stuck request.
+func TestAttachViewStaysLiveWhileTheServerStalls(t *testing.T) {
+	type result struct {
+		status string
+		err    error
+	}
+	started := time.Now().Add(-5 * time.Second)
+
+	t.Run("a stalled poll", func(t *testing.T) {
+		f := newStallingRuns(t, client.Run{ID: "r1", Kind: "deployment", Status: "running"},
+			client.Step{ID: "s1", Key: "rollout", Title: "Roll out api", Status: "running", StartedAt: &started})
+		f.mu.Lock()
+		f.stallPolls = true
+		f.mu.Unlock()
+		term, slave := newAttachTerminal(t)
+		done := make(chan result, 1)
+		go func() {
+			outcome, err := attachRunMode(context.Background(), slave, f.client(), "r1", "", attachCancelsRun)
+			done <- result{outcome.Status, err}
+		}()
+		term.waitFor(t, "Roll out api")
+		receiveWithin(t, f.stalled, 5*time.Second, "the second poll to stall")
+
+		frames := term.frames()
+		require.Eventually(t, func() bool { return term.frames() >= frames+4 },
+			5*time.Second, 10*time.Millisecond, "the spinner keeps animating")
+		// The step started 5s before the attach; its elapsed time keeps
+		// counting while the server says nothing new.
+		term.waitFor(t, "7s")
+
+		_, err := io.WriteString(term.master, "d")
+		require.NoError(t, err)
+		select {
+		case got := <-done:
+			require.NoError(t, got.err)
+			require.Equal(t, "detached", got.status)
+		case <-time.After(2 * time.Second):
+			t.Fatal("the detach key waited on the stalled poll")
+		}
+		receiveWithin(t, f.aborted, 2*time.Second, "the detach to drop the stalled poll")
+	})
+
+	t.Run("a stalled cancel request", func(t *testing.T) {
+		f := newStallingRuns(t, client.Run{ID: "r1", Kind: "deployment", Status: "running"},
+			client.Step{ID: "s1", Key: "rollout", Title: "Roll out api", Status: "running", StartedAt: &started})
+		f.mu.Lock()
+		f.stallCancel = true
+		f.continues = true
+		f.mu.Unlock()
+		term, slave := newAttachTerminal(t)
+		done := make(chan result, 1)
+		go func() {
+			outcome, err := attachRunMode(context.Background(), slave, f.client(), "r1", "", attachCancelsRun)
+			done <- result{outcome.Status, err}
+		}()
+		term.waitFor(t, "d detaches, Ctrl-C cancels")
+		require.NoError(t, syscall.Kill(os.Getpid(), syscall.SIGINT))
+		term.waitFor(t, "press Ctrl-C again to cancel the run")
+		require.NoError(t, syscall.Kill(os.Getpid(), syscall.SIGINT))
+		receiveWithin(t, f.stalled, 5*time.Second, "the cancel request to stall")
+		term.waitFor(t, "cancelling the run, waiting for the server")
+
+		frames := term.frames()
+		require.Eventually(t, func() bool { return term.frames() >= frames+4 },
+			5*time.Second, 10*time.Millisecond, "the spinner keeps animating")
+
+		// The run settles before the server answers the cancel request;
+		// the closing note still needs that answer.
+		f.setStatus("cancelled")
+		select {
+		case got := <-done:
+			t.Fatalf("finished before the cancel answer arrived: %+v", got)
+		case <-time.After(time.Second):
+		}
+		f.release()
+		got := <-done
+		require.NoError(t, got.err)
+		require.Equal(t, "cancelled", got.status)
+		term.waitFor(t, "this was the environment's first deployment")
+	})
+
+	t.Run("a session interrupt during a stalled poll", func(t *testing.T) {
+		f := newStallingRuns(t, client.Run{ID: "r1", Kind: "deployment", Status: "running"})
+		f.mu.Lock()
+		f.stallPolls = true
+		f.mu.Unlock()
+		term, slave := newAttachTerminal(t)
+		done := make(chan result, 1)
+		go func() {
+			outcome, err := attachRunMode(context.Background(), slave, f.client(), "r1", "", attachSessionEnds)
+			done <- result{outcome.Status, err}
+		}()
+		term.waitFor(t, "d detaches, Ctrl-C ends the session")
+		receiveWithin(t, f.stalled, 5*time.Second, "the second poll to stall")
+		require.NoError(t, syscall.Kill(os.Getpid(), syscall.SIGINT))
+		select {
+		case got := <-done:
+			require.NoError(t, got.err)
+			require.Equal(t, "detached", got.status)
+		case <-time.After(2 * time.Second):
+			t.Fatal("the session interrupt waited on the stalled poll")
+		}
+		receiveWithin(t, f.aborted, 2*time.Second, "the interrupt to drop the stalled poll")
+	})
+}
