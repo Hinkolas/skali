@@ -4,7 +4,7 @@
 	import { invalidateAll } from '$app/navigation';
 	import { api, ApiError } from '$lib/api/client';
 	import type { RunTree, Step } from '$lib/types/runs';
-	import { runUnsettled } from '$lib/types/runs';
+	import { runCancellable, runKindLabel, runUnsettled } from '$lib/types/runs';
 	import { openStream } from '$lib/sse';
 	import { describeActor, formatDuration, formatDateTime } from '$lib/format';
 	import { authState } from '$lib/stores/auth.svelte';
@@ -19,7 +19,9 @@
 
 	// Lives in the shared side panel; re-opening with a different runId
 	// updates props in place, so all state below is keyed on runId.
-	let { runId, close }: { runId: string; close: () => void } = $props();
+	// Without close (embedded in a page rather than the side panel) the
+	// close button is left out.
+	let { runId, close }: { runId: string; close?: () => void } = $props();
 
 	users.load();
 
@@ -74,6 +76,7 @@
 	});
 
 	const unsettled = $derived(tree != null && runUnsettled(tree.run.status));
+	const cancellable = $derived(tree != null && runCancellable(tree.run));
 
 	// Top-level steps that reached an end state, as the bar's fill. A run
 	// the reconciler has not picked up yet has no steps at all; the bar then
@@ -113,7 +116,7 @@
 		if (!tree) return;
 		const run = tree.run;
 		dialog.confirm({
-			title: `Cancel this ${run.kind}?`,
+			title: `Cancel this ${runKindLabel(run.kind)}?`,
 			description:
 				'Before promotion the run stops cleanly; after promotion the target is reverted.',
 			confirmLabel: 'Cancel run',
@@ -135,7 +138,7 @@
 	<div class="flex items-start gap-2.5">
 		<div class="min-w-0">
 			<div class="text-text-primary flex items-center gap-2 text-xl font-semibold">
-				{tree?.run.kind ?? 'run'}
+				{tree ? runKindLabel(tree.run.kind) : 'run'}
 				{#if tree}
 					<span class="text-md font-medium {statusText[tree.run.status]}">{tree.run.status}</span>
 					{#if withWarnings}
@@ -170,17 +173,19 @@
 			{/if}
 		</div>
 		<div class="ml-auto flex flex-none items-center gap-2">
-			{#if unsettled}
+			{#if cancellable}
 				<Button size="sm" variant="ghost" onclick={cancelRun}>Cancel</Button>
 			{/if}
-			<button
-				type="button"
-				onclick={close}
-				class="text-text-faint hover:text-text-primary cursor-pointer rounded-md p-1 transition-colors"
-				aria-label="Close run details"
-			>
-				<X class="size-3.5" />
-			</button>
+			{#if close}
+				<button
+					type="button"
+					onclick={close}
+					class="text-text-faint hover:text-text-primary cursor-pointer rounded-md p-1 transition-colors"
+					aria-label="Close run details"
+				>
+					<X class="size-3.5" />
+				</button>
+			{/if}
 		</div>
 	</div>
 	{#if !failed && (!tree || unsettled)}

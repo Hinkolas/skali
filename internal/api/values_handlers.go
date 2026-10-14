@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/Hinkolas/skali/internal/compiler"
+	"github.com/Hinkolas/skali/internal/feed"
 	"github.com/Hinkolas/skali/internal/naming"
 	"github.com/Hinkolas/skali/internal/project"
 	"github.com/Hinkolas/skali/internal/store"
@@ -27,6 +28,7 @@ type valuesHandlers struct {
 	projects *project.Service
 	values   *valuestore.Service
 	st       *store.Store
+	feed     *feed.Projects
 }
 
 type valueEntryPayload struct {
@@ -114,6 +116,7 @@ func (h *valuesHandlers) put(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	h.feed.Publish(grantFrom(r.Context()).ProjectID)
 	writeJSON(w, http.StatusCreated, struct {
 		CandidateID string   `json:"candidate_id"`
 		Staged      []string `json:"staged"`
@@ -152,6 +155,7 @@ func (h *valuesHandlers) del(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, codeNotFound, "no stored value named "+name)
 		return
 	}
+	h.feed.Publish(grantFrom(r.Context()).ProjectID)
 	w.WriteHeader(http.StatusNoContent)
 }
 

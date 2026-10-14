@@ -33,12 +33,11 @@ export const load: LayoutLoad = async ({ params, url, parent, fetch }) => {
 	// caller may read, then the first at all (a locked one renders as such).
 	const requested = url.searchParams.get('env');
 	const open = environments.filter((e) => e.access !== 'none');
+	const named = environments.find(
+		(e) => e.name === requested || e.previous_names?.includes(requested ?? '')
+	);
 	const env =
-		environments.find((e) => e.name === requested || e.previous_names?.includes(requested ?? '')) ??
-		open.find((e) => e.name === 'production') ??
-		open[0] ??
-		environments[0] ??
-		null;
+		named ?? open.find((e) => e.name === 'production') ?? open[0] ?? environments[0] ?? null;
 
 	// A project may have no draft (404: zero services); it degrades instead
 	// of erroring the whole scope.
@@ -49,6 +48,10 @@ export const load: LayoutLoad = async ({ params, url, parent, fetch }) => {
 		project,
 		environments,
 		env,
+		// A requested environment that does not exist (anymore): the layout
+		// says so and rewrites the URL to the fallback instead of silently
+		// showing another environment under a stale ?env=.
+		missingEnv: requested && !named ? requested : null,
 		definition,
 		// The draft's identity (hash, version, where it came from) for the
 		// settings page; the definition above is what everything else reads.

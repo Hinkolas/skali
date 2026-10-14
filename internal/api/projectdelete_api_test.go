@@ -171,6 +171,48 @@ func TestProjectStream(t *testing.T) {
 	require.Equal(t, "deleted", event)
 }
 
+func TestProjectStreamFollowsValuesAndAccess(t *testing.T) {
+	a := newTestAPI(t)
+	a.createUser("owner@example.com", "hunter2hunter2")
+	a.createUser("bob@example.com", "hunter2hunter2")
+	owner := a.login("owner@example.com", "hunter2hunter2")
+	bob := a.login("bob@example.com", "hunter2hunter2")
+	projectID, envID := a.createEnvironment(t, owner)
+	definitionVersion := a.submitDefinition(t, owner, projectID, deployAPIManifest)
+	status, _ := a.do("PUT", "/v1/projects/"+projectID+"/members/bob@example.com", owner, map[string]string{"role": "read"})
+	require.Equal(t, http.StatusOK, status)
+
+	open := func(token string) func() (string, string) {
+		req, err := http.NewRequestWithContext(t.Context(), "GET", a.srv.URL+"/v1/projects/"+projectID+"/stream", nil)
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer "+token)
+		res, err := a.srv.Client().Do(req)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = res.Body.Close() })
+		require.Equal(t, http.StatusOK, res.StatusCode)
+		readEvent := sseReader(a, bufio.NewReader(res.Body))
+		event, _ := readEvent()
+		require.Equal(t, "ready", event)
+		return readEvent
+	}
+	ownerEvents := open(owner)
+	bobEvents := open(bob)
+
+	a.stageValues(t, owner, envID, definitionVersion, "stream-value")
+	event, _ := ownerEvents()
+	require.Equal(t, "changed", event)
+	event, _ = bobEvents()
+	require.Equal(t, "changed", event)
+
+	// Losing the membership ends bob's stream; the owner sees a change.
+	status, _ = a.do("DELETE", "/v1/projects/"+projectID+"/members/bob@example.com", owner, nil)
+	require.Equal(t, http.StatusNoContent, status)
+	event, _ = bobEvents()
+	require.Equal(t, "revoked", event)
+	event, _ = ownerEvents()
+	require.Equal(t, "changed", event)
+}
+
 func TestProjectStreamUnknownProject(t *testing.T) {
 	a := newTestAPI(t)
 	a.createUser("nick@example.com", "hunter2hunter2")

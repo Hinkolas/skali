@@ -1055,10 +1055,10 @@ paths:
         when to re-read what it shows of a project. `ready` is sent on
         every connect, so a reconnecting client re-reads what it may have
         missed. `changed` (coalesced) follows a change to the project, its
-        draft, its environments or their settings, and every run started
+        draft, its environments, their settings, values, or access, and every run started
         or finished in an environment the caller can read, which covers
         deploys, stops, and purges. `deleted` ends the stream once the
-        project is gone (or no longer visible to the caller). A comment
+        project is gone, `revoked` once the caller lost access. A comment
         ping is sent every 15 seconds. The stream closes when the
         subscriber falls behind; clients simply reconnect. This route is
         exempt from the request timeout.

@@ -2,7 +2,7 @@
 	import Rocket from '@lucide/svelte/icons/rocket';
 	import { api, ApiError } from '$lib/api/client';
 	import type { Run, RunKind } from '$lib/types/runs';
-	import { runUnsettled, type RunsList } from '$lib/types/runs';
+	import { runCancellable, runKindLabel, type RunsList } from '$lib/types/runs';
 	import { openStream } from '$lib/sse';
 	import { describeActor, formatDuration, relativeTime } from '$lib/format';
 	import { clock } from '$lib/stores/clock.svelte';
@@ -27,7 +27,7 @@
 		kinds,
 		limit,
 		emptyTitle = 'No runs yet',
-		emptyDescription = 'deploys, rollbacks, and teardowns appear here'
+		emptyDescription = 'deploys, rollbacks, and stops appear here'
 	}: {
 		envId: string | null;
 		seed: Run[] | null;
@@ -76,7 +76,7 @@
 
 	function cancelRun(run: Run) {
 		dialog.confirm({
-			title: `Cancel this ${run.kind}?`,
+			title: `Cancel this ${runKindLabel(run.kind)}?`,
 			description:
 				'Before promotion the run stops cleanly; after promotion the target is reverted.',
 			confirmLabel: 'Cancel run',
@@ -111,7 +111,7 @@
 						onclick={() => openRun(run)}
 						class="font-mono text-text-primary flex cursor-pointer items-center gap-2 text-left text-md hover:underline"
 					>
-						{run.kind}
+						{runKindLabel(run.kind)}
 					</button>
 					<CopyId id={run.id} hint="skali run attach {run.id}" class="text-sm" />
 					{#if run.bypass_protection}
@@ -158,7 +158,7 @@
 					{/if}
 				</div>
 				<div class="flex justify-end">
-					{#if runUnsettled(run.status)}
+					{#if runCancellable(run)}
 						<Button size="sm" variant="ghost" onclick={() => cancelRun(run)}>Cancel</Button>
 					{/if}
 				</div>

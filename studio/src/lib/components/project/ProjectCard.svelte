@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
+	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
 	import type { Project } from '$lib/types/project';
 	import { relativeTime } from '$lib/format';
 	import { HEALTH_META } from '$lib/service-types';
@@ -11,6 +12,7 @@
 		projectWorstHealth
 	} from '$lib/models/project';
 	import EnvironmentRollup from '$lib/components/project/EnvironmentRollup.svelte';
+	import Pill from '$lib/components/ui/Pill.svelte';
 	import Skeleton from '$lib/components/ui/Skeleton.svelte';
 	import TypeBadge from '$lib/components/ui/TypeBadge.svelte';
 
@@ -39,6 +41,12 @@
 		<div class="text-text-primary truncate text-xl font-semibold">
 			{project.display_name || project.name}
 		</div>
+		{#if project.deleting_at}
+			<span class="flex items-center gap-1.5" title="being deleted with all its environments">
+				<LoaderCircle size={12} class="text-status-warning flex-none animate-spin" />
+				<Pill text="deleting" tone="warning" />
+			</span>
+		{/if}
 		{#if pending}
 			<Skeleton variant="pill" />
 			<Skeleton variant="line" class="ml-auto size-[8px] w-[8px] rounded-full" />

@@ -2,7 +2,15 @@
 
 export type SourceMode = 'managed' | 'file';
 
+/** Desired presence: active runs, down is stopped, releasing is being deleted. */
 export type EnvironmentState = 'active' | 'down' | 'releasing';
+
+/** How the Studio names each state: a stopped environment comes back on the next deploy, a releasing one is being deleted. */
+export const ENVIRONMENT_STATE_LABEL: Record<EnvironmentState, string> = {
+	active: 'active',
+	down: 'stopped',
+	releasing: 'deleting'
+};
 
 export type ServiceHealth = 'unknown' | 'progressing' | 'healthy' | 'degraded' | 'unhealthy';
 
@@ -66,6 +74,8 @@ export interface Project {
 	created_at: string;
 	/** When the project's own settings last changed; deploys never move it. */
 	updated_at: string;
+	/** Set once a delete was decided: the environments are being deleted and the project goes with the last of them. */
+	deleting_at?: string;
 	access: ProjectAccess;
 	/** Present only when the list was fetched with ?include=summary. */
 	summary?: ProjectSummary;

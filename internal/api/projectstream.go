@@ -26,9 +26,10 @@ type projectStreamHandlers struct {
 //
 // Payload-free change signals for everything a project's pages show:
 // "ready" on connect (a reconnecting client re-reads, since it may have
-// missed changes), "changed" when the project, its draft, its environments
-// or their settings change or a run starts or finishes in an environment
-// the caller can read, and a final "deleted" once the project is gone.
+// missed changes), "changed" when the project, its draft, its environments,
+// their settings, values, or access change or a run starts or finishes in
+// an environment the caller can read, and a final "deleted" once the
+// project is gone or "revoked" once the caller lost access to it.
 // Changes are coalesced; clients re-read what they show. Mounted outside
 // the request-timeout middleware.
 func (h *projectStreamHandlers) stream(w http.ResponseWriter, r *http.Request) {
@@ -61,18 +62,18 @@ func (h *projectStreamHandlers) stream(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 	// follow subscribes to the run signals of every environment the caller
-	// can read right now, and drops the rest. It reports whether the
-	// project is still there for the caller.
-	follow := func(ctx context.Context) (bool, error) {
+	// can read right now, and drops the rest. It reports the project's
+	// standing for the caller: present, deleted, or revoked.
+	follow := func(ctx context.Context) (string, error) {
 		grant, err := h.resolver.Project(ctx, user, id)
 		if errors.Is(err, authz.ErrNotFound) {
-			return false, nil
+			return "deleted", nil
 		}
 		if err != nil {
-			return false, err
+			return "", err
 		}
 		if !grant.Visible() {
-			return false, nil
+			return "revoked", nil
 		}
 		for envID, cancel := range runs {
 			if env, ok := grant.Environment(envID); !ok || env.Locked() {
@@ -92,17 +93,17 @@ func (h *projectStreamHandlers) stream(w http.ResponseWriter, r *http.Request) {
 				}
 			}()
 		}
-		return true, nil
+		return "present", nil
 	}
 
 	resolveCtx, cancelResolve := context.WithTimeout(r.Context(), resolveTimeout)
-	present, err := follow(resolveCtx)
+	standing, err := follow(resolveCtx)
 	cancelResolve()
 	if err != nil {
 		writeInternalError(r.Context(), w, "resolve access", err)
 		return
 	}
-	if !present {
+	if standing != "present" {
 		writeError(w, http.StatusNotFound, codeNotFound, "not found")
 		return
 	}
@@ -145,14 +146,14 @@ func (h *projectStreamHandlers) stream(w http.ResponseWriter, r *http.Request) {
 			default:
 			}
 			resolveCtx, cancelResolve := context.WithTimeout(r.Context(), resolveTimeout)
-			present, err := follow(resolveCtx)
+			standing, err := follow(resolveCtx)
 			cancelResolve()
 			if err != nil {
 				// The client reconnects; its "ready" re-reads.
 				return
 			}
-			if !present {
-				send("deleted")
+			if standing != "present" {
+				send(standing)
 				return
 			}
 			send("changed")

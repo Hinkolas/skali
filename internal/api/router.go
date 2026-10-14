@@ -307,7 +307,7 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 				// destructive deletes and access management need sudo mode.
 				ph := &projectsHandlers{projects: d.Projects, deploy: d.Deploy, journal: d.Journal, feed: d.Feed, health: d.Health, resolver: ac.resolver}
 				eh := &environmentsHandlers{projects: d.Projects, deploy: d.Deploy, journal: d.Journal, reconcile: d.Reconcile, health: d.Health}
-				ah := &accessHandlers{projects: d.Projects}
+				ah := &accessHandlers{projects: d.Projects, feed: d.Feed}
 				ac.route(r, "POST", "/projects", classProjectCreate, ph.create)
 				ac.route(r, "GET", "/projects", classProjectList, ph.list)
 				ac.route(r, "GET", "/projects/{id}", classProjectRead, ph.get)
@@ -322,7 +322,7 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 
 				ac.route(r, "POST", "/projects/{id}/definitions", classDeployer, ph.submitDefinition)
 
-				vh := &valuesHandlers{projects: d.Projects, values: d.Values, st: d.Store}
+				vh := &valuesHandlers{projects: d.Projects, values: d.Values, st: d.Store, feed: d.Feed}
 				ac.route(r, "GET", "/environments/{id}/values", classEnvRead, vh.get)
 				ac.route(r, "PUT", "/environments/{id}/values", classEnvMaintain, vh.put)
 				ac.route(r, "DELETE", "/environments/{id}/values/{name}", classEnvMaintain, vh.del)

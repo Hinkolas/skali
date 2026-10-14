@@ -529,7 +529,8 @@ protection; the environment dropdown lists locked
 environments disabled with a lock icon and marks protected and high ones;
 the default environment prefers an unlocked one; a locked environment's
 operational pages show a lock state while settings stay reachable; New
-project, New environment, display name, delete, teardown, purge, rollback,
+project, New environment, display name, delete project, stop and delete
+environment, rollback,
 values, credential reveal, and credential rotation follow `access`
 (disabled with the required role as title); nodes, system, and users answer 403 to members server-side.
 Sudo-gated writes run from pages, never from inside a modal, because the

@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Hinkolas/skali/internal/authz"
+	"github.com/Hinkolas/skali/internal/feed"
 	"github.com/Hinkolas/skali/internal/project"
 )
 
@@ -19,6 +20,7 @@ import (
 // address they know without listing users (an instance-admin right).
 type accessHandlers struct {
 	projects *project.Service
+	feed     *feed.Projects
 }
 
 type memberPayload struct {
@@ -156,6 +158,7 @@ func (h *accessHandlers) putMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logAccessChange(r, "project member set", "project", id.String(), map[string]any{"user": member.Email}, map[string]any{"user": member.Email, "role": role.String()})
+	h.feed.Publish(grantFrom(r.Context()).ProjectID)
 	writeJSON(w, http.StatusOK, struct {
 		Member memberPayload `json:"member"`
 	}{newMemberPayload(member)})
@@ -180,6 +183,7 @@ func (h *accessHandlers) deleteMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logAccessChange(r, "project member removed", "project", id.String(), map[string]any{"user": userID.String()}, nil)
+	h.feed.Publish(grantFrom(r.Context()).ProjectID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -224,6 +228,7 @@ func (h *accessHandlers) putEnvironmentAccess(w http.ResponseWriter, r *http.Req
 		return
 	}
 	logAccessChange(r, "environment access set", "environment", id.String(), map[string]any{"user": cell.Email}, map[string]any{"user": cell.Email, "role": role.String()})
+	h.feed.Publish(grantFrom(r.Context()).ProjectID)
 	writeJSON(w, http.StatusOK, struct {
 		Access memberPayload `json:"access"`
 	}{newCellPayload(cell)})
@@ -249,6 +254,7 @@ func (h *accessHandlers) deleteEnvironmentAccess(w http.ResponseWriter, r *http.
 		return
 	}
 	logAccessChange(r, "environment access removed", "environment", id.String(), map[string]any{"user": userID.String()}, nil)
+	h.feed.Publish(grantFrom(r.Context()).ProjectID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
