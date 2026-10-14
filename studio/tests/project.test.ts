@@ -5,7 +5,9 @@ import {
 	projectHealthTitle,
 	projectServiceCount,
 	projectUpdatedAt,
-	projectWorstHealth
+	projectWorstHealth,
+	sortProjects,
+	type ProjectSort
 } from '../src/lib/models/project';
 import type { Project, SummaryEnvironment } from '../src/lib/types/project';
 
@@ -60,6 +62,38 @@ test('service counts sum the summary and read zero without one', () => {
 test('the update time is the summary activity, else the settings time', () => {
 	expect(projectUpdatedAt(project())).toBe('2026-09-01T00:00:00Z');
 	expect(projectUpdatedAt(summary([]))).toBe('2026-10-11T12:00:00Z');
+});
+
+test('projects sort by shown name or by update time, ties by name', () => {
+	const at = (updated_at: string) => ({
+		environments: [],
+		service_counts: { applications: 0, databases: 0, buckets: 0 },
+		updated_at
+	});
+	const a = project({
+		id: 'a',
+		name: 'alpha',
+		display_name: '',
+		summary: at('2026-10-01T00:00:00Z')
+	});
+	const b = project({
+		id: 'b',
+		name: 'zulu',
+		display_name: 'Bravo',
+		summary: at('2026-10-12T00:00:00Z')
+	});
+	const c = project({
+		id: 'c',
+		name: 'charlie',
+		display_name: '',
+		summary: at('2026-10-12T00:00:00Z')
+	});
+	const ids = (sort: ProjectSort) => sortProjects([c, a, b], sort).map((p) => p.id);
+
+	expect(ids('name-asc')).toEqual(['a', 'b', 'c']);
+	expect(ids('name-desc')).toEqual(['c', 'b', 'a']);
+	expect(ids('updated-desc')).toEqual(['b', 'c', 'a']);
+	expect(ids('updated-asc')).toEqual(['a', 'b', 'c']);
 });
 
 test('environment counts fall back to the access map on the plain list', () => {
