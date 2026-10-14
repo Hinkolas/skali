@@ -122,7 +122,7 @@
 			<button
 				type="submit"
 				disabled={submitting}
-				class="from-accent-from to-accent-to text-surface-base shadow-glow mt-1 inline-flex cursor-pointer items-center justify-center gap-2 rounded-[11px] bg-linear-135 p-3 text-lg font-semibold transition-[filter] hover:brightness-108 disabled:cursor-default disabled:opacity-70"
+				class="bg-accent-fill mt-1 inline-flex cursor-pointer items-center justify-center gap-2 rounded-[11px] p-3 text-lg font-medium text-white transition-[filter] hover:brightness-108 active:brightness-95 disabled:cursor-default disabled:opacity-70"
 			>
 				{#if submitting}
 					<LoaderCircle size={18} strokeWidth={2.25} class="animate-spin" />
@@ -183,7 +183,7 @@
 			<button
 				type="submit"
 				disabled={submitting}
-				class="from-accent-from to-accent-to text-surface-base shadow-glow mt-1 inline-flex cursor-pointer items-center justify-center gap-2 rounded-[11px] bg-linear-135 p-3 text-lg font-semibold transition-[filter] hover:brightness-108 disabled:cursor-default disabled:opacity-70"
+				class="bg-accent-fill mt-1 inline-flex cursor-pointer items-center justify-center gap-2 rounded-[11px] p-3 text-lg font-medium text-white transition-[filter] hover:brightness-108 active:brightness-95 disabled:cursor-default disabled:opacity-70"
 			>
 				{#if submitting}
 					<LoaderCircle size={18} strokeWidth={2.25} class="animate-spin" />

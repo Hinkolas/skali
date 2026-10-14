@@ -103,7 +103,7 @@
 			title={mayCreate ? undefined : CREATE_PROJECTS_TITLE}
 			onclick={() => modal.open(NewProjectModal, {}, newProjectModalOptions)}
 		>
-			<Plus size={17} strokeWidth={2.5} />
+			<Plus size={15} strokeWidth={2.25} />
 			New project
 		</Button>
 	{/snippet}

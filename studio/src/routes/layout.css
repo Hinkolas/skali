@@ -7,8 +7,8 @@
  * (bg-service-app/15, bg-status-success/10).
  *
  * Recipes used throughout:
- * - primary button: bg-linear-135 from-accent-from to-accent-to
- *   text-surface-base shadow-glow
+ * - primary button: bg-accent-fill text-white font-medium, flat (no
+ *   gradient, no glow): the gradient and glow belong to the logo tiles
  * - active nav item: bg-accent/10 inset-ring inset-ring-accent/25
  *   text-accent-nav
  */
@@ -82,6 +82,7 @@
 	--color-accent-nav: #d7cdfe; /* active nav text, avatar initials */
 	--color-accent-from: #9076ff; /* gradient start */
 	--color-accent-to: #5b33ff; /* gradient end */
+	--color-accent-fill: #6d4ef6; /* solid primary buttons: white text clears AA (5.1:1), which --color-accent misses */
 
 	/* Status */
 	--color-status-success: #4ec98c;
@@ -103,7 +104,7 @@
 	--color-chart-1: #7c5cff;
 	--color-chart-2: #b8802c;
 
-	/* Violet glows for primary buttons / logo tiles */
+	/* Violet glows for logo tiles and icon tiles */
 	--shadow-glow: 0 0 18px rgb(124 92 255 / 0.28);
 
 	/* A highlight sweeping across an active progress fill: the bar reads as
