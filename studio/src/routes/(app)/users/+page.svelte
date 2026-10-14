@@ -124,11 +124,11 @@
 				data-bwignore
 				placeholder="Search users…"
 				aria-label="Search users by name or email"
-				class="bg-surface-input text-text-primary border-border-strong focus:border-accent/50 focus:ring-3 focus:ring-accent/10 w-40 rounded-[11px] border py-2.25 pr-3 pl-8.5 lg:w-56 text-base transition-[border-color,box-shadow] duration-150 focus:outline-none"
+				class="bg-surface-input text-text-primary border-border-strong focus:border-accent/50 focus:ring-3 focus:ring-accent/10 h-8 w-40 rounded-[11px] border pr-3 pl-8.5 lg:w-56 text-base transition-[border-color,box-shadow] duration-150 focus:outline-none"
 			/>
 		</div>
 		<Button variant="primary" onclick={newUser}>
-			<Plus size={17} strokeWidth={2.5} />
+			<Plus size={15} strokeWidth={2.25} />
 			New user
 		</Button>
 	{/snippet}

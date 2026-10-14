@@ -106,10 +106,10 @@
 		<p class="text-status-danger text-center text-md" role="alert">{message}</p>
 	{/if}
 
-	<Button type="submit" variant="primary" disabled={!secret} {busy} class="mt-1 w-full">
+	<Button type="submit" variant="primary" size="lg" disabled={!secret} {busy} class="mt-1 w-full">
 		Confirm
 	</Button>
-	<Button variant="ghost" onclick={() => close(false)} class="w-full">Cancel</Button>
+	<Button variant="ghost" size="lg" onclick={() => close(false)} class="w-full">Cancel</Button>
 </form>
 
 <style>

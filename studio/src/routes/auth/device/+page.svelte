@@ -114,6 +114,7 @@
 		{/if}
 		<Button
 			variant="primary"
+			size="lg"
 			disabled={foreign}
 			{busy}
 			onclick={() => decide('approve')}
@@ -121,7 +122,7 @@
 		>
 			Approve
 		</Button>
-		<Button variant="ghost" disabled={busy} onclick={() => decide('deny')} class="w-full">
+		<Button variant="ghost" size="lg" disabled={busy} onclick={() => decide('deny')} class="w-full">
 			Deny
 		</Button>
 	{:else}
@@ -151,7 +152,7 @@
 					No pending request has that code. It may have expired; run the command again.
 				</div>
 			{/if}
-			<Button type="submit" variant="primary" class="mt-1 w-full">Continue</Button>
+			<Button type="submit" variant="primary" size="lg" class="mt-1 w-full">Continue</Button>
 		</form>
 	{/if}
 </div>
