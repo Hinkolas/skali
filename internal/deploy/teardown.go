@@ -25,13 +25,44 @@ const (
 	EnvironmentStateReleasing = "releasing"
 )
 
+// Run kinds of the two teardown decisions. A purge journals under its own
+// kind so clients can tell a deletion from a stop.
+const (
+	RunKindTeardown = "teardown"
+	RunKindPurge    = "purge"
+)
+
 // DeleteEnvironment removes a released environment's row; the foreign keys
 // cascade every environment-scoped record with it. Only the reconciler
-// calls this, and only after the cluster confirms complete absence.
+// calls this, and only after the cluster confirms complete absence. The
+// last environment of a deleting project takes the project row with it.
 func (s *Service) DeleteEnvironment(ctx context.Context, environmentID uuid.UUID) error {
-	if _, err := s.st.DeleteEnvironmentByID(ctx, environmentID); err != nil {
-		return fmt.Errorf("deploy: delete environment: %w", err)
+	env, err := s.st.GetEnvironmentByID(ctx, environmentID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
 	}
+	if err != nil {
+		return fmt.Errorf("deploy: get environment: %w", err)
+	}
+	err = s.st.WithTx(ctx, func(q *store.Queries) error {
+		// The project lock serializes concluding purges: two of them
+		// committing side by side would each still see the other's
+		// environment and leave the project row behind.
+		if _, err := q.GetProjectForUpdate(ctx, env.ProjectID); err != nil {
+			return fmt.Errorf("deploy: lock project: %w", err)
+		}
+		if _, err := q.DeleteEnvironmentByID(ctx, environmentID); err != nil {
+			return fmt.Errorf("deploy: delete environment: %w", err)
+		}
+		if _, err := q.DeleteDeletingProjectIfEmpty(ctx, env.ProjectID); err != nil {
+			return fmt.Errorf("deploy: delete emptied project: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	s.feed.Publish(env.ProjectID)
 	return nil
 }
 
@@ -95,8 +126,12 @@ func (s *Service) Teardown(ctx context.Context, environmentID uuid.UUID, purge b
 		}
 	}
 
+	kind := RunKindTeardown
+	if purge {
+		kind = RunKindPurge
+	}
 	run, err := jr.BeginRun(ctx, journal.RunInput{
-		Kind:          "teardown",
+		Kind:          kind,
 		ProjectID:     env.ProjectID,
 		EnvironmentID: env.ID,
 		Actor:         actor,

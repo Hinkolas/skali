@@ -14,7 +14,7 @@ import (
 const createProject = `-- name: CreateProject :one
 INSERT INTO projects (id, name, display_name, source_mode)
 VALUES ($1, $2, $3, $4)
-RETURNING id, name, display_name, source_mode, created_at, updated_at
+RETURNING id, name, display_name, source_mode, created_at, updated_at, deleting_at
 `
 
 type CreateProjectParams struct {
@@ -39,8 +39,26 @@ func (q *Queries) CreateProject(ctx context.Context, arg CreateProjectParams) (P
 		&i.SourceMode,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DeletingAt,
 	)
 	return i, err
+}
+
+const deleteDeletingProjectIfEmpty = `-- name: DeleteDeletingProjectIfEmpty :execrows
+DELETE FROM projects p
+WHERE p.id = $1 AND p.deleting_at IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM environments e WHERE e.project_id = p.id)
+`
+
+// The end of a project delete: the row goes once it is marked and its last
+// environment is gone. Callers hold the project row lock, so two purges
+// concluding together cannot both see the other's environment remaining.
+func (q *Queries) DeleteDeletingProjectIfEmpty(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteDeletingProjectIfEmpty, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const deleteProjectByID = `-- name: DeleteProjectByID :execrows
@@ -56,7 +74,7 @@ func (q *Queries) DeleteProjectByID(ctx context.Context, id uuid.UUID) (int64, e
 }
 
 const getProjectByID = `-- name: GetProjectByID :one
-SELECT id, name, display_name, source_mode, created_at, updated_at FROM projects WHERE id = $1
+SELECT id, name, display_name, source_mode, created_at, updated_at, deleting_at FROM projects WHERE id = $1
 `
 
 func (q *Queries) GetProjectByID(ctx context.Context, id uuid.UUID) (Project, error) {
@@ -69,12 +87,13 @@ func (q *Queries) GetProjectByID(ctx context.Context, id uuid.UUID) (Project, er
 		&i.SourceMode,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DeletingAt,
 	)
 	return i, err
 }
 
 const getProjectByName = `-- name: GetProjectByName :one
-SELECT id, name, display_name, source_mode, created_at, updated_at FROM projects WHERE name = $1
+SELECT id, name, display_name, source_mode, created_at, updated_at, deleting_at FROM projects WHERE name = $1
 `
 
 func (q *Queries) GetProjectByName(ctx context.Context, name string) (Project, error) {
@@ -87,12 +106,13 @@ func (q *Queries) GetProjectByName(ctx context.Context, name string) (Project, e
 		&i.SourceMode,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DeletingAt,
 	)
 	return i, err
 }
 
 const getProjectForUpdate = `-- name: GetProjectForUpdate :one
-SELECT id, name, display_name, source_mode, created_at, updated_at FROM projects WHERE id = $1 FOR UPDATE
+SELECT id, name, display_name, source_mode, created_at, updated_at, deleting_at FROM projects WHERE id = $1 FOR UPDATE
 `
 
 func (q *Queries) GetProjectForUpdate(ctx context.Context, id uuid.UUID) (Project, error) {
@@ -105,12 +125,13 @@ func (q *Queries) GetProjectForUpdate(ctx context.Context, id uuid.UUID) (Projec
 		&i.SourceMode,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DeletingAt,
 	)
 	return i, err
 }
 
 const listProjects = `-- name: ListProjects :many
-SELECT id, name, display_name, source_mode, created_at, updated_at FROM projects ORDER BY name
+SELECT id, name, display_name, source_mode, created_at, updated_at, deleting_at FROM projects ORDER BY name
 `
 
 func (q *Queries) ListProjects(ctx context.Context) ([]Project, error) {
@@ -129,6 +150,7 @@ func (q *Queries) ListProjects(ctx context.Context) ([]Project, error) {
 			&i.SourceMode,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.DeletingAt,
 		); err != nil {
 			return nil, err
 		}
@@ -140,10 +162,32 @@ func (q *Queries) ListProjects(ctx context.Context) ([]Project, error) {
 	return items, nil
 }
 
+const markProjectDeleting = `-- name: MarkProjectDeleting :one
+UPDATE projects SET deleting_at = COALESCE(deleting_at, now())
+WHERE id = $1
+RETURNING id, name, display_name, source_mode, created_at, updated_at, deleting_at
+`
+
+// Marking keeps the first decision's time, so a repeated delete is a no-op.
+func (q *Queries) MarkProjectDeleting(ctx context.Context, id uuid.UUID) (Project, error) {
+	row := q.db.QueryRow(ctx, markProjectDeleting, id)
+	var i Project
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.DisplayName,
+		&i.SourceMode,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletingAt,
+	)
+	return i, err
+}
+
 const updateProject = `-- name: UpdateProject :one
 UPDATE projects SET display_name = $2, source_mode = $3, updated_at = now()
 WHERE id = $1
-RETURNING id, name, display_name, source_mode, created_at, updated_at
+RETURNING id, name, display_name, source_mode, created_at, updated_at, deleting_at
 `
 
 type UpdateProjectParams struct {
@@ -162,6 +206,7 @@ func (q *Queries) UpdateProject(ctx context.Context, arg UpdateProjectParams) (P
 		&i.SourceMode,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DeletingAt,
 	)
 	return i, err
 }

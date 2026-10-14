@@ -162,7 +162,7 @@ func (q *Queries) ListProjectMembersForUser(ctx context.Context, userID uuid.UUI
 }
 
 const listProjectsForUser = `-- name: ListProjectsForUser :many
-SELECT p.id, p.name, p.display_name, p.source_mode, p.created_at, p.updated_at FROM projects p
+SELECT p.id, p.name, p.display_name, p.source_mode, p.created_at, p.updated_at, p.deleting_at FROM projects p
 JOIN project_members m ON m.project_id = p.id
 WHERE m.user_id = $1
 ORDER BY p.name
@@ -184,6 +184,7 @@ func (q *Queries) ListProjectsForUser(ctx context.Context, userID uuid.UUID) ([]
 			&i.SourceMode,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.DeletingAt,
 		); err != nil {
 			return nil, err
 		}

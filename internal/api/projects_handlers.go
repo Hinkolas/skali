@@ -12,6 +12,9 @@ import (
 
 	"github.com/Hinkolas/skali/internal/authz"
 	"github.com/Hinkolas/skali/internal/compiler"
+	"github.com/Hinkolas/skali/internal/deploy"
+	"github.com/Hinkolas/skali/internal/feed"
+	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/module"
 	"github.com/Hinkolas/skali/internal/project"
 	"github.com/Hinkolas/skali/internal/reconcile"
@@ -28,6 +31,9 @@ import (
 // never projects status per environment.
 type projectsHandlers struct {
 	projects *project.Service
+	deploy   *deploy.Service
+	journal  *journal.Service
+	feed     *feed.Projects
 	health   environmentHealthReader
 	resolver *authz.Resolver
 }
@@ -53,14 +59,17 @@ func pathID(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 // --- payloads (shapes mirror api/openapi.yaml exactly) ---
 
 type projectPayload struct {
-	ID          string                 `json:"id"`
-	Name        string                 `json:"name"`
-	DisplayName string                 `json:"display_name"`
-	SourceMode  string                 `json:"source_mode"`
-	CreatedAt   time.Time              `json:"created_at"`
-	UpdatedAt   time.Time              `json:"updated_at"`
-	Access      projectAccessPayload   `json:"access"`
-	Summary     *projectSummaryPayload `json:"summary,omitempty"`
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	DisplayName string    `json:"display_name"`
+	SourceMode  string    `json:"source_mode"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+	// DeletingAt is set once a delete was decided: the environments are
+	// purging and the project disappears with the last of them.
+	DeletingAt *time.Time             `json:"deleting_at,omitempty"`
+	Access     projectAccessPayload   `json:"access"`
+	Summary    *projectSummaryPayload `json:"summary,omitempty"`
 }
 
 // projectAccessPayload is the caller's standing: the project role, whether
@@ -131,6 +140,7 @@ func newProjectPayload(p *store.Project, grant *authz.Grant) projectPayload {
 		SourceMode:  p.SourceMode,
 		CreatedAt:   p.CreatedAt,
 		UpdatedAt:   p.UpdatedAt,
+		DeletingAt:  p.DeletingAt,
 		Access:      newProjectAccessPayload(grant),
 	}
 }
@@ -196,9 +206,8 @@ func writeProjectError(ctx context.Context, w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, codeNotFound, "not found")
 	case errors.Is(err, project.ErrProjectNameTaken):
 		writeError(w, http.StatusConflict, codeConflict, "a project with this name already exists")
-	case errors.Is(err, project.ErrProjectHasEnvironments):
-		writeError(w, http.StatusConflict, codeConflict,
-			"the project still has environments; remove each one first (skali env remove)")
+	case errors.Is(err, project.ErrProjectDeleting):
+		writeError(w, http.StatusConflict, codeProjectDeleting, "the project is being deleted")
 	case errors.Is(err, project.ErrEnvironmentNameTaken):
 		writeError(w, http.StatusConflict, codeConflict, "an environment with this name already exists")
 	case errors.Is(err, project.ErrVersionConflict):
@@ -409,16 +418,50 @@ func (h *projectsHandlers) update(w http.ResponseWriter, r *http.Request) {
 }
 
 // DELETE /v1/projects/{id}
+//
+// A project without environments is deleted at once (204). Otherwise the
+// project is marked deleting and every environment purges (202); the last
+// purge deletes the project. Repeating the call resumes an interrupted
+// delete.
 func (h *projectsHandlers) delete(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
 	if !ok {
 		return
 	}
-	if err := h.projects.Delete(r.Context(), id); err != nil {
-		writeProjectError(r.Context(), w, err)
+	deletion, err := h.deploy.DeleteProject(r.Context(), id, h.journal, UserFrom(r.Context()).ID.String())
+	if err != nil {
+		switch {
+		case errors.Is(err, deploy.ErrProjectNotFound):
+			writeError(w, http.StatusNotFound, codeNotFound, "not found")
+		case errors.Is(err, deploy.ErrDeploymentInFlight):
+			writeError(w, http.StatusConflict, codeDeploymentInFlight,
+				"a deployment is in flight in one of the environments; cancel its run or wait for it to finish")
+		case errors.Is(err, deploy.ErrEnvironmentBusy):
+			writeEnvironmentBusy(w)
+		default:
+			writeInternalError(r.Context(), w, "delete project", err)
+		}
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	if deletion.Deleted {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	type purgePayload struct {
+		EnvironmentID string  `json:"environment_id"`
+		RunID         *string `json:"run_id,omitempty"`
+	}
+	purges := make([]purgePayload, len(deletion.Purges))
+	for i, purge := range deletion.Purges {
+		purges[i] = purgePayload{EnvironmentID: purge.EnvironmentID.String()}
+		if purge.RunID != nil {
+			runID := purge.RunID.String()
+			purges[i].RunID = &runID
+		}
+	}
+	writeJSON(w, http.StatusAccepted, struct {
+		Purges []purgePayload `json:"purges"`
+	}{purges})
 }
 
 // GET /v1/projects/{id}/draft

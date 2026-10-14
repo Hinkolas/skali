@@ -104,6 +104,7 @@ func (s *Service) SubmitDraft(ctx context.Context, projectID uuid.UUID, in Draft
 	if err != nil {
 		return nil, err
 	}
+	s.feed.Publish(projectID)
 	return draft, nil
 }
 

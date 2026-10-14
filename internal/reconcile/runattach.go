@@ -73,7 +73,7 @@ func adoptableRun(state store.GetEnvironmentPassRow) (*attachedRun, bool) {
 		return nil, false
 	}
 	switch *state.RunKind {
-	case "deployment", "rollback", "restart", "teardown", "reconcile":
+	case "deployment", "rollback", "restart", deploy.RunKindTeardown, deploy.RunKindPurge, "reconcile":
 	default:
 		// The kernel adopts only runs whose lifecycle it owns. A backup or
 		// restore run is driven by the backup controller; adopting it would

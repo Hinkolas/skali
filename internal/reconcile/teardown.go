@@ -45,7 +45,10 @@ func (k *Kernel) teardownEnvironment(ctx context.Context, state store.GetEnviron
 	attachment := k.attachRun(ctx, state, func(ctx context.Context) *redact.Redactor {
 		return k.redactor(ctx, environmentID, nil, nil)
 	})
-	attachment.ensureKind = "teardown"
+	attachment.ensureKind = deploy.RunKindTeardown
+	if releasing {
+		attachment.ensureKind = deploy.RunKindPurge
+	}
 
 	snapshot := k.deps.Observed.Snapshot(environmentID)
 	if teardownSettled(snapshot, releasing) {

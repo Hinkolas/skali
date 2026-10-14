@@ -446,6 +446,7 @@ type Project struct {
 	SourceMode  string
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+	DeletingAt  *time.Time
 }
 
 type ProjectDraft struct {

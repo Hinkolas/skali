@@ -22,6 +22,7 @@ import (
 	"github.com/Hinkolas/skali/internal/buildstore"
 	"github.com/Hinkolas/skali/internal/compiler"
 	"github.com/Hinkolas/skali/internal/diagnostic"
+	"github.com/Hinkolas/skali/internal/feed"
 	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/revision"
 	"github.com/Hinkolas/skali/internal/store"
@@ -65,6 +66,7 @@ type Service struct {
 	builds    *buildstore.Service
 	version   string
 	enqueuer  Enqueuer
+	feed      *feed.Projects
 	// lifetimeCtx is the daemon's context for work that outlives the
 	// request that started it (deployment completion). nil means
 	// context.Background(), which is what tests and API-only mode want.
@@ -93,6 +95,10 @@ func New(st *store.Store, valueSvc *valuestore.Service, artifactSvc *artifactsto
 // SetEnqueuer wires the reconciliation kernel after construction (the kernel
 // depends on this service, so the cycle is broken here).
 func (s *Service) SetEnqueuer(e Enqueuer) { s.enqueuer = e }
+
+// SetFeed publishes environment and project deletions to the project
+// stream.
+func (s *Service) SetFeed(f *feed.Projects) { s.feed = f }
 
 // SetLifetime wires the context that background completion work runs
 // under. Cancelling it (daemon shutdown) fails in-flight completions

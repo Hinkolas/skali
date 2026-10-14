@@ -54,6 +54,7 @@ const (
 	codeInvalidValues           = "invalid_values"
 	codeUnsupportedSchema       = "unsupported_schema"
 	codeEnvironmentProtected    = "environment_protected"
+	codeProjectDeleting         = "project_deleting"
 
 	// Backups.
 	codeBackupInFlight           = "backup_in_flight"

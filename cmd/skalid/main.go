@@ -38,6 +38,7 @@ import (
 	"github.com/Hinkolas/skali/internal/deploy"
 	"github.com/Hinkolas/skali/internal/edge/edgeobserve"
 	"github.com/Hinkolas/skali/internal/edge/edgeprobe"
+	"github.com/Hinkolas/skali/internal/feed"
 	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/kube"
 	"github.com/Hinkolas/skali/internal/metrics"
@@ -150,6 +151,11 @@ func runServe() error {
 	artifactSvc := artifactstore.New(st)
 	buildSvc := buildstore.New(st)
 	deploySvc := deploy.New(st, valueSvc, artifactSvc, versionpkg.Version)
+	// One feed for the project stream: the services publish what they
+	// commit, the stream handler fans it out.
+	projectFeed := feed.NewProjects()
+	projectSvc.SetFeed(projectFeed)
+	deploySvc.SetFeed(projectFeed)
 	if err := deploySvc.ReserveHostnames(ctx, cfg.ReservedHosts); err != nil {
 		return err
 	}
@@ -482,6 +488,7 @@ func runServe() error {
 			Builds:             buildSvc,
 			Journal:            journalSvc,
 			Reconcile:          kernel,
+			Feed:               projectFeed,
 			Registry:           registryClient,
 			RegistryToken:      tokenSigner,
 			RegistryNodeSecret: cfg.RegistryNodeSecret,

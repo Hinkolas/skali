@@ -25,6 +25,7 @@ import (
 	"github.com/Hinkolas/skali/internal/buildstore"
 	"github.com/Hinkolas/skali/internal/dbstore"
 	"github.com/Hinkolas/skali/internal/deploy"
+	"github.com/Hinkolas/skali/internal/feed"
 	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/metrics"
 	"github.com/Hinkolas/skali/internal/module"
@@ -49,6 +50,7 @@ type testAPI struct {
 	st       *store.Store
 	svc      *auth.Service
 	journal  *journal.Service
+	deploy   *deploy.Service
 	observed *observe.Fake
 	// held tracks "repository@digest" content the fake managed registry
 	// answers for; registryHolds seeds it.
@@ -113,6 +115,10 @@ func newTestAPIWith(t *testing.T, version string, adjust func(*Deps)) *testAPI {
 	// leaves it running. The kernel loop is not started in API tests, so
 	// tests finish runs explicitly where the worker would.
 	deploySvc.SetEnqueuer(kernel)
+	projectFeed := feed.NewProjects()
+	deploySvc.SetFeed(projectFeed)
+	projectSvc := project.New(st)
+	projectSvc.SetFeed(projectFeed)
 
 	// A fake managed registry: the verify surface HEADs it for digests the
 	// test seeded through registryHolds.
@@ -154,13 +160,14 @@ func newTestAPIWith(t *testing.T, version string, adjust func(*Deps)) *testAPI {
 		Auth:               svc,
 		Store:              st,
 		DB:                 pool,
-		Projects:           project.New(st),
+		Projects:           projectSvc,
 		Values:             values,
 		Deploy:             deploySvc,
 		Artifacts:          artifactSvc,
 		Builds:             buildstore.New(st),
 		Journal:            journalSvc,
 		Reconcile:          kernel,
+		Feed:               projectFeed,
 		Registry:           &registry.Client{Host: registryURL.Host, PushHost: testPushHost},
 		RegistryToken:      tokenSigner,
 		RegistryNodeSecret: "node-secret",
@@ -196,7 +203,7 @@ func newTestAPIWith(t *testing.T, version string, adjust func(*Deps)) *testAPI {
 	router, ac := newRouter(deps)
 	srv := httptest.NewServer(StripAPIPrefix(router))
 	t.Cleanup(srv.Close)
-	return &testAPI{t: t, srv: srv, st: st, svc: svc, journal: journalSvc,
+	return &testAPI{t: t, srv: srv, st: st, svc: svc, journal: journalSvc, deploy: deploySvc,
 		observed: observed, held: held, registryHost: registryURL.Host,
 		execFake: execFake, access: ac}
 }
@@ -819,7 +826,7 @@ func TestSpecCoversAllRoutes(t *testing.T) {
 	for route := range ac.classes {
 		require.True(t, walked[route], "classified route %s is not registered", route)
 	}
-	require.Equal(t, 105, routes, "route count changed; update the OpenAPI spec and this number")
+	require.Equal(t, 106, routes, "route count changed; update the OpenAPI spec and this number")
 }
 
 // fakeRotator is the substrate commit the API tests never reach: the
