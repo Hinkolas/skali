@@ -49,14 +49,15 @@ func TestEnvLsRendersSettings(t *testing.T) {
 	install.envs["p1"][0].Settings.Priority = "high"
 	install.envs["p1"][0].Settings.MaxRole = "read"
 	install.envs["p1"][0].Settings.Backup = &client.BackupSchedule{Schedule: "0 3 * * *", RetentionSeconds: 7 * 86400}
+	install.envs["p1"][0].State = "active"
 	install.mu.Unlock()
 
 	out, err := runCommand(t, newEnvCommand(), "", "ls")
 	require.NoError(t, err)
 	require.Contains(t, out, "project  flowdemo (r)")
-	require.Regexp(t, `(?m)^NAME +ACCESS +PRIORITY +POLICY +CEILING +BACKUPS +CREATED$`, out)
-	require.Regexp(t, `(?m)^production \(bound\) +admin +high +promote-only \(from staging\) +read +daily at 03:00 UTC, keep 7d +2026-08-19 10:30$`, out)
-	require.Regexp(t, `(?m)^staging +locked +- +- +- +- +-$`, out)
+	require.Regexp(t, `(?m)^NAME +STATE +ACCESS +PRIORITY +POLICY +CEILING +BACKUPS +CREATED$`, out)
+	require.Regexp(t, `(?m)^production \(bound\) +active +admin +high +promote-only \(from staging\) +read +daily at 03:00 UTC, keep 7d +2026-08-19 10:30$`, out)
+	require.Regexp(t, `(?m)^staging +- +locked +- +- +- +- +-$`, out)
 }
 
 func TestEnvCreatePassesPriority(t *testing.T) {
@@ -135,25 +136,71 @@ func TestEnvSetBuildsPatch(t *testing.T) {
 	require.Len(t, install.posts, posts)
 }
 
-func TestEnvRmPurgesAfterConfirmation(t *testing.T) {
+func TestEnvRmFollowsTheRemoval(t *testing.T) {
 	install := seedAccessScope(t)
-	_, err := runCommand(t, newEnvCommand(), "n\n", "rm", "staging")
-	require.ErrorContains(t, err, "aborted")
-	_, err = runCommand(t, newEnvCommand(), "", "rm", "staging")
+	// The removal is one-way: it asks for the typed name, which needs a
+	// terminal, so scripts pass --yes.
+	_, err := runCommand(t, newEnvCommand(), "staging\n", "rm", "staging")
 	require.ErrorContains(t, err, "non-interactive use requires --yes")
 	_, err = runCommand(t, newEnvCommand(), "", "rm", "nothing", "--yes")
 	require.ErrorContains(t, err, "environment nothing does not exist")
 	require.Empty(t, install.posts)
 
-	out, err := runCommand(t, newEnvCommand(), "y\n", "rm", "staging")
+	out, err := runCommand(t, newEnvCommand(), "", "rm", "staging", "--yes")
 	require.NoError(t, err)
-	require.Contains(t, out, "This destroys environment staging of project flowdemo on r completely:")
-	require.Contains(t, out, "purge started  run-p1-e2")
-	require.Contains(t, out, "skali run attach run-p1-e2")
+	require.Contains(t, out, "run run-p1-e2  remove staging")
+	require.Contains(t, out, "staging is removed; nothing of it remains")
+
 	install.reauthRequired = true
-	out, err = runCommand(t, newEnvCommand(), "hunter2\n", "rm", "production", "--yes", "--remote", "r")
+	out, err = runCommand(t, newEnvCommand(), "hunter2\n", "remove", "production", "--yes", "--detach", "--remote", "r")
 	require.NoError(t, err)
 	require.Contains(t, out, "Confirm your password")
 	require.Contains(t, out, "skali run attach --remote r run-p1-e1")
+	require.NotContains(t, out, "is removed")
 	require.Equal(t, []string{"teardown:p1-e2:true", "teardown:p1-e1:true"}, install.posts)
+}
+
+func TestEnvStopKeepsTheData(t *testing.T) {
+	install := seedAccessScope(t)
+	_, err := runCommand(t, newEnvCommand(), "n\n", "stop", "staging")
+	require.ErrorContains(t, err, "aborted")
+	require.Empty(t, install.posts)
+
+	out, err := runCommand(t, newEnvCommand(), "y\n", "stop", "staging")
+	require.NoError(t, err)
+	require.Contains(t, out, "Stop environment staging of project flowdemo on r?")
+	require.Contains(t, out, "run run-p1-e2  stop staging")
+	require.Contains(t, out, "staging is stopped; its data is retained")
+	require.Equal(t, []string{"teardown:p1-e2:false"}, install.posts)
+
+	out, err = runCommand(t, newEnvCommand(), "", "ls")
+	require.NoError(t, err)
+	require.Contains(t, out, "STATE")
+	require.Regexp(t, `staging\s+stopped`, out)
+}
+
+func TestProjectRmRemovesEveryEnvironment(t *testing.T) {
+	install := seedAccessScope(t)
+	_, err := runCommand(t, newProjectCommand(), "", "rm")
+	require.ErrorContains(t, err, "non-interactive use requires --yes")
+	require.Empty(t, install.posts)
+
+	// The checkout's project by default; the wait reports each environment
+	// and ends once the project is gone.
+	out, err := runCommand(t, newProjectCommand(), "", "remove", "--yes")
+	require.NoError(t, err)
+	require.Contains(t, out, "environments  production, staging")
+	require.Contains(t, out, "removing 2 environments; the project goes with the last of them")
+	require.Contains(t, out, "production removed")
+	require.Contains(t, out, "staging removed")
+	require.Contains(t, out, "project flowdemo is removed; nothing of it remains")
+	require.Equal(t, []string{"project-rm:p1"}, install.posts)
+
+	// A project without environments goes at once.
+	install.seed("p2", "empty")
+	out, err = runCommand(t, newProjectCommand(), "", "rm", "empty", "--yes")
+	require.NoError(t, err)
+	require.Contains(t, out, "project empty is removed")
+	_, err = runCommand(t, newProjectCommand(), "", "rm", "empty", "--yes")
+	require.ErrorContains(t, err, "project empty does not exist")
 }

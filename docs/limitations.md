@@ -81,8 +81,8 @@ Until then the project shows as deleting and refuses new environments and
 deployments (`409 project_deleting`). A deployment window open in any
 environment refuses the delete (`409 deployment_in_flight`) before anything
 is decided; finish or cancel it and delete again. Repeating the delete
-resumes one an error interrupted. There is no CLI command for it yet: delete
-from the Studio's project settings or with `DELETE /v1/projects/{id}`.
+resumes one an error interrupted. Delete from the Studio's project settings,
+with `skali project remove`, or with `DELETE /v1/projects/{id}`.
 
 A namespace that was orphaned before purges existed can only be removed by
 hand (`kubectl delete namespace skali-<environment-id>`); skalid logs

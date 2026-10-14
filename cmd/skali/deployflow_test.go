@@ -412,7 +412,32 @@ func newFakeInstall(t *testing.T) *fakeInstall {
 		if len(parts) > 1 {
 			sub = parts[1]
 		}
+		project := slices.IndexFunc(f.projects, func(p client.Project) bool { return p.ID == projectID })
 		switch {
+		case sub == "" && project < 0:
+			writeError(w, http.StatusNotFound, "not_found", "not found")
+		case sub == "" && r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{"project": f.projects[project]})
+		case sub == "" && r.Method == http.MethodDelete:
+			// Every purge concludes at once, the last one taking the
+			// project row with it.
+			if !gate(w) {
+				return
+			}
+			f.posts = append(f.posts, "project-rm:"+projectID)
+			envs := f.envs[projectID]
+			f.projects = slices.Delete(f.projects, project, project+1)
+			delete(f.envs, projectID)
+			if len(envs) == 0 {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			purges := make([]map[string]string, len(envs))
+			for i, env := range envs {
+				purges[i] = map[string]string{"environment_id": env.ID, "run_id": "run-" + env.ID}
+			}
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{"purges": purges})
 		case sub == "backups" && len(parts) == 3 && r.Method == http.MethodDelete:
 			if !gate(w) {
 				return
@@ -639,8 +664,22 @@ func newFakeInstall(t *testing.T) *fakeInstall {
 			var req map[string]bool
 			_ = json.NewDecoder(r.Body).Decode(&req)
 			f.posts = append(f.posts, fmt.Sprintf("teardown:%s:%v", env.ID, req["purge"]))
+			// The run concludes at once; a purge's epilogue takes the
+			// environment row with it.
+			kind, state := "teardown", "down"
+			if req["purge"] {
+				kind, state = "purge", "releasing"
+			}
+			runID := "run-" + env.ID
+			f.runs[runID] = client.Run{ID: runID, Kind: kind, Status: "succeeded"}
+			env.State = state
+			if req["purge"] {
+				f.envs[env.ProjectID] = slices.DeleteFunc(f.envs[env.ProjectID], func(e client.Environment) bool {
+					return e.ID == env.ID
+				})
+			}
 			w.WriteHeader(http.StatusAccepted)
-			_ = json.NewEncoder(w).Encode(map[string]any{"run_id": "run-" + env.ID, "purge": req["purge"]})
+			_ = json.NewEncoder(w).Encode(map[string]any{"run_id": runID, "purge": req["purge"]})
 		default:
 			writeError(w, http.StatusNotFound, "not_found", "not found")
 		}

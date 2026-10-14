@@ -486,12 +486,15 @@ CLI (settled 2026-08-19): one ladder, one verb set, the level picked by
 - `skali access remove <user> [--environment ENV]` removes the membership
   (confirmed, `--yes` to skip; the cells go with it) or only the explicit
   role on one environment.
-- `skali env list|create|set|remove`: `list` shows access, priority, policy,
-  ceiling, creation time (locked rows show `locked`); `create <name>
-  [--priority high]`; `set [--environment ENV] --max-role --deploy-policy
-  --promote-from a,b|any --priority`; `remove <name>` is the purge teardown
-  behind a red banner and confirmation (the raw DELETE leaves cluster state
-  orphaned and has no command).
+- `skali env list|create|set|stop|remove`: `list` shows state, access,
+  priority, policy, ceiling, creation time (locked rows show `locked`);
+  `create <name> [--priority high]`; `set [--environment ENV] --max-role
+  --deploy-policy --promote-from a,b|any --priority`; `stop <name>` takes the
+  workloads down and keeps the data (confirmed); `remove <name>` is the purge
+  teardown behind a typed confirmation (the raw DELETE leaves cluster state
+  orphaned and has no command). Both follow their run; `--detach` skips that.
+- `skali project remove [project]`: project admin, recent login, typed
+  confirmation; purges every environment and the project goes with the last.
 - All take `--project` (default: the checkout's binding or manifest) and
   `--remote`. Sudo-gated writes confirm the password (or the second factor)
   when the login has aged; on a pipe the answer is read from stdin, so

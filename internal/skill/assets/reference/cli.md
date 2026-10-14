@@ -156,11 +156,20 @@ can remove them. Invalid YAML diagnostics identify the configuration file to edi
   or changes a project role (read, deploy, maintain, admin); with
   `--environment <name>` it sets an explicit role on that environment only
   (`none` locks it). `skali access remove <email>` removes a member.
-- `skali env list` lists environments with your access, priority, deploy
-  policy, ceiling, and backup schedule; `skali env create <name>`, `skali env set
-  --environment <name> --max-role read --deploy-policy promote-only`, and
-  `skali env remove <name>` (purge) configure them. Writes need a recent login;
-  the CLI asks for the password when it has aged.
+- `skali env list` lists environments with their state (active, stopped,
+  removing), your access, priority, deploy policy, ceiling, and backup
+  schedule; `skali env create <name>`, `skali env set --environment <name>
+  --max-role read --deploy-policy promote-only`, `skali env stop <name>` (takes
+  the workloads down, keeps the data; the next deploy starts it again), and
+  `skali env remove <name>` (purge: deletes the environment with all its data,
+  typed confirmation) configure them. Stop and remove follow their run until
+  done; `--detach` returns right away. Writes need a recent login; the CLI asks
+  for the password when it has aged.
+- `skali project remove [project]` removes a project with every environment
+  and all their data (project admin, typed confirmation, recent login): each
+  environment is purged and the project goes with the last of them. It
+  reports each environment as it goes; `--detach` returns right away, and
+  repeating the command resumes an interrupted removal.
 - `skali env rename <environment> <new-name>` renames without redeploying or
   moving data (environment admin, recent login). Promotion rules follow the new
   name; old checkout bindings remain valid through reserved name aliases until
