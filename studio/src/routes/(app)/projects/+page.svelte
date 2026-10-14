@@ -1,16 +1,21 @@
 <script lang="ts">
 	import { invalidateAll } from '$app/navigation';
+	import ArrowUpDown from '@lucide/svelte/icons/arrow-up-down';
+	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import FolderKanban from '@lucide/svelte/icons/folder-kanban';
 	import LayoutGrid from '@lucide/svelte/icons/layout-grid';
 	import List from '@lucide/svelte/icons/list';
 	import Plus from '@lucide/svelte/icons/plus';
 	import { CREATE_PROJECTS_TITLE, canCreateProject, isInstanceAdmin } from '$lib/access';
 	import { deferred } from '$lib/deferred.svelte';
+	import { PROJECT_SORTS, sortProjects, type ProjectSort } from '$lib/models/project';
 	import { readPref, writePref } from '$lib/prefs';
 	import { modal } from '$lib/stores/modal.svelte';
 	import PageHeader from '$lib/components/shell/PageHeader.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
 	import EmptyState from '$lib/components/ui/EmptyState.svelte';
+	import Menu from '$lib/components/ui/Menu.svelte';
+	import MenuItem from '$lib/components/ui/MenuItem.svelte';
 	import Segmented from '$lib/components/ui/Segmented.svelte';
 	import ProjectCard from '$lib/components/project/ProjectCard.svelte';
 	import ProjectList from '$lib/components/project/ProjectList.svelte';
@@ -43,19 +48,28 @@
 
 	const mayCreate = $derived(canCreateProject(data.user));
 
-	// Both toolbar choices are per-browser preferences: a crowded cluster
-	// wants the list every time, and an instance admin who administers
-	// projects without belonging to them wants their own by default.
+	// The toolbar choices are per-browser preferences: a crowded cluster
+	// wants the list every time, an instance admin who administers projects
+	// without belonging to them wants their own by default, and whoever
+	// watches rollouts wants the latest update on top.
 	const VIEWS = ['cards', 'list'] as const;
 	const SCOPES = ['all', 'mine'] as const;
 	let view = $state(readPref('skali.projects.view', VIEWS, 'cards'));
 	let scope = $state(readPref('skali.projects.scope', SCOPES, 'all'));
+	let sort = $state(readPref('skali.projects.sort', PROJECT_SORTS, 'name-asc'));
+
+	const SORT_LABELS: Record<ProjectSort, string> = {
+		'name-asc': 'Name, A to Z',
+		'name-desc': 'Name, Z to A',
+		'updated-desc': 'Updated, newest first',
+		'updated-asc': 'Updated, oldest first'
+	};
 
 	// The scope only exists for instance admins: everyone else sees their
 	// memberships and nothing more, so "mine" would equal "all".
 	const scoped = $derived(isInstanceAdmin(data.user));
 	const mine = $derived(source.filter((p) => p.access.member));
-	const projects = $derived(scoped && scope === 'mine' ? mine : source);
+	const projects = $derived(sortProjects(scoped && scope === 'mine' ? mine : source, sort));
 
 	function setView(id: string) {
 		view = id as (typeof VIEWS)[number];
@@ -64,6 +78,10 @@
 	function setScope(id: string) {
 		scope = id as (typeof SCOPES)[number];
 		writePref('skali.projects.scope', scope);
+	}
+	function setSort(id: ProjectSort) {
+		sort = id;
+		writePref('skali.projects.sort', sort);
 	}
 </script>
 
@@ -114,7 +132,25 @@
 				]}
 			/>
 		{/if}
-		<div class="ml-auto">
+		<div class="ml-auto flex items-center gap-2">
+			<Menu
+				label="Sort projects"
+				align="end"
+				panelClass="min-w-56"
+				triggerClass="flex h-8 cursor-pointer items-center gap-1.5 rounded-[11px] bg-white/3 px-2.5 text-sm text-text-faint transition-colors hover:bg-white/5 hover:text-text-secondary"
+			>
+				{#snippet trigger()}
+					<ArrowUpDown size={14} strokeWidth={1.75} class="flex-none opacity-90" />
+					<span class="sr-only">Sort by</span>
+					{SORT_LABELS[sort]}
+					<ChevronDown size={13} class="flex-none opacity-70" />
+				{/snippet}
+				{#each PROJECT_SORTS as id (id)}
+					<MenuItem selected={id === sort} onselect={() => setSort(id)}>
+						{SORT_LABELS[id]}
+					</MenuItem>
+				{/each}
+			</Menu>
 			<Segmented
 				label="View"
 				value={view}

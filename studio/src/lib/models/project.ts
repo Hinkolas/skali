@@ -46,6 +46,31 @@ export function projectUpdatedAt(project: Project): string {
 	return project.summary?.updated_at ?? project.updated_at;
 }
 
+export const PROJECT_SORTS = ['name-asc', 'name-desc', 'updated-desc', 'updated-asc'] as const;
+export type ProjectSort = (typeof PROJECT_SORTS)[number];
+
+/** The listing order: by the name a listing shows, or by the update time
+ * (projectUpdatedAt). Ties fall back to the name so the order stays put
+ * when two projects moved at the same instant. */
+export function sortProjects(projects: Project[], sort: ProjectSort): Project[] {
+	const label = (p: Project) => p.display_name || p.name;
+	const byName = (a: Project, b: Project) =>
+		label(a).localeCompare(label(b), undefined, { sensitivity: 'base', numeric: true }) ||
+		a.name.localeCompare(b.name);
+	const byUpdated = (a: Project, b: Project) =>
+		Date.parse(projectUpdatedAt(a)) - Date.parse(projectUpdatedAt(b));
+	switch (sort) {
+		case 'name-asc':
+			return projects.toSorted(byName);
+		case 'name-desc':
+			return projects.toSorted((a, b) => byName(b, a));
+		case 'updated-desc':
+			return projects.toSorted((a, b) => byUpdated(b, a) || byName(a, b));
+		case 'updated-asc':
+			return projects.toSorted((a, b) => byUpdated(a, b) || byName(a, b));
+	}
+}
+
 /** Environments the caller can name: the summary when the list carried one,
  * else the access map, which lists every environment (locked ones as none).
  * The plain list therefore counts correctly on every route. */
