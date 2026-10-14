@@ -479,6 +479,9 @@ func (s *Service) Open(ctx context.Context, in OpenInput) (*Opened, error) {
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("deploy: check in-flight deployment: %w", err)
 	}
+	if err := s.checkOpenable(ctx, env); err != nil {
+		return nil, err
+	}
 	// An environment an incomplete restore holds is refused before anything
 	// is built: Promote would refuse it anyway, after the work.
 	if err := s.checkRestoreHold(ctx, in.EnvironmentID); err != nil {

@@ -23,6 +23,7 @@ import (
 	"github.com/Hinkolas/skali/internal/dbstore"
 	"github.com/Hinkolas/skali/internal/deploy"
 	"github.com/Hinkolas/skali/internal/edge"
+	"github.com/Hinkolas/skali/internal/feed"
 	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/metrics"
 	"github.com/Hinkolas/skali/internal/project"
@@ -51,6 +52,8 @@ type Deps struct {
 	Builds     *buildstore.Service
 	Journal    *journal.Service
 	Reconcile  *reconcile.Kernel
+	// Feed carries the project change signals behind the project stream.
+	Feed *feed.Projects
 	// Health serves the project list's cached health rollup; nil defaults
 	// to Reconcile. Tests inject a stub because no kernel pass runs there.
 	Health environmentHealthReader
@@ -207,6 +210,7 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 
 	h := &authHandlers{auth: d.Auth}
 	jh := &runsHandlers{journal: d.Journal}
+	psh := &projectStreamHandlers{feed: d.Feed, journal: d.Journal, resolver: ac.resolver}
 	sh := &statusHandlers{reconcile: d.Reconcile, feeds: newStatusFeeds(d.Reconcile)}
 	lh := &logsHandlers{logs: d.RuntimeLogs}
 	dh := &deploymentsHandlers{
@@ -225,6 +229,7 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 
 			ac.route(r, "GET", "/steps/{id}/logs/stream", classStepRead, jh.streamLogs)
 			ac.route(r, "GET", "/runs/{id}/stream", classRunRead, jh.streamRun)
+			ac.route(r, "GET", "/projects/{id}/stream", classProjectRead, psh.stream)
 			ac.route(r, "GET", "/environments/{id}/runs/stream", classEnvRead, jh.streamRuns)
 			ac.route(r, "GET", "/environments/{id}/status/stream", classEnvRead, sh.stream)
 			ac.route(r, "GET", "/environments/{id}/logs/stream", classEnvRead, lh.stream)
@@ -300,9 +305,9 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 				// Product surface: projects, environments, drafts. Access is
 				// per project and per environment (docs/permissions.md);
 				// destructive deletes and access management need sudo mode.
-				ph := &projectsHandlers{projects: d.Projects, health: d.Health, resolver: ac.resolver}
+				ph := &projectsHandlers{projects: d.Projects, deploy: d.Deploy, journal: d.Journal, feed: d.Feed, health: d.Health, resolver: ac.resolver}
 				eh := &environmentsHandlers{projects: d.Projects, deploy: d.Deploy, journal: d.Journal, reconcile: d.Reconcile, health: d.Health}
-				ah := &accessHandlers{projects: d.Projects}
+				ah := &accessHandlers{projects: d.Projects, feed: d.Feed}
 				ac.route(r, "POST", "/projects", classProjectCreate, ph.create)
 				ac.route(r, "GET", "/projects", classProjectList, ph.list)
 				ac.route(r, "GET", "/projects/{id}", classProjectRead, ph.get)
@@ -317,7 +322,7 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 
 				ac.route(r, "POST", "/projects/{id}/definitions", classDeployer, ph.submitDefinition)
 
-				vh := &valuesHandlers{projects: d.Projects, values: d.Values, st: d.Store}
+				vh := &valuesHandlers{projects: d.Projects, values: d.Values, st: d.Store, feed: d.Feed}
 				ac.route(r, "GET", "/environments/{id}/values", classEnvRead, vh.get)
 				ac.route(r, "PUT", "/environments/{id}/values", classEnvMaintain, vh.put)
 				ac.route(r, "DELETE", "/environments/{id}/values/{name}", classEnvMaintain, vh.del)

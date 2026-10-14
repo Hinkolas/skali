@@ -20,6 +20,9 @@ type Project struct {
 	Access ProjectAccess `json:"access"`
 	// Summary is the list rollup, present only from ListProjectSummaries.
 	Summary *ProjectSummary `json:"summary,omitempty"`
+	// DeletingAt is set once a delete was decided: the environments are
+	// being deleted and the project goes with the last of them.
+	DeletingAt *time.Time `json:"deleting_at,omitempty"`
 }
 
 // ProjectSummary is the daemon's list rollup: every environment with its
@@ -65,6 +68,9 @@ type Environment struct {
 	Access    string               `json:"access"`
 	CreatedAt *time.Time           `json:"created_at,omitempty"`
 	Settings  *EnvironmentSettings `json:"settings,omitempty"`
+	// State is the desired presence: active, down (stopped), or releasing
+	// (being deleted). Empty on a locked environment.
+	State string `json:"state,omitempty"`
 }
 
 // Locked: the caller may see the environment's name and nothing inside.
@@ -456,7 +462,8 @@ func (c *Client) ListEnvironments(ctx context.Context, projectID string) ([]Envi
 	var res struct {
 		Environments []Environment `json:"environments"`
 	}
-	if err := c.do(ctx, http.MethodGet, "/v1/projects/"+projectID+"/environments", nil, &res); err != nil {
+	// The summary carries each environment's state from the daemon's cache.
+	if err := c.do(ctx, http.MethodGet, "/v1/projects/"+projectID+"/environments?include=summary", nil, &res); err != nil {
 		return nil, err
 	}
 	return res.Environments, nil
@@ -470,6 +477,43 @@ func (c *Client) GetEnvironment(ctx context.Context, environmentID string) (*Env
 		return nil, err
 	}
 	return &res.Environment, nil
+}
+
+// ProjectDeletion is a project delete's answer: Deleted when the project
+// had no environments and is gone already; otherwise the purges under way,
+// and the project goes with the last of them.
+type ProjectDeletion struct {
+	Deleted bool
+	Purges  []EnvironmentPurge `json:"purges"`
+}
+
+// EnvironmentPurge names one environment's purge; RunID is empty when the
+// environment was already being deleted before this call.
+type EnvironmentPurge struct {
+	EnvironmentID string `json:"environment_id"`
+	RunID         string `json:"run_id,omitempty"`
+}
+
+// DeleteProject deletes a project with every environment. Requires a
+// fresh session. Repeating it resumes an interrupted delete.
+func (c *Client) DeleteProject(ctx context.Context, projectID string) (*ProjectDeletion, error) {
+	var res ProjectDeletion
+	if err := c.do(ctx, http.MethodDelete, "/v1/projects/"+projectID, nil, &res); err != nil {
+		return nil, err
+	}
+	res.Deleted = res.Purges == nil
+	return &res, nil
+}
+
+// GetProject reads one project; a 404 means it is gone (or invisible).
+func (c *Client) GetProject(ctx context.Context, projectID string) (*Project, error) {
+	var res struct {
+		Project Project `json:"project"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/v1/projects/"+projectID, nil, &res); err != nil {
+		return nil, err
+	}
+	return &res.Project, nil
 }
 
 // TeardownEnvironment persists the destructive teardown decision on the

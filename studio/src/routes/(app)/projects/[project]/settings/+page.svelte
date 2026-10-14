@@ -1,13 +1,23 @@
 <script lang="ts">
 	import { invalidateAll } from '$app/navigation';
 	import { page } from '$app/state';
+	import CircleStop from '@lucide/svelte/icons/circle-stop';
 	import Ellipsis from '@lucide/svelte/icons/ellipsis';
+	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
 	import Lock from '@lucide/svelte/icons/lock';
 	import Plus from '@lucide/svelte/icons/plus';
+	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import { api, ApiError } from '$lib/api/client';
 	import { isInstanceAdmin, requiredTitle, roleAtLeast } from '$lib/access';
 	import { SCHEDULE_IDLE } from '$lib/backups';
 	import { describeCron, describeSeconds } from '$lib/cron';
+	import {
+		confirmDeleteEnvironment,
+		confirmStopEnvironment,
+		DELETE_ENVIRONMENT_TITLE,
+		STOP_ENVIRONMENT_TITLE,
+		STOPPED_ENVIRONMENT_TITLE
+	} from '$lib/environments';
 	import { describeActor, formatDateTime, relativeTime } from '$lib/format';
 	import { hasStatefulServices } from '$lib/models/service';
 	import { HEALTH_META } from '$lib/service-types';
@@ -26,6 +36,7 @@
 	import KeyValueRow from '$lib/components/ui/KeyValueRow.svelte';
 	import Menu from '$lib/components/ui/Menu.svelte';
 	import MenuItem from '$lib/components/ui/MenuItem.svelte';
+	import MenuSeparator from '$lib/components/ui/MenuSeparator.svelte';
 	import Pill from '$lib/components/ui/Pill.svelte';
 	import TextInput from '$lib/components/ui/TextInput.svelte';
 	import RunDetailPanel from '$lib/components/run/RunDetailPanel.svelte';
@@ -40,8 +51,13 @@
 		modalOptions as environmentSettingsModalOptions
 	} from '$lib/components/access/EnvironmentSettingsModal.svelte';
 	import type { AuthUser } from '$lib/types/auth';
-	import type { Environment, ServiceHealth } from '$lib/types/project';
+	import {
+		ENVIRONMENT_STATE_LABEL,
+		type Environment,
+		type ServiceHealth
+	} from '$lib/types/project';
 	import type { Target } from '$lib/types/revisions';
+	import { runKindLabel, type Run } from '$lib/types/runs';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -57,6 +73,7 @@
 	const projectMaintain = $derived(roleAtLeast(data.project.access.role, 'maintain'));
 	const projectAdminTitle = $derived(requiredTitle('admin', 'project', data.project.name));
 	const envLocked = $derived(data.env?.access === 'none');
+	const envDeleting = $derived(data.env?.state === 'releasing');
 
 	function openEnvironmentSettings(environment: Environment) {
 		if (!environment.settings) return;
@@ -82,6 +99,21 @@
 				title: 'Locked for you: listed by name only.'
 			});
 			return pills;
+		}
+		if (environment.state === 'releasing') {
+			pills.push({
+				text: 'deleting',
+				tone: 'warning',
+				title: 'Being deleted: it disappears from this list once the cluster confirms it is gone.'
+			});
+			return pills;
+		}
+		if (environment.state === 'down') {
+			pills.push({
+				text: 'stopped',
+				tone: 'neutral',
+				title: 'Stopped: values, revisions, and volumes are kept; the next deploy starts it again.'
+			});
 		}
 		if (environment.settings?.deploy_policy === 'promote-only') {
 			const sources = environment.settings.promote_from;
@@ -142,7 +174,18 @@
 		const insight = data.insights[environment.id];
 		if (!insight) return [];
 		const facts: string[] = [];
-		if (environment.state) facts.push(environment.state);
+		// A deleting environment's health and deploys no longer matter: the
+		// pill says what is happening, the progress button shows how far.
+		if (environment.state === 'releasing') {
+			facts.push('deleting · values, revisions, and data go with it');
+			return facts;
+		}
+		// Stopped has its pill; active is the default worth stating.
+		if (environment.state === 'active') facts.push(ENVIRONMENT_STATE_LABEL.active);
+		const active = insight.activeRun;
+		if (active && active.kind !== 'deployment' && active.kind !== 'rollback') {
+			facts.push(`${runKindLabel(active.kind)} running`);
+		}
 		if (isSelected(environment) && liveStatus && liveStatus.services.length > 0) {
 			const healthy = liveStatus.services.filter((s) => s.health === 'healthy').length;
 			facts.push(`${healthy}/${liveStatus.services.length} healthy`);
@@ -204,31 +247,10 @@
 		}
 	}
 
-	function teardown(envId: string, envName: string, purge: boolean) {
-		dialog.confirm({
-			title: purge ? `Purge ${envName}?` : `Tear down ${envName}?`,
-			description: purge
-				? 'Destroys the namespace with its volumes and deletes the environment with all values, revisions, and history. This is one-way.'
-				: 'Removes the running workloads but keeps values, revisions, and volumes. The next deployment resurrects the environment.',
-			confirmLabel: purge ? 'Purge environment' : 'Tear down',
-			variant: 'danger',
-			// Purging is one-way; teardown is resurrectable and stays one-click.
-			typeToConfirm: purge ? envName : undefined,
-			onConfirm: async () => {
-				try {
-					const result = await api.post<{ run_id: string; purge: boolean }>(
-						`/v1/environments/${envId}/teardown`,
-						purge ? { purge: true } : undefined
-					);
-					toast.success(purge ? 'Purge started' : 'Teardown started');
-					sidepanel.open(RunDetailPanel, { runId: result.run_id }, { label: 'Run details' });
-					await invalidateAll();
-				} catch (err) {
-					toast.error(err instanceof ApiError ? err.message : 'Could not start the teardown');
-					throw err;
-				}
-			}
-		});
+	// The row's way back to a run in flight: closing the side panel no
+	// longer loses it.
+	function openRun(run: Run) {
+		sidepanel.open(RunDetailPanel, { runId: run.id }, { label: 'Run details' });
 	}
 
 	function rollback(revisionID: string) {
@@ -335,15 +357,25 @@
 				{@const envAdmin = roleAtLeast(environment.access, 'admin')}
 				{@const envAdminTitle = requiredTitle('admin', 'environment', environment.name)}
 				{@const facts = environmentFacts(environment)}
+				{@const deleting = environment.state === 'releasing'}
+				{@const activeRun = data.insights[environment.id]?.activeRun ?? null}
 				<div
 					class="border-border-subtle flex items-center gap-3 border-b py-2.5 last:border-0"
 					title={environmentTitle(environment)}
 				>
-					<span
-						class="size-[8px] flex-none rounded-full {locked
-							? 'bg-text-ghost'
-							: HEALTH_META[environmentHealth(environment)].dot}"
-					></span>
+					{#if deleting}
+						<LoaderCircle
+							size={12}
+							class="text-status-warning -mx-0.5 flex-none animate-spin"
+							aria-label="being deleted"
+						/>
+					{:else}
+						<span
+							class="size-[8px] flex-none rounded-full {locked
+								? 'bg-text-ghost'
+								: HEALTH_META[environmentHealth(environment)].dot}"
+						></span>
+					{/if}
 					<div class="flex min-w-0 flex-1 flex-col gap-1">
 						<div class="flex flex-wrap items-center gap-x-3 gap-y-1">
 							{#if locked}
@@ -376,7 +408,17 @@
 						{/if}
 					</div>
 					<div class="ml-auto flex flex-none items-center gap-3">
-						{#if !locked}
+						{#if activeRun}
+							<Button
+								size="sm"
+								variant="ghost"
+								title="show the {runKindLabel(activeRun.kind)} in progress"
+								onclick={() => openRun(activeRun)}
+							>
+								<LoaderCircle size={13} class="animate-spin" /> Progress
+							</Button>
+						{/if}
+						{#if !locked && !deleting}
 							<Button
 								size="sm"
 								variant="ghost"
@@ -393,23 +435,26 @@
 									<Ellipsis size={15} />
 								{/snippet}
 								<MenuItem
-									disabled={!envAdmin}
-									title={envAdmin
-										? 'Removes the running workloads but keeps values, revisions, and volumes.'
-										: envAdminTitle}
-									onselect={() => teardown(environment.id, environment.name, false)}
+									icon={CircleStop}
+									disabled={!envAdmin || environment.state === 'down'}
+									title={!envAdmin
+										? envAdminTitle
+										: environment.state === 'down'
+											? STOPPED_ENVIRONMENT_TITLE
+											: STOP_ENVIRONMENT_TITLE}
+									onselect={() => confirmStopEnvironment(environment)}
 								>
-									Tear down
+									Stop environment
 								</MenuItem>
+								<MenuSeparator />
 								<MenuItem
+									icon={Trash2}
 									danger
 									disabled={!envAdmin}
-									title={envAdmin
-										? 'Destroys the namespace and deletes the environment. One-way.'
-										: envAdminTitle}
-									onselect={() => teardown(environment.id, environment.name, true)}
+									title={envAdmin ? DELETE_ENVIRONMENT_TITLE : envAdminTitle}
+									onselect={() => confirmDeleteEnvironment(environment)}
 								>
-									Purge environment
+									Delete environment
 								</MenuItem>
 							</Menu>
 						{/if}
@@ -434,8 +479,12 @@
 				<div class="font-mono text-text-faint flex items-center gap-1.5 py-2 text-md">
 					<Lock size={12} /> this environment is locked for you
 				</div>
+			{:else if envDeleting}
+				<div class="font-mono text-text-faint flex items-center gap-1.5 py-2 text-md">
+					<LoaderCircle size={12} class="animate-spin" /> this environment is being deleted with its revisions
+				</div>
 			{/if}
-			{#each data.revisions as revision, index (revision.id)}
+			{#each envDeleting ? [] : data.revisions as revision, index (revision.id)}
 				{@const isTarget = revision.id === data.target?.target_revision_id}
 				{@const isActive = revision.id === data.target?.active_revision_id}
 				{@const mayRollback = roleAtLeast(data.env?.access, 'deploy')}
@@ -478,7 +527,7 @@
 					</div>
 				</div>
 			{:else}
-				{#if !envLocked}
+				{#if !envLocked && !envDeleting}
 					<div class="font-mono text-text-faint py-2 text-md">
 						no revisions yet · the first deploy creates one
 					</div>
@@ -492,7 +541,8 @@
 			<div class="min-w-48 flex-1">
 				<h3 class="text-text-primary text-xl font-semibold">Danger zone</h3>
 				<div class="text-text-muted mt-1 text-base">
-					Deleting a project removes its environments, values, revisions, and history.
+					Deleting a project deletes every environment with its data, then the project with its
+					values, revisions, and history.
 				</div>
 			</div>
 			<div class="ml-auto">
@@ -501,7 +551,11 @@
 					disabled={!projectAdmin}
 					title={projectAdmin ? undefined : projectAdminTitle}
 					onclick={() =>
-						modal.open(DeleteProjectModal, { project: data.project }, deleteProjectModalOptions)}
+						modal.open(
+							DeleteProjectModal,
+							{ project: data.project, environments: data.environments },
+							deleteProjectModalOptions
+						)}
 				>
 					Delete project
 				</Button>

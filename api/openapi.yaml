@@ -997,17 +997,80 @@ paths:
       operationId: deleteProject
       summary: Delete a project
       description: |
-        Destructive: removes the project with its drafts and revisions.
-        Refused with 409 while the project still has environments; purge
-        each one first (skali env remove), which releases its namespace.
-        Requires recent authentication (sudo mode).
+        Destructive and one-way: deletes the project with every environment,
+        value, revision, and its history. A project without environments is
+        deleted at once (204). Otherwise the decision is persisted on the
+        project (`deleting_at`) and every environment is purged exactly as
+        `POST /v1/environments/{id}/teardown` with `purge` would; the
+        project row goes with the last environment (202). A deleting
+        project accepts no new environments or deployments
+        (`409 project_deleting`). Repeating the call resumes a delete an
+        error interrupted without restarting running purges. Refused with
+        `409 deployment_in_flight`, before anything is decided, while a
+        deployment window is open in any environment. Requires recent
+        authentication (sudo mode).
       tags: [projects]
       responses:
+        "202":
+          description: The environments are purging; the project is deleted with the last of them.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [purges]
+                properties:
+                  purges:
+                    type: array
+                    items:
+                      type: object
+                      required: [environment_id]
+                      properties:
+                        environment_id:
+                          type: string
+                          format: uuid
+                        run_id:
+                          type: string
+                          format: uuid
+                          description: The purge run this call started; absent when the environment was already purging.
         "204":
           description: Project deleted.
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/ReauthRequired" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/projects/{id}/stream:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: streamProject
+      summary: Stream a project's change signals (SSE)
+      description: |
+        Server-sent events without payload (`data: {}`) telling a client
+        when to re-read what it shows of a project. `ready` is sent on
+        every connect, so a reconnecting client re-reads what it may have
+        missed. `changed` (coalesced) follows a change to the project, its
+        draft, its environments, their settings, values, or access, and every run started
+        or finished in an environment the caller can read, which covers
+        deploys, stops, and purges. `deleted` ends the stream once the
+        project is gone, `revoked` once the caller lost access. A comment
+        ping is sent every 15 seconds. The stream closes when the
+        subscriber falls behind; clients simply reconnect. This route is
+        exempt from the request timeout.
+      tags: [projects]
+      responses:
+        "200":
+          description: An event stream (`text/event-stream`).
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /v1/projects/{id}/draft:
@@ -2942,7 +3005,8 @@ paths:
         are removed but the namespace, volumes, values, and history remain,
         and the next deployment resurrects the environment. With purge the
         namespace including its volumes and the environment itself with all
-        values, revisions, and history are destroyed; this is one-way.
+        values, revisions, and history are destroyed; this is one-way. The
+        run's kind is `teardown` without purge and `purge` with it.
         Requires recent authentication (sudo mode).
       tags: [environments]
       requestBody:
@@ -4509,6 +4573,7 @@ components:
             - forbidden
             - reauth_required
             - environment_protected
+            - project_deleting
             - not_found
             - conflict
             - version_conflict
@@ -4570,6 +4635,12 @@ components:
           description: |
             When the project's own settings last changed. Deploys never
             move it; the project's last activity is `summary.updated_at`.
+        deleting_at:
+          type: string
+          format: date-time
+          description: |
+            Present once a delete was decided: the environments are
+            purging and the project disappears with the last of them.
         access: { $ref: "#/components/schemas/ProjectAccess" }
         summary:
           $ref: "#/components/schemas/ProjectSummary"
@@ -4789,7 +4860,7 @@ components:
           format: uuid
         kind:
           type: string
-          description: "deployment, rollback, restart, reconcile, teardown, backup, restore, or rotation."
+          description: "deployment, rollback, restart, reconcile, teardown (an environment stopped), purge (an environment deleted), backup, restore, or rotation."
         bypass_protection:
           type: boolean
           description: |

@@ -8,18 +8,28 @@
 </script>
 
 <script lang="ts">
-	import { goto, invalidateAll } from '$app/navigation';
-	import { resolve } from '$app/paths';
+	import { invalidateAll } from '$app/navigation';
 	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
 	import { api, ApiError } from '$lib/api/client';
-	import type { Project } from '$lib/types/project';
+	import { leaveDeletedProject } from '$lib/projectstream';
+	import type { Environment, Project } from '$lib/types/project';
 	import { toast } from '$lib/stores/toast.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
 	import TextInput from '$lib/components/ui/TextInput.svelte';
 
 	// The stop moment before the one-way door: hazard anatomy, the
 	// consequence stated, the project's name typed before the button arms.
-	let { project, close }: { project: Project; close: (deleted?: boolean) => void } = $props();
+	// A project without environments goes at once; otherwise every
+	// environment is deleted first and the project shows that progress
+	// until it goes with the last of them.
+	let {
+		project,
+		environments,
+		close
+	}: { project: Project; environments: Environment[]; close: (deleted?: boolean) => void } =
+		$props();
+
+	const names = $derived(environments.map((e) => e.name));
 
 	let typed = $state('');
 	let busy = $state(false);
@@ -32,10 +42,15 @@
 		busy = true;
 		errorMessage = '';
 		try {
-			await api.del(`/v1/projects/${project.id}`);
-			toast.success(`Project "${project.name}" deleted`);
+			const purging = await api.del<{ purges: unknown[] } | undefined>(
+				`/v1/projects/${project.id}`
+			);
 			close(true);
-			await goto(resolve('/(app)/projects'));
+			if (!purging) {
+				await leaveDeletedProject(project);
+				return;
+			}
+			toast.success(`Deleting ${project.display_name || project.name}`);
 			await invalidateAll();
 		} catch (err) {
 			errorMessage = err instanceof ApiError ? err.message : 'Could not delete the project.';
@@ -57,8 +72,13 @@
 	</div>
 
 	<p class="text-text-muted mt-2 text-base leading-relaxed">
-		Removes the project with its environments, values, revisions, and history. This cannot be
-		undone.
+		{#if names.length > 0}
+			Deletes {names.length === 1 ? 'the environment' : `all ${names.length} environments`}
+			<span class="font-mono text-text-secondary">{names.join(', ')}</span> with their volumes, databases,
+			and buckets, then the project with its values, revisions, and history. This cannot be undone.
+		{:else}
+			Removes the project with its values, revisions, and history. This cannot be undone.
+		{/if}
 	</p>
 
 	<label class="mt-3.5 flex flex-col gap-1.5">

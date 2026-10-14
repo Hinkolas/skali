@@ -18,7 +18,7 @@ import (
 )
 
 // newEnvCommand lists and configures a project's environments: access
-// ceiling, deploy policy, priority, creation, and purge. Who may do what on
+// ceiling, deploy policy, priority, creation, stop, and removal. Who may do what on
 // an environment is skali access; this group is about the environment
 // itself.
 func newEnvCommand() *cobra.Command {
@@ -27,11 +27,12 @@ func newEnvCommand() *cobra.Command {
 		Short: "List and configure environments",
 		Long: "Environments of the checkout's project (or --project). Listing needs\n" +
 			"project read, creating needs project maintain (the creator becomes\n" +
-			"admin of the new environment), settings and removal need environment\n" +
+			"admin of the new environment), settings, stop, and removal need environment\n" +
 			"admin and a recent login. Automatic backups are configured with\n" +
 			"skali backup schedule.",
 	}
-	command.AddCommand(newEnvLsCommand(), newEnvCreateCommand(), newEnvRenameCommand(), newEnvSetCommand(), newEnvRmCommand())
+	command.AddCommand(newEnvLsCommand(), newEnvCreateCommand(), newEnvRenameCommand(), newEnvSetCommand(),
+		newEnvStopCommand(), newEnvRmCommand())
 	return command
 }
 
@@ -111,18 +112,33 @@ func renderEnvironmentTable(out io.Writer, scope *accessScope) {
 			name += " (bound)"
 		}
 		if environment.Locked() || environment.Settings == nil {
-			rows = append(rows, []string{name, "locked", "-", "-", "-", "-", "-"})
+			rows = append(rows, []string{name, "-", "locked", "-", "-", "-", "-", "-"})
 			continue
 		}
 		created := "-"
 		if environment.CreatedAt != nil {
 			created = environment.CreatedAt.Local().Format("2006-01-02 15:04")
 		}
-		rows = append(rows, []string{name, environment.Access, environment.Settings.Priority,
+		rows = append(rows, []string{name, environmentStateLabel(environment.State), environment.Access, environment.Settings.Priority,
 			describeDeployPolicy(environment.Settings), environment.Settings.MaxRole,
 			describeBackupSchedule(environment.Settings), created})
 	}
-	renderColumns(out, []string{"NAME", "ACCESS", "PRIORITY", "POLICY", "CEILING", "BACKUPS", "CREATED"}, rows)
+	renderColumns(out, []string{"NAME", "STATE", "ACCESS", "PRIORITY", "POLICY", "CEILING", "BACKUPS", "CREATED"}, rows)
+}
+
+// environmentStateLabel names a desired presence the way the Studio does:
+// a down environment is stopped, a releasing one is being removed.
+func environmentStateLabel(state string) string {
+	switch state {
+	case "down":
+		return "stopped"
+	case "releasing":
+		return "removing"
+	case "":
+		return "-"
+	default:
+		return state
+	}
 }
 
 func describeDeployPolicy(settings *client.EnvironmentSettings) string {
@@ -384,17 +400,17 @@ func printEnvironmentSettings(out io.Writer, scope *accessScope, environment *cl
 	fmt.Fprintf(out, "backups        %s\n", describeBackupScheduleLong(environment.Settings.Backup))
 }
 
-func newEnvRmCommand() *cobra.Command {
+func newEnvStopCommand() *cobra.Command {
 	var project, remote string
-	var yes bool
+	var yes, detach bool
 	command := &cobra.Command{
-		Use:               "remove <name>",
-		Aliases:           []string{"rm"},
-		Short:             "Purge an environment: its workloads, volumes, values, revisions, and history",
+		Use:               "stop <name>",
+		Short:             "Stop an environment's workloads but keep its data",
 		ValidArgsFunction: completeEnvironmentArg,
-		Long: "Tears the environment down with purge: the namespace with its volumes goes,\n" +
-			"and the environment is deleted with all values, revisions, and history. This\n" +
-			"is one-way. Environment admin and a recent login are required.",
+		Long: "Takes the running workloads down. The namespace with its volumes, the values,\n" +
+			"revisions, and history stay, and the next deploy starts the environment\n" +
+			"again. The command follows the stop until it is done; --detach returns\n" +
+			"right away. Environment admin and a recent login are required.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
 			ctx := command.Context()
@@ -405,13 +421,16 @@ func newEnvRmCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			environment := scope.environment
+			if environment.State == "releasing" {
+				return fmt.Errorf("environment %s is being removed", environment.Name)
+			}
 			if !yes {
-				fmt.Fprintln(out, style.BoldRed(fmt.Sprintf("This destroys environment %s of project %s on %s completely:",
-					scope.environment.Name, scope.project.Name, scope.remoteName)))
-				fmt.Fprintln(out, "  its namespace including all volumes, and its values,")
-				fmt.Fprintln(out, "  revisions, and history. This is one-way.")
 				confirmed, err := promptSession(out, in).Confirm(ctx, cliprompt.ConfirmOptions{
-					Title: fmt.Sprintf("Purge environment %s?", scope.environment.Name),
+					Title: fmt.Sprintf("Stop environment %s of project %s on %s?",
+						environment.Name, scope.project.Name, scope.remoteName),
+					Description: "Its workloads go down; values, revisions, and volumes stay, " +
+						"and the next deploy starts it again.",
 				})
 				if err != nil {
 					return confirmError(err)
@@ -422,18 +441,125 @@ func newEnvRmCommand() *cobra.Command {
 			}
 			var runID string
 			err = withReauth(ctx, out, in, scope.api, func() (err error) {
-				runID, err = scope.api.TeardownEnvironment(ctx, scope.environment.ID, true)
+				runID, err = scope.api.TeardownEnvironment(ctx, environment.ID, false)
 				return err
 			})
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(out, "purge started  %s\n", style.Bold(runID))
-			fmt.Fprintln(out, style.Dim("follow it with "+runAttachHint(remote, runID)))
+			fmt.Fprintf(out, "%s %s  stop %s\n", style.Dim("run"), style.Bold(runID), environment.Name)
+			if detach {
+				fmt.Fprintln(out, style.Dim("follow it with "+runAttachHint(remote, runID)))
+				return nil
+			}
+			finished, err := followTeardown(ctx, out, scope.api, runID, remote, false)
+			if err != nil || !finished {
+				return err
+			}
+			fmt.Fprintf(out, "\n%s%s is stopped; its data is retained and the next deploy starts it again\n",
+				style.Check(), environment.Name)
 			return nil
 		},
 	}
 	addAccessScopeFlags(command, &project, &remote)
 	command.Flags().BoolVar(&yes, "yes", false, "skip the confirmation")
+	command.Flags().BoolVar(&detach, "detach", false, "start the stop and return without following it")
 	return command
+}
+
+func newEnvRmCommand() *cobra.Command {
+	var project, remote string
+	var yes, detach bool
+	command := &cobra.Command{
+		Use:               "remove <name>",
+		Aliases:           []string{"rm"},
+		Short:             "Remove an environment with its workloads, volumes, values, revisions, and history",
+		ValidArgsFunction: completeEnvironmentArg,
+		Long: "Purges the environment: the namespace with its volumes, the databases and\n" +
+			"buckets with their data, and the environment with all values, revisions, and\n" +
+			"history are deleted. This is one-way. The command follows the removal until\n" +
+			"the environment is gone; --detach returns right away. Environment admin and a\n" +
+			"recent login are required.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(command *cobra.Command, args []string) error {
+			ctx := command.Context()
+			out := command.OutOrStdout()
+			in := bufio.NewReader(command.InOrStdin())
+			style := clirender.StyleFor(out)
+			scope, err := resolveAccessScope(ctx, project, args[0], remote)
+			if err != nil {
+				return err
+			}
+			environment := scope.environment
+			if !yes {
+				if !cliprompt.Interactive() {
+					return errors.New("non-interactive use requires --yes")
+				}
+				confirmed, err := promptSession(out, in).ConfirmTyped(ctx,
+					fmt.Sprintf("Remove environment %s of project %s on %s?",
+						environment.Name, scope.project.Name, scope.remoteName),
+					"Deletes the namespace with its volumes, the databases and buckets with "+
+						"their data, and the environment with all values, revisions, and "+
+						"history. This is one-way.",
+					environment.Name)
+				if err != nil {
+					return err
+				}
+				if !confirmed {
+					return errors.New("aborted")
+				}
+			}
+			var runID string
+			err = withReauth(ctx, out, in, scope.api, func() (err error) {
+				runID, err = scope.api.TeardownEnvironment(ctx, environment.ID, true)
+				return err
+			})
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(out, "%s %s  remove %s\n", style.Dim("run"), style.Bold(runID), environment.Name)
+			if detach {
+				fmt.Fprintln(out, style.Dim("follow it with "+runAttachHint(remote, runID)))
+				return nil
+			}
+			finished, err := followTeardown(ctx, out, scope.api, runID, remote, true)
+			if err != nil || !finished {
+				return err
+			}
+			if err := waitEnvironmentGone(ctx, scope.api, environment.ID,
+				"the removal is still finishing on the server; check skali env list"); err != nil {
+				return err
+			}
+			fmt.Fprintf(out, "\n%s%s is removed; nothing of it remains\n", style.Check(), environment.Name)
+			return nil
+		},
+	}
+	addAccessScopeFlags(command, &project, &remote)
+	command.Flags().BoolVar(&yes, "yes", false, "skip the typed confirmation")
+	command.Flags().BoolVar(&detach, "detach", false, "start the removal and return without following it")
+	return command
+}
+
+// followTeardown attaches to a stop or removal run until it settles and
+// reports whether it finished (false after a detach or an interrupt). A
+// removal's epilogue deletes the environment row and its runs with it, so
+// losing the run there means the removal finished.
+func followTeardown(ctx context.Context, out io.Writer, api *client.Client, runID, remote string, purge bool) (bool, error) {
+	outcome, err := attachRun(ctx, out, api, runID, remote)
+	if err != nil {
+		if !purge || !isNotFound(err) {
+			return false, err
+		}
+		outcome = attachOutcome{Status: "succeeded"}
+	}
+	switch outcome.Status {
+	case "succeeded":
+		return true, nil
+	case "detached", "interrupted":
+		return false, nil
+	case "failed":
+		return false, failedRunError(runID, outcome.Failure)
+	default:
+		return false, fmt.Errorf("run %s %s", runID, outcome.Status)
+	}
 }

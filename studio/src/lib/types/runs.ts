@@ -5,6 +5,7 @@ export type RunKind =
 	| 'rollback'
 	| 'restart'
 	| 'teardown'
+	| 'purge'
 	| 'reconcile'
 	| 'backup'
 	| 'restore'
@@ -82,7 +83,31 @@ export interface LogsPage {
 	next?: string;
 }
 
+/**
+ * How the Studio names each run kind. The API keeps its own words; the
+ * Studio says stop and delete for the two teardown decisions, matching the
+ * environment actions.
+ */
+const RUN_KIND_LABEL: Partial<Record<RunKind, string>> = {
+	teardown: 'stop',
+	purge: 'delete',
+	'restore-accept': 'restore accept'
+};
+
+export function runKindLabel(kind: RunKind): string {
+	return RUN_KIND_LABEL[kind] ?? kind;
+}
+
 /** Whether a run can still change (its streams stay worth watching). */
 export function runUnsettled(status: RunStatus): boolean {
 	return status === 'pending' || status === 'running';
+}
+
+/**
+ * Whether cancelling the run undoes anything. A stop or a delete is a
+ * persisted decision the reconciler executes whatever happens to its run,
+ * so a cancel would only end the journal while the work goes on.
+ */
+export function runCancellable(run: Run): boolean {
+	return runUnsettled(run.status) && run.kind !== 'teardown' && run.kind !== 'purge';
 }

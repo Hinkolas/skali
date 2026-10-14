@@ -508,7 +508,8 @@ func runDevDown(command *cobra.Command, purge, yes bool) error {
 	}
 
 	if purge {
-		if err := waitEnvironmentGone(ctx, api, environmentID); err != nil {
+		if err := waitEnvironmentGone(ctx, api, environmentID,
+			"the purge is still finishing on the server; check skali dev list"); err != nil {
 			return err
 		}
 		fmt.Fprintf(out, "\n%s%s is purged from the local platform; nothing of it remains\n",
@@ -754,7 +755,7 @@ func devFollowLogs(command *cobra.Command, api *client.Client, environmentID str
 
 // waitEnvironmentGone polls until the purged environment's row is deleted;
 // the 404 is the authoritative completion signal.
-func waitEnvironmentGone(ctx context.Context, api *client.Client, environmentID string) error {
+func waitEnvironmentGone(ctx context.Context, api *client.Client, environmentID, stillFinishing string) error {
 	deadline := time.Now().Add(30 * time.Second)
 	for {
 		_, err := api.GetEnvironment(ctx, environmentID)
@@ -765,7 +766,7 @@ func waitEnvironmentGone(ctx context.Context, api *client.Client, environmentID 
 			return err
 		}
 		if time.Now().After(deadline) {
-			return errors.New("the purge is still finishing on the server; check skali dev list")
+			return errors.New(stillFinishing)
 		}
 		select {
 		case <-ctx.Done():

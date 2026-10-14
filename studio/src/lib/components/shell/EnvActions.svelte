@@ -1,12 +1,21 @@
 <script lang="ts">
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
+	import CircleStop from '@lucide/svelte/icons/circle-stop';
 	import Ellipsis from '@lucide/svelte/icons/ellipsis';
 	import RefreshCw from '@lucide/svelte/icons/refresh-cw';
 	import Rocket from '@lucide/svelte/icons/rocket';
 	import RotateCw from '@lucide/svelte/icons/rotate-cw';
+	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import { page } from '$app/state';
 	import { api, ApiError } from '$lib/api/client';
 	import { requiredTitle, roleAtLeast } from '$lib/access';
+	import {
+		confirmDeleteEnvironment,
+		confirmStopEnvironment,
+		DELETE_ENVIRONMENT_TITLE,
+		STOP_ENVIRONMENT_TITLE,
+		STOPPED_ENVIRONMENT_TITLE
+	} from '$lib/environments';
 	import type { Environment, Project } from '$lib/types/project';
 	import { dialog } from '$lib/stores/dialog.svelte';
 	import { modal } from '$lib/stores/modal.svelte';
@@ -25,8 +34,8 @@
 
 	// Environment actions collected under one quiet topbar menu: everything
 	// here acts on the whole environment the breadcrumb names, is used
-	// rarely, and a menu leaves room for future entries (stop) without
-	// growing the chrome. Service-scoped actions (restarting one service)
+	// rarely, and a menu holds the rare destructive ones (stop, delete)
+	// without growing the chrome. Service-scoped actions (restarting one service)
 	// live on the service page instead. Deep eligibility (something
 	// running, per-target refusals) belongs to the modals and the server;
 	// items only gate what they can see cheaply.
@@ -41,6 +50,14 @@
 	const env = $derived(data.env ?? null);
 	const environments = $derived(data.environments ?? []);
 	const mayDeploy = $derived(roleAtLeast(env?.access, 'deploy'));
+	const envAdmin = $derived(roleAtLeast(env?.access, 'admin'));
+	const adminTitle = $derived(
+		envAdmin ? undefined : requiredTitle('admin', 'environment', env?.name ?? '')
+	);
+	// Nothing acts on an environment, or a project, that is being deleted.
+	const actionable = $derived(
+		env != null && env.state !== 'releasing' && !data.project?.deleting_at
+	);
 	const deployTitle = $derived(
 		mayDeploy ? undefined : requiredTitle('deploy', 'environment', env?.name ?? '')
 	);
@@ -80,7 +97,7 @@
 	}
 </script>
 
-{#if data.project && env && env.access !== 'none'}
+{#if data.project && env && env.access !== 'none' && actionable}
 	<Menu
 		label="Environment actions"
 		align="end"
@@ -112,6 +129,25 @@
 			onselect={confirmRestartAll}
 		>
 			Restart all
+		</MenuItem>
+		<MenuSeparator />
+		<MenuItem
+			icon={CircleStop}
+			disabled={!envAdmin || env.state === 'down'}
+			title={adminTitle ??
+				(env.state === 'down' ? STOPPED_ENVIRONMENT_TITLE : STOP_ENVIRONMENT_TITLE)}
+			onselect={() => confirmStopEnvironment(env)}
+		>
+			Stop environment
+		</MenuItem>
+		<MenuItem
+			icon={Trash2}
+			danger
+			disabled={!envAdmin}
+			title={adminTitle ?? DELETE_ENVIRONMENT_TITLE}
+			onselect={() => confirmDeleteEnvironment(env)}
+		>
+			Delete environment
 		</MenuItem>
 	</Menu>
 {/if}

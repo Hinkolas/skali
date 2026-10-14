@@ -37,14 +37,19 @@
 		onselect?.();
 	}
 
+	// A destructive item reads as one before the pointer gets there: red at
+	// rest, not only on hover.
 	const itemClass = $derived(
 		`flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-base font-medium transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent/70 ${
 			disabled
 				? 'cursor-default text-text-ghost'
-				: `cursor-pointer text-text-secondary hover:bg-white/5 ${
-						danger ? 'hover:text-status-danger' : 'hover:text-text-primary'
-					}`
+				: danger
+					? 'cursor-pointer text-status-danger/85 hover:bg-status-danger/8 hover:text-status-danger'
+					: 'cursor-pointer text-text-secondary hover:bg-white/5 hover:text-text-primary'
 		}`
+	);
+	const iconClass = $derived(
+		`flex-none ${danger && !disabled ? 'text-status-danger/70' : 'text-text-ghost'}`
 	);
 </script>
 
@@ -59,7 +64,7 @@
 		class={itemClass}
 	>
 		{#if Icon}
-			<Icon size={15} class="text-text-ghost flex-none" />
+			<Icon size={15} class={iconClass} />
 		{/if}
 		{@render children()}
 		{#if selected}
@@ -76,7 +81,7 @@
 		class={itemClass}
 	>
 		{#if Icon}
-			<Icon size={15} class="text-text-ghost flex-none" />
+			<Icon size={15} class={iconClass} />
 		{/if}
 		{@render children()}
 		{#if selected}

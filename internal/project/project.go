@@ -13,17 +13,23 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/Hinkolas/skali/internal/authz"
+	"github.com/Hinkolas/skali/internal/feed"
 	"github.com/Hinkolas/skali/internal/naming"
 	"github.com/Hinkolas/skali/internal/store"
 )
 
 type Service struct {
-	st *store.Store
+	st   *store.Store
+	feed *feed.Projects
 }
 
 func New(st *store.Store) *Service {
 	return &Service{st: st}
 }
+
+// SetFeed publishes committed project and environment changes to the
+// project stream.
+func (s *Service) SetFeed(f *feed.Projects) { s.feed = f }
 
 // Create makes a project and, when creator is set, its first admin member.
 // uuid.Nil creates an ownerless project (system and test paths); every API
@@ -111,32 +117,8 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, displayName, sourceM
 	if err != nil {
 		return nil, fmt.Errorf("project: update: %w", err)
 	}
+	s.feed.Publish(id)
 	return &proj, nil
-}
-
-// Delete removes a project that has no environments left. Environments
-// own namespaces on the cluster and are released by the reconciler through
-// a purge (skali env remove), which deletes their rows only once the cluster
-// confirms absence; refusing here keeps a project delete from cascading
-// those rows away underneath running workloads.
-func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {
-	return s.st.WithTx(ctx, func(q *store.Queries) error {
-		environments, err := q.ListEnvironments(ctx, id)
-		if err != nil {
-			return fmt.Errorf("project: list environments: %w", err)
-		}
-		if len(environments) > 0 {
-			return ErrProjectHasEnvironments
-		}
-		rows, err := q.DeleteProjectByID(ctx, id)
-		if err != nil {
-			return fmt.Errorf("project: delete: %w", err)
-		}
-		if rows == 0 {
-			return ErrProjectNotFound
-		}
-		return nil
-	})
 }
 
 // EnvironmentOptions shape a new environment. The zero value is an
@@ -180,8 +162,15 @@ func (s *Service) CreateEnvironment(ctx context.Context, projectID uuid.UUID, na
 	var env store.Environment
 	err = s.st.WithTx(ctx, func(q *store.Queries) error {
 		var err error
-		if _, err := q.GetProjectForUpdate(ctx, projectID); err != nil {
+		// The lock also orders creation against a project delete: the
+		// delete marks the project under the same lock before it lists the
+		// environments to purge, so none slips in behind it.
+		locked, err := q.GetProjectForUpdate(ctx, projectID)
+		if err != nil {
 			return fmt.Errorf("project: lock environment names: %w", err)
+		}
+		if locked.DeletingAt != nil {
+			return ErrProjectDeleting
 		}
 		if _, err := q.GetEnvironmentNameOwner(ctx, store.GetEnvironmentNameOwnerParams{ProjectID: projectID, Name: name}); err == nil {
 			return ErrEnvironmentNameTaken
@@ -229,6 +218,7 @@ func (s *Service) CreateEnvironment(ctx context.Context, projectID uuid.UUID, na
 	if err != nil {
 		return nil, err
 	}
+	s.feed.Publish(projectID)
 	return &env, nil
 }
 
@@ -272,6 +262,7 @@ func (s *Service) RenameEnvironment(ctx context.Context, id uuid.UUID, name stri
 	if err != nil {
 		return nil, err
 	}
+	s.feed.Publish(env.ProjectID)
 	return &renamed, nil
 }
 
@@ -298,6 +289,10 @@ func (s *Service) GetEnvironment(ctx context.Context, id uuid.UUID) (*store.Envi
 }
 
 func (s *Service) DeleteEnvironment(ctx context.Context, id uuid.UUID) error {
+	env, err := s.GetEnvironment(ctx, id)
+	if err != nil {
+		return err
+	}
 	rows, err := s.st.DeleteEnvironmentByID(ctx, id)
 	if err != nil {
 		return fmt.Errorf("project: delete environment: %w", err)
@@ -305,5 +300,6 @@ func (s *Service) DeleteEnvironment(ctx context.Context, id uuid.UUID) error {
 	if rows == 0 {
 		return ErrEnvironmentNotFound
 	}
+	s.feed.Publish(env.ProjectID)
 	return nil
 }

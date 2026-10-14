@@ -3,6 +3,7 @@
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
+	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
 	import Lock from '@lucide/svelte/icons/lock';
 	import Plus from '@lucide/svelte/icons/plus';
 	import { CREATE_PROJECTS_TITLE, canCreateProject, requiredTitle, roleAtLeast } from '$lib/access';
@@ -45,6 +46,7 @@
 	);
 
 	const env = $derived(data.env?.name ?? null);
+	const envDeleting = $derived(data.env?.state === 'releasing');
 	const mayCreateProject = $derived(canCreateProject(data.user));
 	const mayCreateEnvironment = $derived(roleAtLeast(data.project?.access.role, 'maintain'));
 
@@ -119,6 +121,12 @@
 					selected={p.id === project.id}
 				>
 					<span class="truncate">{p.display_name || p.name}</span>
+					{#if p.deleting_at}
+						<span class="ml-auto flex items-center gap-1.5">
+							<LoaderCircle size={12} class="text-status-warning flex-none animate-spin" />
+							<Pill text="deleting" tone="warning" />
+						</span>
+					{/if}
 				</MenuItem>
 			{/each}
 			<MenuSeparator />
@@ -136,6 +144,13 @@
 			<span class="text-text-ghost text-md">/</span>
 			<Menu label="Switch environment" triggerClass="{crumbTrigger} text-text-secondary">
 				{#snippet trigger({ open })}
+					{#if envDeleting}
+						<LoaderCircle
+							size={12}
+							class="text-status-warning flex-none animate-spin"
+							aria-label="being deleted"
+						/>
+					{/if}
 					<span class="font-mono text-md">{env}</span>
 					<ChevronDown
 						size={13}
@@ -153,6 +168,15 @@
 						<span class="font-mono text-md">{e.name}</span>
 						{#if locked}
 							<Lock size={12} class="text-text-ghost ml-auto flex-none" />
+						{:else if e.state === 'releasing'}
+							<span class="ml-auto flex items-center gap-1.5" title="being deleted">
+								<LoaderCircle size={12} class="text-status-warning flex-none animate-spin" />
+								<Pill text="deleting" tone="warning" />
+							</span>
+						{:else if e.state === 'down'}
+							<span class="ml-auto flex" title="stopped: the next deploy starts it again">
+								<Pill text="stopped" />
+							</span>
 						{:else if e.settings?.deploy_policy === 'promote-only' || e.settings?.priority === 'high'}
 							<span class="ml-auto flex gap-1">
 								{#if e.settings.deploy_policy === 'promote-only'}

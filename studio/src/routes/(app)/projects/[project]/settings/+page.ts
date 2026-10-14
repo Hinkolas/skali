@@ -1,12 +1,14 @@
 import { apiFetch } from '$lib/api/client';
 import type { RevisionSummary, Target } from '$lib/types/revisions';
-import type { Run } from '$lib/types/runs';
+import { runUnsettled, type Run } from '$lib/types/runs';
 import type { PageLoad } from './$types';
 
 /** What the environments list shows per row beyond the environment itself. */
 export interface EnvironmentInsight {
 	/** The newest deployment or rollback, whatever its outcome. */
 	lastDeploy: Run | null;
+	/** The run in flight right now (a deploy, a stop, a delete), so its progress can be reopened from the row. */
+	activeRun: Run | null;
 }
 
 // The current environment's revisions and target for the rollback list,
@@ -25,7 +27,10 @@ export const load: PageLoad = async ({ parent, fetch }) => {
 				const runs = runsRes.ok ? ((await runsRes.json()) as { runs: Run[] }).runs : [];
 				return [
 					e.id,
-					{ lastDeploy: runs.find((r) => r.kind === 'deployment' || r.kind === 'rollback') ?? null }
+					{
+						lastDeploy: runs.find((r) => r.kind === 'deployment' || r.kind === 'rollback') ?? null,
+						activeRun: runs.find((r) => runUnsettled(r.status)) ?? null
+					}
 				];
 			})
 	);

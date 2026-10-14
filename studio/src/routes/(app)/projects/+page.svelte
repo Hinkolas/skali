@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { invalidateAll } from '$app/navigation';
 	import FolderKanban from '@lucide/svelte/icons/folder-kanban';
 	import LayoutGrid from '@lucide/svelte/icons/layout-grid';
 	import List from '@lucide/svelte/icons/list';
@@ -28,6 +29,17 @@
 	const summary = deferred(() => data.summary);
 	const source = $derived(summary.value ?? data.projects);
 	const loading = $derived(summary.pending && summary.value === null);
+
+	// A project being deleted leaves the list once its last environment is
+	// gone. Nothing streams the list itself, so it re-reads while a delete
+	// is going and stops when none is.
+	const DELETING_REFRESH_MS = 5000;
+	const anyDeleting = $derived(source.some((p) => p.deleting_at));
+	$effect(() => {
+		if (!anyDeleting) return;
+		const timer = setInterval(() => void invalidateAll(), DELETING_REFRESH_MS);
+		return () => clearInterval(timer);
+	});
 
 	const mayCreate = $derived(canCreateProject(data.user));
 

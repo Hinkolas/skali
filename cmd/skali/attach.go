@@ -42,7 +42,18 @@ const (
 	// signal (Ctrl-C ends the session and pauses the project), so an
 	// interrupt only ends the wait; d still detaches.
 	attachSessionEnds
+	// attachDetachOnly is the attach to a run whose cancellation would undo
+	// nothing (a stop or a delete: the reconciler executes the decision
+	// whatever happens to its run), so Ctrl-C detaches like d. A cancel
+	// mode attach switches to it once the run's kind is known.
+	attachDetachOnly
 )
+
+// runCancellable reports whether cancelling a run of this kind undoes
+// anything.
+func runCancellable(kind string) bool {
+	return kind != "teardown" && kind != "purge"
+}
 
 // interruptCancelWindow is how long a first Ctrl-C stays armed for the
 // second press that cancels the run.
@@ -196,7 +207,7 @@ func attachRunMode(ctx context.Context, out io.Writer, api *client.Client, runID
 	// The cancel request runs beside the loop, which keeps animating and
 	// takes the answer when it arrives.
 	interrupt := func() (done bool, status string, err error) {
-		if !tty {
+		if !tty || mode == attachDetachOnly {
 			outcome, err := detach()
 			return true, outcome.Status, err
 		}
@@ -237,6 +248,13 @@ func attachRunMode(ctx context.Context, out io.Writer, api *client.Client, runID
 			tree := snapshot.tree
 			if tree.Run.Kind != "" {
 				kind = tree.Run.Kind
+				if mode == attachCancelsRun && !runCancellable(kind) {
+					mode = attachDetachOnly
+					hint = attachHint(mode, style)
+					if tty && disarm == nil && !cancelRequested {
+						renderer.Footer = hint
+					}
+				}
 			}
 			if !runSettled(tree) {
 				renderer.Render(tree)
@@ -290,6 +308,9 @@ func attachRunMode(ctx context.Context, out io.Writer, api *client.Client, runID
 func attachHint(mode attachMode, style *clirender.Style) string {
 	if mode == attachSessionEnds {
 		return style.Dim("d detaches, Ctrl-C ends the session")
+	}
+	if mode == attachDetachOnly {
+		return style.Dim("the run continues on the server either way: d or Ctrl-C detaches")
 	}
 	return style.Dim("the run continues on the server: d detaches, Ctrl-C cancels")
 }

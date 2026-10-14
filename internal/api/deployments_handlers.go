@@ -923,6 +923,10 @@ func writeDeployError(ctx context.Context, w http.ResponseWriter, err error) {
 	case errors.Is(err, deploy.ErrDeploymentInFlight):
 		writeError(w, http.StatusConflict, codeDeploymentInFlight,
 			"another deployment is already running for this environment")
+	case errors.Is(err, deploy.ErrProjectDeleting):
+		writeError(w, http.StatusConflict, codeProjectDeleting, "the project is being deleted")
+	case errors.Is(err, deploy.ErrEnvironmentReleasing):
+		writeError(w, http.StatusConflict, codeConflict, "the environment is being deleted")
 	case errors.Is(err, deploy.ErrEnvironmentBusy):
 		writeEnvironmentBusy(w)
 	case errors.Is(err, deploy.ErrDestructiveChange):

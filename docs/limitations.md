@@ -71,15 +71,21 @@ is ready. Consequences:
 - Metrics count the pending version's pods for the duration of the deploy,
   so per-service CPU and memory read roughly double while it runs.
 
-## Deleting a project requires purging its environments first
+## Deleting a project waits for its environments
 
-A project is deleted only once it has no environments: the API refuses
-otherwise (409), because environment records are released by the
-reconciler after a purge confirms the namespace is gone, and deleting them
-any other way would orphan running workloads. Run `skali env remove <name>` for
-each environment, then delete the project. A namespace that was orphaned
-before this guard existed can only be removed by hand
-(`kubectl delete namespace skali-<environment-id>`); skalid logs
+Deleting a project deletes every environment first, each one purged exactly
+as `skali env remove` would, and the project row goes with the last of them:
+environment records are released only after a purge confirms the namespace
+is gone, since deleting them any other way would orphan running workloads.
+Until then the project shows as deleting and refuses new environments and
+deployments (`409 project_deleting`). A deployment window open in any
+environment refuses the delete (`409 deployment_in_flight`) before anything
+is decided; finish or cancel it and delete again. Repeating the delete
+resumes one an error interrupted. Delete from the Studio's project settings,
+with `skali project remove`, or with `DELETE /v1/projects/{id}`.
+
+A namespace that was orphaned before purges existed can only be removed by
+hand (`kubectl delete namespace skali-<environment-id>`); skalid logs
 `orphaned managed namespace retained` for it.
 
 ## The registry node cannot be removed

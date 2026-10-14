@@ -202,7 +202,11 @@ func (s *Service) UpdateEnvironmentSettings(ctx context.Context, environmentID u
 		updated, err = updateEnvironmentSettings(ctx, q, &current, settings)
 		return err
 	})
-	return updated, err
+	if err != nil {
+		return nil, err
+	}
+	s.feed.Publish(env.ProjectID)
+	return updated, nil
 }
 
 func updateEnvironmentSettings(ctx context.Context, q *store.Queries, env *store.Environment, settings authz.Settings) (*store.Environment, error) {
