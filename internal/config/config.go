@@ -1,15 +1,16 @@
 // Package config loads strongly-typed, env-driven configuration for every skali
-// binary. Values come from the environment (12-factor); a local .env is loaded
-// for developer convenience only and never overrides real environment variables.
+// binary. Values come from the process environment only (12-factor). No binary
+// reads a .env file: local development loads one through the Taskfile, so a
+// stray file in a production working directory can never change configuration.
 package config
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"time"
 
-	"github.com/joho/godotenv"
 	"github.com/sethvargo/go-envconfig"
 
 	"github.com/Hinkolas/skali/internal/proxytrust"
@@ -264,14 +265,13 @@ func (a *API) Validate() error {
 
 type validator interface{ Validate() error }
 
-// Load reads the environment (plus a dev .env) into a *T and validates it.
+// Load reads the process environment into a *T and validates it.
 func Load[T any](ctx context.Context) (*T, error) {
-	// Dev convenience: load .env if present. Load (not Overload) never clobbers
-	// real environment variables, and no-ops when the file is absent.
-	_ = godotenv.Load()
-
 	var cfg T
 	if err := envconfig.Process(ctx, &cfg); err != nil {
+		if errors.Is(err, envconfig.ErrMissingRequired) {
+			return nil, fmt.Errorf("config: %w (configuration comes from the environment only; in development, run through task, which loads .env)", err)
+		}
 		return nil, fmt.Errorf("config: %w", err)
 	}
 	if v, ok := any(&cfg).(validator); ok {

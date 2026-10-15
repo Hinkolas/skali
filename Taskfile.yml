@@ -4,8 +4,9 @@ version: "3"
 
 silent: true
 
-# The binaries load .env themselves (godotenv); this makes it reach bare
-# `go test` too (TEST_DATABASE_URL).
+# The development path for .env: the binaries read only their real
+# environment, so every task here (skalid and `go test` alike) gets it from
+# this line. Variables already set in the shell win over the file.
 dotenv: [".env"]
 
 vars:
@@ -88,6 +89,18 @@ tasks:
     desc: Build the skalid image from the working tree; the next skali dev imports and rolls it
     cmds:
       - docker build -t skalid:dev -f build/skalid.Dockerfile .
+
+  migrate:
+    desc: Apply the control-plane migrations to the project dev Postgres
+    deps: [db]
+    cmds:
+      - go run ./cmd/skalid migrate up
+
+  user:
+    desc: Manage dev users (task user -- create --email you@example.com --role admin)
+    interactive: true
+    cmds:
+      - go run ./cmd/skalid user {{.CLI_ARGS}}
 
   seed:
     desc: Fabricate development data for the Studio (users, projects, history, telemetry)
