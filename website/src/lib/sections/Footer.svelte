@@ -3,7 +3,11 @@
 	import LogoMark from '$lib/components/LogoMark.svelte';
 	import { links } from '$lib/links';
 
-	const columns = [
+	// Pages of this site link by route, through resolve(); everything else
+	// is external.
+	type Link = { label: string; href: string } | { label: string; route: '/docs/manifest' };
+
+	const columns: { title: string; links: Link[] }[] = [
 		{
 			title: 'Product',
 			links: [
@@ -15,7 +19,7 @@
 			title: 'Docs',
 			links: [
 				{ label: 'Getting started', href: links.gettingStarted },
-				{ label: 'The manifest', href: links.manifest },
+				{ label: 'The manifest', route: '/docs/manifest' },
 				{ label: 'Documentation', href: links.docs },
 				{ label: 'Known limitations', href: links.limitations }
 			]
@@ -49,13 +53,22 @@
 						{column.title}
 					</span>
 					{#each column.links as link (link.label)}
-						<a
-							href={link.href}
-							rel="external"
-							class="text-text-muted transition-colors hover:text-text-primary"
-						>
-							{link.label}
-						</a>
+						{#if 'route' in link}
+							<a
+								href={resolve(link.route)}
+								class="text-text-muted transition-colors hover:text-text-primary"
+							>
+								{link.label}
+							</a>
+						{:else}
+							<a
+								href={link.href}
+								rel="external"
+								class="text-text-muted transition-colors hover:text-text-primary"
+							>
+								{link.label}
+							</a>
+						{/if}
 					{/each}
 				</nav>
 			{/each}

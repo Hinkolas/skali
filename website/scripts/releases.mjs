@@ -1,5 +1,20 @@
 // Release tag selection shared by scripts/assets.mjs and the pages that
-// mention the current release.
+// mention the current release or show release-bound content.
+
+/**
+ * releaseRef is the git ref release-bound content (the editor schemas, the
+ * manifest reference) is read from: RELEASE_REF when set (any git ref, e.g.
+ * HEAD to preview unreleased changes), else the newest release.
+ *
+ * @param {string[]} tags
+ * @returns {string}
+ */
+export function releaseRef(tags) {
+	const ref = process.env.RELEASE_REF || newestRelease(tags);
+	if (!ref)
+		throw new Error('No release tag found (shallow clone?). Fetch tags or set RELEASE_REF=HEAD.');
+	return ref;
+}
 
 /**
  * newestRelease prefers the newest stable tag and falls back to the newest

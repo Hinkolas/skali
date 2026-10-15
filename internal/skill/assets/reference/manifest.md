@@ -1,6 +1,8 @@
 # The skali.yaml manifest
 
-The header above identifies the exact release and target context of this reference.
+This reference describes exactly one skali release, named above it.
+`skali skill read manifest`, run from a project directory, prints the
+reference for the release of the project's target cluster.
 
 skali compiles one manifest at the project root into everything an
 environment runs: applications, databases, buckets, and the values they
@@ -160,6 +162,8 @@ always excluded.
         aliases:                  # optional; hostnames redirecting to domain
           - "www.${APP_DOMAIN}"
 ```
+
+A `udp` port is exposed over UDP and every other protocol over TCP.
 
 Each route's domain and path pair must be unique across the whole
 project; the same domain with different paths on different applications
@@ -437,8 +441,6 @@ databases:
     storage:
       size: 20GB
     extensions: [pg_trgm]
-    recovery:
-      pointInTime: 7d
 ```
 
 - `isolation`: `shared` packs onto the installation's shared pool per
@@ -458,6 +460,9 @@ databases:
   that runs `CREATE EXTENSION IF NOT EXISTS vector` stays a harmless
   no-op; a plain `CREATE EXTENSION vector` fails because it already
   exists.
+- `recovery.pointInTime` (a duration such as `7d`) is valid vocabulary
+  and is recorded with the database, but nothing acts on it yet: there is
+  no point-in-time recovery. Restores come from backups.
 
 Connect applications through outputs, never hand-written connection
 strings:
@@ -489,6 +494,22 @@ enabled`, `lifecycle.expireNoncurrentVersionsAfter`, `quotas.objects`,
 and `quotas.maxObjectSize` are valid vocabulary already but are rejected
 at deploy until later policies land. When a bucket reaches its quota it
 refuses uploads until objects are deleted.
+
+```yaml
+buckets:
+  files:
+    cors:
+      allowedOrigins: [https://app.example.com]  # required, at least one
+      allowedMethods: [GET, PUT]   # GET | PUT | POST | DELETE | HEAD, default GET and PUT
+      allowedHeaders: [content-type]
+      exposeHeaders: [ETag]
+      maxAge: 10m                  # how long browsers cache the preflight
+```
+
+Each origin is a literal scheme and host without a path, or `*`. Without a
+`cors` block the store answers preflights for any origin; the presigned
+signature, not the origin, authorizes a request. Declaring the block limits
+which pages may talk to the bucket at all.
 
 ```yaml
 buckets:
@@ -726,3 +747,134 @@ buckets:
 ```
 
 Backups run once the installation has a backup target (`skali backup target set`, admin only). `skali backup schedule set` turns automatic backups on for one environment, `skali backup create` takes a snapshot by hand, `skali backup list` shows every snapshot with its origin (`manual` or `scheduled`), `skali backup restore` replays one, and `skali backup remove` deletes one. A restore that fails after stopping the environment keeps it down and refuses deploys until a restore completes or `skali backup accept` accepts the data as it is.
+
+### The rest of the surface
+
+Fields the examples above leave out: a bucket published on its own
+hostname for browser uploads, a route alias, a rolling rollout, a worker
+from a prebuilt image with a volume, and a host-side dev loop:
+
+```yaml manifest
+name: photo-share
+description: Photo uploads through a bucket route, with a thumbnail worker
+
+applications:
+  web:
+    build:
+      context: ./web
+      dockerfile: deploy/Dockerfile
+      target: runtime
+      arguments:
+        VERSION: "2.0.0"
+    platforms: [linux/amd64, linux/arm64]
+    environment:
+      DATABASE_URL: "{{databases.data.url}}"
+      S3_ENDPOINT: "{{buckets.photos.endpoint}}"
+      S3_BUCKET: "{{buckets.photos.name}}"
+      S3_REGION: "{{buckets.photos.region}}"
+      S3_ACCESS_KEY: "{{buckets.photos.access_key}}"
+      S3_SECRET_KEY: "{{buckets.photos.secret_key}}"
+    ports:
+      http:
+        port: 3000
+        protocol: http
+    routes:
+      public:
+        domain: "${APP_DOMAIN}"
+        path: /
+        port: http
+        tls: automatic
+        strategy: least-requests
+        compress: true
+        aliases:
+          - "www.${APP_DOMAIN}"
+    health:
+      startup:
+        http:
+          port: http
+          path: /healthz
+        interval: 2s
+        timeout: 2s
+        failureThreshold: 60
+      readiness:
+        http:
+          port: http
+          path: /health/ready
+        interval: 5s
+        timeout: 1s
+        failureThreshold: 3
+      liveness:
+        http:
+          port: http
+          path: /healthz
+        interval: 30s
+        timeout: 5s
+        failureThreshold: 3
+    scaling:
+      replicas:
+        min: 3
+    deployment:
+      rollout:
+        strategy: rolling
+        maxUnavailable: 0
+        maxSurge: 1
+        timeout: 15m
+    commands:
+      seed: [bun, run, db:seed]
+    dev:
+      command: [bun, run, dev, --, --port, "${PORT}", --host]
+      ports:
+        http: 5173
+
+  thumbnailer:
+    image: ghcr.io/acme/thumbnailer:1.2.0
+    command: ["/thumbnailer", "watch"]
+    environment:
+      S3_ENDPOINT: "{{buckets.photos.internal_endpoint}}"
+      S3_BUCKET: "{{buckets.photos.name}}"
+      S3_ACCESS_KEY: "{{buckets.photos.access_key}}"
+      S3_SECRET_KEY: "{{buckets.photos.secret_key}}"
+    ports:
+      metrics:
+        port: 9100
+        protocol: tcp
+    volumes:
+      cache:
+        mountPath: /var/cache/thumbnailer
+        size: 5GB
+    deployment:
+      rollout:
+        strategy: recreate
+
+databases:
+  data:
+    engine: postgres
+    version: 18
+    isolation: dedicated
+    availability: asynchronous
+    storage:
+      size: 10GB
+    extensions: [vector]
+
+buckets:
+  photos:
+    visibility: private
+    quotas:
+      storage: 100GB
+    lifecycle:
+      abortIncompleteUploadsAfter: 2d
+    cors:
+      allowedOrigins: [https://photos.example.com]
+      allowedMethods: [GET, PUT]
+      allowedHeaders: [content-type]
+      exposeHeaders: [ETag]
+      maxAge: 10m
+    route:
+      domain: "${STORAGE_DOMAIN}"
+      tls: automatic
+```
+
+The thumbnailer reads through `internal_endpoint`, which stays inside the
+cluster, while `endpoint` is the bucket route's origin the web application
+signs browser URLs for. `availability: asynchronous` needs two
+database-capable nodes; local development runs it as a single instance.
