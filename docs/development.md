@@ -149,6 +149,14 @@ go run ./cmd/skali compile \
   --env-file examples/whoami/.env.example
 ```
 
+Every directory under `examples/` is an example, and `go test ./examples`
+runs each one through that same offline pipeline, schema to Kubernetes
+render, with its `.env.example` as the values. A new example needs its
+manifest at the directory root and, when it requires values, an
+`.env.example` with placeholders (never real secrets) for exactly those
+values. An example that is meant to fail goes in `expectedFailures` in
+`examples/examples_test.go`, with the reason.
+
 The editor schemas in [`schemas/`](../schemas/) are generated from the Go
 types: run `task generate` (or `go generate ./internal/manifest`) after
 changing manifest wire types, and keep `internal/skill/assets/reference/`

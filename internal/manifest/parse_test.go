@@ -9,23 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestExamplesParseAndValidate(t *testing.T) {
-	t.Parallel()
-	for _, path := range []string{
-		filepath.Join("..", "..", "examples", "hello-world", "skali.yml"),
-		filepath.Join("..", "..", "examples", "file-sharing", "skali.yml"),
-		filepath.Join("..", "..", "examples", "dev-loop", "skali.yml"),
-	} {
-		path := path
-		t.Run(filepath.Base(filepath.Dir(path)), func(t *testing.T) {
-			t.Parallel()
-			document, err := ParseFile(path)
-			require.NoError(t, err)
-			require.Empty(t, Validate(document))
-		})
-	}
-}
-
 func TestStrictUnknownFieldIncludesSourceLine(t *testing.T) {
 	t.Parallel()
 	_, err := ParseFile(filepath.Join("testdata", "unknown-field.yml"))

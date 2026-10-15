@@ -1,0 +1,16 @@
+# An otherwise valid example with one misspelled field: the example check
+# must fail on it (examples_test.go, TestCheckRejectsInvalidGrammar).
+name: invalid-grammar
+
+applications:
+  web:
+    image: example.invalid/web:1
+
+    ports:
+      http:
+        port: 8080
+        protocol: http
+
+    ressources:
+      requests:
+        memory: 64MiB
