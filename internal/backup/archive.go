@@ -131,6 +131,9 @@ func walkArchive(in io.Reader, visit func(name string, header *tar.Header, conte
 	defer decompressor.Close()
 	archive := tar.NewReader(decompressor)
 	entries := map[string]*tar.Header{}
+	// Every path some earlier entry sits beneath, so a non-directory over
+	// earlier children is one lookup rather than a scan of every entry.
+	parents := map[string]bool{}
 	for {
 		header, err := archive.Next()
 		if errors.Is(err, io.EOF) {
@@ -153,13 +156,10 @@ func walkArchive(in io.Reader, visit func(name string, header *tar.Header, conte
 			if h, ok := entries[parent]; ok && h.Typeflag != tar.TypeDir {
 				return fmt.Errorf("archive entry beneath non-directory %q", parent)
 			}
+			parents[parent] = true
 		}
-		if header.Typeflag != tar.TypeDir {
-			for prior := range entries {
-				if strings.HasPrefix(prior, name+string(os.PathSeparator)) {
-					return fmt.Errorf("archive entry conflicts with existing children")
-				}
-			}
+		if header.Typeflag != tar.TypeDir && parents[name] {
+			return fmt.Errorf("archive entry conflicts with existing children")
 		}
 		switch header.Typeflag {
 		case tar.TypeDir, tar.TypeReg, tar.TypeRegA, tar.TypeSymlink:

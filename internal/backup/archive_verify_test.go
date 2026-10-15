@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -71,6 +72,10 @@ func TestVerifyArchiveRejectsUnsafeShapes(t *testing.T) {
 		"device":    {{Name: "device", Typeflag: tar.TypeChar}},
 		"pivot": {{Name: "pivot", Typeflag: tar.TypeSymlink, Linkname: "/"},
 			{Name: "pivot/escaped", Typeflag: tar.TypeReg, Size: 1}},
+		"late-pivot": {{Name: "pivot/escaped", Typeflag: tar.TypeReg, Size: 1},
+			{Name: "pivot", Typeflag: tar.TypeSymlink, Linkname: "/"}},
+		"file over nested children": {{Name: "a/b/c", Typeflag: tar.TypeReg, Size: 1},
+			{Name: "a/b", Typeflag: tar.TypeReg, Size: 1}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := verifyArchive(bytes.NewReader(archiveFixture(t, headers...)), objectCheck{Bytes: -1})
@@ -115,4 +120,27 @@ func TestRestoreArchiveVerifiesBeforeClearing(t *testing.T) {
 	err = restoreArchive(volume, func() (io.ReadCloser, error) { return nil, unreachable }, objectCheck{Bytes: -1})
 	require.ErrorIs(t, err, unreachable)
 	require.FileExists(t, filepath.Join(volume, "top"))
+}
+
+// Verification time grows linearly with the archive's entry count: the
+// ns/entry this reports stays flat as the count grows.
+func BenchmarkVerifyArchiveEntries(b *testing.B) {
+	for _, count := range []int{1_000, 10_000, 100_000} {
+		b.Run(fmt.Sprint(count), func(b *testing.B) {
+			headers := make([]*tar.Header, 0, count)
+			for i := range count {
+				if i%100 == 0 {
+					headers = append(headers, &tar.Header{Name: fmt.Sprintf("d%05d/", i/100), Typeflag: tar.TypeDir, Mode: 0o755})
+				}
+				headers = append(headers, &tar.Header{Name: fmt.Sprintf("d%05d/f%07d", i/100, i), Typeflag: tar.TypeReg, Mode: 0o644})
+			}
+			archive := archiveFixture(b, headers...)
+			for b.Loop() {
+				if _, err := verifyArchive(bytes.NewReader(archive), objectCheck{Bytes: -1}); err != nil {
+					b.Fatal(err)
+				}
+			}
+			b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*len(headers)), "ns/entry")
+		})
+	}
 }

@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-func archiveFixture(t *testing.T, headers ...*tar.Header) []byte {
+func archiveFixture(t testing.TB, headers ...*tar.Header) []byte {
 	t.Helper()
 	var buf bytes.Buffer
 	zw, err := zstd.NewWriter(&buf)
