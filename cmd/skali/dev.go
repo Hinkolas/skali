@@ -1177,6 +1177,9 @@ func runDevStatus(command *cobra.Command, args []string) error {
 			replicaDots(style, ready, len(service.Pods)), ready, len(service.Pods))
 		for _, route := range service.Routes {
 			fmt.Fprintf(out, "    %s\n", routeLine(style, route))
+			for _, alias := range route.Aliases {
+				fmt.Fprintf(out, "    %s %s\n", style.Dim("alias"), routeLine(style, aliasRoute(alias)))
+			}
 		}
 		for _, diagnostic := range service.Diagnostics {
 			fmt.Fprintf(out, "    %s %s\n",

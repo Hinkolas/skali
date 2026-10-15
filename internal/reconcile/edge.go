@@ -247,7 +247,7 @@ func (k *Kernel) edgeStatus(environmentID uuid.UUID, certName string) *EdgeStatu
 }
 
 // edgeResources synthesizes the KindEdge resources for one application's
-// TLS routes from the cache, for the module's certificate gate. A route
+// TLS routes and their aliases from the cache, for the module's certificate gate. A route
 // the pass never judged yields nothing; one it judged before any probe
 // (a mismatch found while the prober is absent) carries an empty state.
 func (k *Kernel) edgeResources(environmentID uuid.UUID, definition compiler.ProjectDefinition, key string) []module.ObservedResource {
@@ -259,30 +259,44 @@ func (k *Kernel) edgeResources(environmentID uuid.UUID, definition compiler.Proj
 	defer k.domainMu.Unlock()
 	var resources []module.ObservedResource
 	for _, routeKey := range utils.SortedKeys(application.Routes) {
-		if application.Routes[routeKey].TLS == "disabled" {
+		route := application.Routes[routeKey]
+		if route.TLS == "disabled" {
 			continue
 		}
-		name := rendering.RouteTLSName(definition.Name, key, routeKey)
-		record, ok := k.routes[routeKeyOf(environmentID, name)]
-		if !ok {
-			continue
+		names := []string{rendering.RouteTLSName(definition.Name, key, routeKey)}
+		for _, alias := range route.Aliases {
+			names = append(names, rendering.AliasTLSName(definition.Name, key, routeKey, alias))
 		}
-		state := ""
-		if entry, ok := k.domains[record.domain]; ok {
-			state = string(entry.result.State)
+		for _, name := range names {
+			if resource, ok := k.edgeResource(environmentID, name); ok {
+				resources = append(resources, resource)
+			}
 		}
-		resources = append(resources, module.ObservedResource{
-			Kind: module.KindEdge, Name: name,
-			Edge: &module.EdgeReach{
-				Domain:   record.domain,
-				State:    state,
-				Deferred: record.deferred,
-				Mismatch: record.mismatch,
-				Issued:   record.issued,
-			},
-		})
 	}
 	return resources
+}
+
+// edgeResource is the KindEdge resource of one route certificate; the
+// caller holds domainMu. False when no pass judged the certificate yet.
+func (k *Kernel) edgeResource(environmentID uuid.UUID, name string) (module.ObservedResource, bool) {
+	record, ok := k.routes[routeKeyOf(environmentID, name)]
+	if !ok {
+		return module.ObservedResource{}, false
+	}
+	state := ""
+	if entry, ok := k.domains[record.domain]; ok {
+		state = string(entry.result.State)
+	}
+	return module.ObservedResource{
+		Kind: module.KindEdge, Name: name,
+		Edge: &module.EdgeReach{
+			Domain:   record.domain,
+			State:    state,
+			Deferred: record.deferred,
+			Mismatch: record.mismatch,
+			Issued:   record.issued,
+		},
+	}, true
 }
 
 // bucketEdgeResources is edgeResources for one bucket's route: at most one
@@ -294,25 +308,11 @@ func (k *Kernel) bucketEdgeResources(environmentID uuid.UUID, definition compile
 	}
 	k.domainMu.Lock()
 	defer k.domainMu.Unlock()
-	name := rendering.BucketRouteTLSName(definition.Name, key)
-	record, ok := k.routes[routeKeyOf(environmentID, name)]
+	resource, ok := k.edgeResource(environmentID, rendering.BucketRouteTLSName(definition.Name, key))
 	if !ok {
 		return nil
 	}
-	state := ""
-	if entry, ok := k.domains[record.domain]; ok {
-		state = string(entry.result.State)
-	}
-	return []module.ObservedResource{{
-		Kind: module.KindEdge, Name: name,
-		Edge: &module.EdgeReach{
-			Domain:   record.domain,
-			State:    state,
-			Deferred: record.deferred,
-			Mismatch: record.mismatch,
-			Issued:   record.issued,
-		},
-	}}
+	return []module.ObservedResource{resource}
 }
 
 func routeKeyOf(environmentID uuid.UUID, certName string) routeKey {

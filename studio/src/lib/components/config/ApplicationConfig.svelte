@@ -218,6 +218,19 @@
 												: 'neutral'}
 									/>
 								</span>
+								{#if route.aliases?.length}
+									<div class="flex w-full flex-wrap items-center gap-x-3 gap-y-1 pl-19">
+										{#each route.aliases as alias, index (index)}
+											<span
+												class="flex min-w-0 items-center gap-1.5"
+												title="redirects permanently to the route's domain, keeping path and query"
+											>
+												<span class="text-text-faint font-mono text-xs">alias</span>
+												<ExpressionValue expression={alias} />
+											</span>
+										{/each}
+									</div>
+								{/if}
 							</div>
 						{/each}
 					</div>

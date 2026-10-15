@@ -78,6 +78,16 @@ type routeStatusPayload struct {
 	// reaches this installation; absent where no certificate is expected
 	// or no pass probed it yet.
 	Edge *edgeStatusPayload `json:"edge,omitempty"`
+	// Aliases are the hostnames redirecting to the route's domain.
+	Aliases []routeAliasPayload `json:"aliases,omitempty"`
+}
+
+// routeAliasPayload is one route alias with its own certificate and edge
+// verdict, shaped like the route's.
+type routeAliasPayload struct {
+	Domain      string              `json:"domain"`
+	Certificate *certificatePayload `json:"certificate,omitempty"`
+	Edge        *edgeStatusPayload  `json:"edge,omitempty"`
 }
 
 type edgeStatusPayload struct {
@@ -218,52 +228,71 @@ func newEnvironmentStatusPayload(status *reconcile.Status) environmentStatusPayl
 				Strategy: route.Strategy,
 				Compress: route.Compress,
 			}
-			if route.Certificate != nil {
-				certificate := &certificatePayload{
-					FailedAttempts:           route.Certificate.FailedAttempts,
-					NextPrivateKeySecretName: route.Certificate.NextPrivateKeySecretName,
-					Name:                     route.Certificate.Name,
-					SecretName:               route.Certificate.SecretName,
-					State:                    route.Certificate.State,
-					Reason:                   route.Certificate.Reason,
-					Message:                  route.Certificate.Message,
-				}
-				if !route.Certificate.NotAfter.IsZero() {
-					notAfter := route.Certificate.NotAfter
-					certificate.NotAfter = &notAfter
-				}
-				if !route.Certificate.RenewalTime.IsZero() {
-					renewal := route.Certificate.RenewalTime
-					certificate.RenewalTime = &renewal
-				}
-				if !route.Certificate.LastFailureTime.IsZero() {
-					value := route.Certificate.LastFailureTime
-					certificate.LastFailureTime = &value
-				}
-				if !route.Certificate.NextRetryTime.IsZero() {
-					value := route.Certificate.NextRetryTime
-					certificate.NextRetryTime = &value
-				}
-				routeEntry.Certificate = certificate
-			}
-			if route.Edge != nil {
-				edge := &edgeStatusPayload{
-					State:     route.Edge.State,
-					Message:   route.Edge.Message,
-					Addresses: append([]string{}, route.Edge.Addresses...),
-					Deferred:  route.Edge.Deferred,
-				}
-				if !route.Edge.CheckedAt.IsZero() {
-					checked := route.Edge.CheckedAt
-					edge.CheckedAt = &checked
-				}
-				routeEntry.Edge = edge
+			routeEntry.Certificate = certificatePayloadOf(route.Certificate)
+			routeEntry.Edge = edgePayloadOf(route.Edge)
+			for _, alias := range route.Aliases {
+				routeEntry.Aliases = append(routeEntry.Aliases, routeAliasPayload{
+					Domain:      alias.Domain,
+					Certificate: certificatePayloadOf(alias.Certificate),
+					Edge:        edgePayloadOf(alias.Edge),
+				})
 			}
 			servicePayload.Routes = append(servicePayload.Routes, routeEntry)
 		}
 		payload.Services = append(payload.Services, servicePayload)
 	}
 	return payload
+}
+
+// certificatePayloadOf projects one route certificate; nil stays nil.
+func certificatePayloadOf(info *reconcile.CertificateInfo) *certificatePayload {
+	if info == nil {
+		return nil
+	}
+	certificate := &certificatePayload{
+		FailedAttempts:           info.FailedAttempts,
+		NextPrivateKeySecretName: info.NextPrivateKeySecretName,
+		Name:                     info.Name,
+		SecretName:               info.SecretName,
+		State:                    info.State,
+		Reason:                   info.Reason,
+		Message:                  info.Message,
+	}
+	if !info.NotAfter.IsZero() {
+		notAfter := info.NotAfter
+		certificate.NotAfter = &notAfter
+	}
+	if !info.RenewalTime.IsZero() {
+		renewal := info.RenewalTime
+		certificate.RenewalTime = &renewal
+	}
+	if !info.LastFailureTime.IsZero() {
+		value := info.LastFailureTime
+		certificate.LastFailureTime = &value
+	}
+	if !info.NextRetryTime.IsZero() {
+		value := info.NextRetryTime
+		certificate.NextRetryTime = &value
+	}
+	return certificate
+}
+
+// edgePayloadOf projects one edge verdict; nil stays nil.
+func edgePayloadOf(status *reconcile.EdgeStatus) *edgeStatusPayload {
+	if status == nil {
+		return nil
+	}
+	edge := &edgeStatusPayload{
+		State:     status.State,
+		Message:   status.Message,
+		Addresses: append([]string{}, status.Addresses...),
+		Deferred:  status.Deferred,
+	}
+	if !status.CheckedAt.IsZero() {
+		checked := status.CheckedAt
+		edge.CheckedAt = &checked
+	}
+	return edge
 }
 
 func (h *statusHandlers) get(w http.ResponseWriter, r *http.Request) {
@@ -548,10 +577,13 @@ func writeStatusError(r *http.Request, w http.ResponseWriter, err error) {
 
 // routeProbePayload is one manual edge probe of a route domain.
 type routeProbePayload struct {
-	Service string           `json:"service"`
-	Key     string           `json:"key"`
-	Domain  string           `json:"domain"`
-	Edge    edgeProbePayload `json:"edge"`
+	Service string `json:"service"`
+	Key     string `json:"key"`
+	Domain  string `json:"domain"`
+	// Alias marks a probe of one of the route's aliases; Domain is then
+	// the alias hostname.
+	Alias bool             `json:"alias,omitempty"`
+	Edge  edgeProbePayload `json:"edge"`
 }
 
 // edgeProbePayload is the probe's verdict with its per-address detail; the
@@ -598,7 +630,7 @@ func (h *statusHandlers) probeRoutes(w http.ResponseWriter, r *http.Request) {
 				Address: address.Address, Outcome: string(address.Outcome), Detail: address.Detail,
 			})
 		}
-		payload = append(payload, routeProbePayload{Service: probe.Service, Key: probe.Key, Domain: probe.Domain, Edge: edge})
+		payload = append(payload, routeProbePayload{Service: probe.Service, Key: probe.Key, Domain: probe.Domain, Alias: probe.Alias, Edge: edge})
 	}
 	writeJSON(w, http.StatusOK, struct {
 		Routes []routeProbePayload `json:"routes"`

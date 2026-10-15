@@ -27,7 +27,11 @@
 	const health = $derived(live?.health ?? 'unknown');
 	// Health speaks for the workload; a route whose domain does not reach
 	// this installation yet is a separate, quieter signal beside it.
-	const deferredRoutes = $derived((live?.routes ?? []).filter((r) => r.edge?.deferred === true));
+	const deferredRoutes = $derived(
+		(live?.routes ?? [])
+			.flatMap((r) => [r, ...(r.aliases ?? [])])
+			.filter((r) => r.edge?.deferred === true)
+	);
 
 	// Restarting one service is scoped here; the topbar Actions menu holds
 	// the environment-wide operations (promote, redeploy, restart all).

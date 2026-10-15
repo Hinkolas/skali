@@ -157,6 +157,8 @@ always excluded.
         tls: automatic            # automatic | optional | disabled, default automatic
         strategy: round-robin     # round-robin | least-requests, default round-robin
         compress: true            # true | false, default true
+        aliases:                  # optional; hostnames redirecting to domain
+          - "www.${APP_DOMAIN}"
 ```
 
 Each route's domain and path pair must be unique across the whole
@@ -216,6 +218,35 @@ answered as this installation. HTTP routers reserve
 not redirect either to HTTPS. If the ACME response reports a rate
 limit, honor the CA's retry window before redeploying; forcing another attempt
 does not reset a CA limit.
+
+`aliases` lists hostnames the edge answers with a permanent redirect to
+the route's domain, keeping path and query (`www.example.com/a?b` lands on
+`example.com/a?b`). Traefik answers 301 for GET and 308 for every
+other method, so a form post keeps its method. The redirect covers the
+alias's whole hostname whatever the route's path, never reaches the
+application, and keeps working while the application is down or rolling
+out. Each alias takes the route's `tls` policy: `automatic` gives it its own
+certificate and sends plain HTTP straight to `https://<domain>`, `optional`
+gives it a certificate and keeps the request's scheme, `disabled` redirects
+plain HTTP only. Every alias certificate is a separate issuance with its own
+**Issue TLS certificate** checkpoint (`… / <route> alias <hostname>`), so an
+alias whose DNS still points elsewhere is deferred on its own (`skali route
+probe` checks aliases too) and never holds back the route's certificate,
+while an alias that does reach this installation gates the rollout like
+the route's own certificate.
+Like `domain`, an alias may use `${NAME}` expressions; no other field is
+configurable. A hostname is either a route domain or an alias, project-wide:
+it cannot also be a route's domain on any path, a bucket route, or another
+route's alias.
+
+Aliases are for alternate names of the same site: `www.`, a retired brand
+domain. Browsers cache permanent redirects for a long time, so a hostname
+you may want to serve something else on later should not be an alias. To
+serve the application on a second hostname instead of redirecting, declare
+a second route; serving one site under several hostnames splits cookies,
+CORS origins, OAuth callbacks, and search ranking, so prefer an alias
+unless both hostnames must answer. Path-level redirects (renamed pages)
+stay in the application.
 
 `strategy` selects how the edge balances requests across an application's
 replicas: `round-robin` rotates evenly, `least-requests` sends each

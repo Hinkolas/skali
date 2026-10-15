@@ -73,6 +73,8 @@ export interface RouteProbe {
 	service: string;
 	key: string;
 	domain: string;
+	/** Set when the probe checked one of the route's aliases (domain is the alias). */
+	alias?: boolean;
 	edge: {
 		state: EdgeState;
 		message?: string;
@@ -91,6 +93,16 @@ export interface RouteStatus {
 	strategy: 'round-robin' | 'least-requests';
 	/** False only where the manifest opted the route out of edge compression. */
 	compress: boolean;
+	certificate?: CertificateStatus | null;
+	edge?: EdgeStatus;
+	/** Hostnames the edge redirects to this route's domain. */
+	aliases?: RouteAliasStatus[];
+}
+
+// One route alias: a hostname redirecting to the route's domain, with its
+// own certificate and edge verdict under the route's TLS policy.
+export interface RouteAliasStatus {
+	domain: string;
 	certificate?: CertificateStatus | null;
 	edge?: EdgeStatus;
 }

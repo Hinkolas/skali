@@ -43,7 +43,11 @@
 	// waits for DNS, which health (a workload verdict) does not show.
 	const deferredRoutes = $derived(
 		(status?.services ?? []).reduce(
-			(count, s) => count + (s.routes ?? []).filter((r) => r.edge?.deferred === true).length,
+			(count, s) =>
+				count +
+				(s.routes ?? [])
+					.flatMap((r) => [r, ...(r.aliases ?? [])])
+					.filter((r) => r.edge?.deferred === true).length,
 			0
 		)
 	);

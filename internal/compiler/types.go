@@ -101,6 +101,9 @@ type Route struct {
 	// definition hash covers this JSON, and a field that only appears when
 	// used keeps every existing manifest's hash unchanged.
 	Compress string "json:\"compress,omitempty\""
+	// Aliases are hostnames that redirect to Domain at the edge, in
+	// manifest order. omitempty for the same reason as Compress.
+	Aliases []Expression "json:\"aliases,omitempty\""
 }
 
 type Health struct {

@@ -94,8 +94,9 @@ func newRouteCommand() *cobra.Command {
 	return command
 }
 
-// routeListLines renders one row per route: service and key, the URL, the
-// certificate state, and the edge verdict where the reconciler has one.
+// routeListLines renders one row per route and per alias: service and
+// key, the URL, the certificate state, and the edge verdict where the
+// reconciler has one.
 func routeListLines(style *clirender.Style, status *client.EnvironmentStatus, ports edgePorts) []string {
 	var lines []string
 	for _, service := range status.Services {
@@ -106,25 +107,33 @@ func routeListLines(style *clirender.Style, status *client.EnvironmentStatus, po
 			label = "buckets." + service.Key
 		}
 		for _, route := range service.Routes {
-			line := fmt.Sprintf("%-24s  %s", label+"/"+route.Key, style.Link(routeURL(route, ports)))
-			switch {
-			case route.Deferred():
-				line += "  " + style.Yellow("cert deferred · domain not pointing here yet")
-			case route.Certificate != nil && route.Certificate.State != "active":
-				line += "  " + style.Dim("cert ") + route.Certificate.State
-			case route.Certificate != nil:
-				line += "  " + style.Dim("cert active")
+			lines = append(lines, routeListLine(style, label+"/"+route.Key, route, ports))
+			for _, alias := range route.Aliases {
+				lines = append(lines, routeListLine(style, label+"/"+route.Key+" alias", aliasRoute(alias), ports))
 			}
-			if route.Edge != nil && route.Edge.State != "" {
-				line += "  " + style.Dim("edge "+route.Edge.State)
-			}
-			lines = append(lines, line)
 		}
 	}
 	if len(lines) == 0 {
 		lines = append(lines, style.Dim("no routes"))
 	}
 	return lines
+}
+
+// routeListLine renders one route row of routeListLines.
+func routeListLine(style *clirender.Style, label string, route client.RouteStatus, ports edgePorts) string {
+	line := fmt.Sprintf("%-24s  %s", label, style.Link(routeURL(route, ports)))
+	switch {
+	case route.Deferred():
+		line += "  " + style.Yellow("cert deferred · domain not pointing here yet")
+	case route.Certificate != nil && route.Certificate.State != "active":
+		line += "  " + style.Dim("cert ") + route.Certificate.State
+	case route.Certificate != nil:
+		line += "  " + style.Dim("cert active")
+	}
+	if route.Edge != nil && route.Edge.State != "" {
+		line += "  " + style.Dim("edge "+route.Edge.State)
+	}
+	return line
 }
 
 // routeProbeLines renders one block per probed route: the verdict, its
@@ -147,7 +156,11 @@ func routeProbeLines(style *clirender.Style, probes []client.RouteProbe) []strin
 		default:
 			verdict = style.Yellow(probe.Edge.State)
 		}
-		lines = append(lines, fmt.Sprintf("%s  %s  %s", probe.Service+"/"+probe.Key, probe.Domain, verdict))
+		label := probe.Service + "/" + probe.Key
+		if probe.Alias {
+			label += " alias"
+		}
+		lines = append(lines, fmt.Sprintf("%s  %s  %s", label, probe.Domain, verdict))
 		if probe.Edge.Message != "" {
 			lines = append(lines, "  "+style.Dim(probe.Edge.Message))
 		}

@@ -32,6 +32,18 @@ type builder struct {
 	// expression to the first route declaring it, any path: a bucket route
 	// cannot share a hostname with an application yet.
 	routeDomains map[string]string
+	// aliasDomains maps each route alias's canonical expression to the
+	// alias declaring it; aliases lists them in compile order so the
+	// conflict check against route domains, which needs every application
+	// compiled first, reports deterministically.
+	aliasDomains map[string]string
+	aliases      []compiledAlias
+}
+
+// compiledAlias is one route alias awaiting the cross-application check.
+type compiledAlias struct {
+	path   string
+	domain Expression
 }
 
 func Compile(document *manifest.Document) (*Result, error) {
@@ -45,6 +57,7 @@ func Compile(document *manifest.Document) (*Result, error) {
 		dependencies: make(map[string]map[string]struct{}),
 		routes:       make(map[string]string),
 		routeDomains: make(map[string]string),
+		aliasDomains: make(map[string]string),
 	}
 	source := document.Project
 	definition := ProjectDefinition{
@@ -59,6 +72,13 @@ func Compile(document *manifest.Document) (*Result, error) {
 
 	for _, key := range utils.SortedKeys(source.Applications) {
 		definition.Applications[key] = b.compileApplication(key, source.Applications[key])
+	}
+	// An alias redirects its whole hostname, so it cannot also be a route's
+	// domain on any path.
+	for _, alias := range b.aliases {
+		if previous, exists := b.routeDomains[canonicalExpression(alias.domain)]; exists {
+			b.add(alias.path, "conflicts with route %s; a hostname is either a route domain or an alias", previous)
+		}
 	}
 	for _, key := range utils.SortedKeys(source.Databases) {
 		definition.Databases[key] = b.compileDatabase(key, source.Databases[key])
@@ -216,6 +236,28 @@ func (b *builder) compileApplication(key string, source manifest.Application) Ap
 			compress = RouteCompressDisabled
 		}
 		compiled := Route{Domain: domain, Path: routePath, Port: target, TLS: tls, Strategy: strategy, Compress: compress}
+		for index, source := range route.Aliases {
+			aliasPath := fmt.Sprintf("%s.aliases[%d]", path, index)
+			alias, err := parseExpression(source, b.document.Project, false)
+			if err != nil {
+				b.add(aliasPath, "%s", err)
+				continue
+			}
+			if !alias.HasProjectVariables() {
+				if _, err := edge.CanonicalDomain(alias.Literal()); err != nil {
+					b.add(aliasPath, "%s", err)
+					continue
+				}
+			}
+			b.collectVariables(aliasPath, alias)
+			if previous, exists := b.aliasDomains[canonicalExpression(alias)]; exists {
+				b.add(aliasPath, "conflicts with alias %s; an alias may be declared once", previous)
+				continue
+			}
+			b.aliasDomains[canonicalExpression(alias)] = aliasPath
+			b.aliases = append(b.aliases, compiledAlias{path: aliasPath, domain: alias})
+			compiled.Aliases = append(compiled.Aliases, alias)
+		}
 		conflictKey := canonicalExpression(domain) + "|" + routePath
 		if previous, exists := b.routes[conflictKey]; exists {
 			b.add(path, "conflicts with route %s; domain and path pairs must be unique", previous)
@@ -510,6 +552,9 @@ func (b *builder) compileBucketRoute(base string, source *manifest.BucketRoute) 
 	b.collectVariables(base+".domain", domain)
 	if previous, exists := b.routeDomains[canonicalExpression(domain)]; exists {
 		b.add(base+".domain", "conflicts with route %s; a bucket cannot share a hostname with an application route", previous)
+	}
+	if previous, exists := b.aliasDomains[canonicalExpression(domain)]; exists {
+		b.add(base+".domain", "conflicts with alias %s; an alias redirects its whole hostname", previous)
 	}
 	tls := source.TLS
 	if tls == "" {

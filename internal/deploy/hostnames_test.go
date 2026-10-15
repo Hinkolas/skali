@@ -205,3 +205,41 @@ func TestReservedHostnameReleasedWhenUnconfigured(t *testing.T) {
 	require.True(t, claim.Reserved)
 	require.Error(t, f.deploy.ReserveHostnames(ctx, []string{"example.com"}))
 }
+
+// An alias claims its hostname like a route: another environment's alias
+// cannot take a hostname an environment serves, the conflict names the
+// alias field, and a hostname reserved for the installation stays out of
+// reach of an alias too.
+func TestAliasHostnameClaims(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	env2, err := f.projects.CreateEnvironment(ctx, f.projectID, "other", project.EnvironmentOptions{})
+	require.NoError(t, err)
+	require.NoError(t, f.deploy.Promote(ctx, routePrepared(t, f, f.environmentID, f.submit(t, routedManifest, 0))))
+	claim, err := f.st.GetHostnameClaim(ctx, "example.com")
+	require.NoError(t, err)
+	require.Equal(t, f.environmentID, *claim.EnvironmentID)
+
+	aliased := strings.Replace(routedManifest, "public: {domain: example.com, port: 80}",
+		"public: {domain: other.example.com, port: 80, aliases: [Example.com]}", 1)
+	err = f.deploy.Promote(ctx, routePrepared(t, f, env2.ID, f.submit(t, aliased, 1)))
+	var conflict *HostnameConflict
+	require.ErrorAs(t, err, &conflict)
+	require.False(t, conflict.Reserved)
+	require.Equal(t, "applications.web.routes.public.aliases[0]", conflict.Field)
+
+	require.NoError(t, f.deploy.ReserveHostnames(ctx, []string{"studio.example.net"}))
+	reserved := strings.Replace(routedManifest, "public: {domain: example.com, port: 80}",
+		"public: {domain: example.com, port: 80, aliases: [studio.example.net]}", 1)
+	err = f.deploy.Promote(ctx, routePrepared(t, f, f.environmentID, f.submit(t, reserved, 2)))
+	require.ErrorAs(t, err, &conflict)
+	require.True(t, conflict.Reserved)
+
+	// The environment that serves the hostname may alias a new one.
+	www := strings.Replace(routedManifest, "public: {domain: example.com, port: 80}",
+		"public: {domain: example.com, port: 80, aliases: [www.example.com]}", 1)
+	require.NoError(t, f.deploy.Promote(ctx, routePrepared(t, f, f.environmentID, f.submit(t, www, 3))))
+	claim, err = f.st.GetHostnameClaim(ctx, "www.example.com")
+	require.NoError(t, err)
+	require.Equal(t, f.environmentID, *claim.EnvironmentID)
+}

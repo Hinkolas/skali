@@ -99,11 +99,17 @@ func (k *Kernel) reconcileTLS(ctx context.Context, a *runAttachment, target stor
 		key := routeKeyOf(target.EnvironmentID, ref.Name)
 		var cert *module.CertificateStatus
 		var service, route string
+		var alias bool
 		for appKey, app := range rev.Definition.Applications {
-			for routeKey := range app.Routes {
+			for routeKey, declared := range app.Routes {
 				if rendering.RouteTLSName(rev.Definition.Name, appKey, routeKey) == ref.Name {
 					service = appKey
 					route = routeKey
+				}
+				for _, expression := range declared.Aliases {
+					if rendering.AliasTLSName(rev.Definition.Name, appKey, routeKey, expression) == ref.Name {
+						service, route, alias = appKey, routeKey, true
+					}
 				}
 			}
 		}
@@ -126,6 +132,9 @@ func (k *Kernel) reconcileTLS(ctx context.Context, a *runAttachment, target stor
 		}
 		if route != "" {
 			title += " / " + route
+		}
+		if alias {
+			title += " alias " + desired.certDomains[ref.Name]
 		}
 		fields := map[string]any{"tls": true, "certificate": ref.Name, "namespace": ref.Namespace, "phase": "pending", "deadline": deadline.UTC().Format(time.RFC3339)}
 		detail := "Waiting for certificate observation"

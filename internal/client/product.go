@@ -882,6 +882,22 @@ type RouteStatus struct {
 	// no certificate is expected, before the first probe, or when the
 	// server predates the field.
 	Edge *EdgeStatus `json:"edge,omitempty"`
+	// Aliases are the hostnames redirecting to Domain.
+	Aliases []RouteAliasStatus `json:"aliases,omitempty"`
+}
+
+// RouteAliasStatus is one route alias with its own certificate and edge
+// verdict, shaped like the route's.
+type RouteAliasStatus struct {
+	Domain      string             `json:"domain"`
+	Certificate *CertificateStatus `json:"certificate,omitempty"`
+	Edge        *EdgeStatus        `json:"edge,omitempty"`
+}
+
+// Deferred reports an alias whose certificate waits for its hostname to
+// reach this installation, like RouteStatus.Deferred.
+func (a RouteAliasStatus) Deferred() bool {
+	return a.Edge != nil && a.Edge.Deferred
 }
 
 // EdgeStatus is the reconciler's last probe of a route domain.
@@ -935,11 +951,13 @@ func (c *Client) EnvironmentValues(ctx context.Context, environmentID string) ([
 	return res.Values, nil
 }
 
-// RouteProbe is one manual edge probe of a route domain.
+// RouteProbe is one manual edge probe of a route domain, or of one of the
+// route's aliases (Alias set, Domain the alias hostname).
 type RouteProbe struct {
 	Service string    `json:"service"`
 	Key     string    `json:"key"`
 	Domain  string    `json:"domain"`
+	Alias   bool      `json:"alias,omitempty"`
 	Edge    EdgeProbe `json:"edge"`
 }
 

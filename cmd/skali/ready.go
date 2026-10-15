@@ -83,7 +83,7 @@ func readyWarningLines(style *clirender.Style, status *client.EnvironmentStatus)
 	seen := map[string]bool{}
 	var lines []string
 	for _, service := range status.Services {
-		for _, route := range service.Routes {
+		for _, route := range routesWithAliases(service.Routes) {
 			if !route.Deferred() || seen[route.Domain] {
 				continue
 			}
@@ -119,6 +119,9 @@ func readySummaryLines(style *clirender.Style, status *client.EnvironmentStatus,
 		var lines []string
 		for _, route := range service.Routes {
 			lines = append(lines, routeReadyLine(style, route, summary.Edge))
+			for _, alias := range route.Aliases {
+				lines = append(lines, style.Dim("alias ")+routeReadyLine(style, aliasRoute(alias), summary.Edge))
+			}
 		}
 		switch service.Type {
 		case "application":
@@ -167,6 +170,24 @@ func readySummaryLines(style *clirender.Style, status *client.EnvironmentStatus,
 		}
 	}
 	return lines
+}
+
+// aliasRoute views a route alias as a route of its own, so URL and
+// certificate rendering stay shared.
+func aliasRoute(alias client.RouteAliasStatus) client.RouteStatus {
+	return client.RouteStatus{Domain: alias.Domain, Path: "/", Certificate: alias.Certificate, Edge: alias.Edge}
+}
+
+// routesWithAliases flattens routes and their aliases, in order.
+func routesWithAliases(routes []client.RouteStatus) []client.RouteStatus {
+	var all []client.RouteStatus
+	for _, route := range routes {
+		all = append(all, route)
+		for _, alias := range route.Aliases {
+			all = append(all, aliasRoute(alias))
+		}
+	}
+	return all
 }
 
 // routeReadyLine renders one route as its URL plus, while the certificate

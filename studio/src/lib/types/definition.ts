@@ -80,6 +80,8 @@ export interface Route {
 	path: string;
 	port: PortTarget;
 	tls: string;
+	/** Hostnames the edge redirects to domain. */
+	aliases?: Expression[];
 }
 
 export interface HealthChecks {

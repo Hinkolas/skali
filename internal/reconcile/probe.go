@@ -24,11 +24,13 @@ import (
 // or a bare skalid without cert-manager), so no route domain is ever probed.
 var ErrNoEdgeProbe = errors.New("reconcile: this installation has no edge probe")
 
-// RouteProbe is one manual edge probe of a route domain.
+// RouteProbe is one manual edge probe of a route domain, or of one of
+// the route's aliases (Alias set, Domain the alias hostname).
 type RouteProbe struct {
 	Service string
 	Key     string
 	Domain  string
+	Alias   bool
 	Result  edgeprobe.Result
 
 	certificate string
@@ -107,8 +109,8 @@ func (k *Kernel) targetRevision(ctx context.Context, environmentID uuid.UUID) (s
 	return target, rev, nil
 }
 
-// routeDomains resolves every TLS route of rev to its canonical domain and
-// Certificate name, the same way rendering fills the Certificate's
+// routeDomains resolves every TLS route of rev, and each of its aliases,
+// to its canonical domain and Certificate name, the same way rendering fills the Certificate's
 // dnsNames, so the strings match what a pass judges under the lock.
 // variables holds at least the values the route domains reference.
 func routeDomains(rev *revision.Revision, variables map[string]string) ([]RouteProbe, error) {
@@ -130,6 +132,18 @@ func routeDomains(rev *revision.Revision, variables map[string]string) ([]RouteP
 			}
 			probes = append(probes, RouteProbe{Service: appKey, Key: routeKey, Domain: domain,
 				certificate: rendering.RouteTLSName(rev.Definition.Name, appKey, routeKey)})
+			for _, alias := range route.Aliases {
+				host, err := compiler.ResolveExpression(alias, variables)
+				if err != nil {
+					return nil, fmt.Errorf("reconcile: route %s/%s alias: %w", appKey, routeKey, err)
+				}
+				host, err = edge.CanonicalDomain(host)
+				if err != nil {
+					return nil, fmt.Errorf("reconcile: route %s/%s alias: %w", appKey, routeKey, err)
+				}
+				probes = append(probes, RouteProbe{Service: appKey, Key: routeKey, Domain: host, Alias: true,
+					certificate: rendering.AliasTLSName(rev.Definition.Name, appKey, routeKey, alias)})
+			}
 		}
 	}
 	// Bucket routes probe like application routes; the service is the

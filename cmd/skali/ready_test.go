@@ -189,3 +189,42 @@ func TestReadyWarningLines(t *testing.T) {
 	}}
 	require.Empty(t, readyWarningLines(style, quiet))
 }
+
+// A route's aliases follow it in the summary, the route list, and the
+// warnings: each with its own URL and certificate state, and a deferred
+// alias warned about by its own hostname.
+func TestRouteAliasLines(t *testing.T) {
+	t.Parallel()
+	style := clirender.StyleFor(&bytes.Buffer{})
+	active := &client.CertificateStatus{State: "active"}
+	status := &client.EnvironmentStatus{Services: []client.ServiceStatus{
+		{Key: "web", Type: "application", Routes: []client.RouteStatus{
+			{Key: "public", Domain: "shop.example.com", Path: "/", Certificate: active,
+				Edge: &client.EdgeStatus{State: "reachable"},
+				Aliases: []client.RouteAliasStatus{
+					{Domain: "www.shop.example.com", Certificate: active, Edge: &client.EdgeStatus{State: "reachable"}},
+					{Domain: "old.example.com", Certificate: &client.CertificateStatus{State: "pending"},
+						Edge: &client.EdgeStatus{State: "unreachable", Message: "no address answers as this installation", Deferred: true}},
+				}},
+		}},
+	}}
+
+	require.Equal(t, []string{
+		"  web  https://shop.example.com",
+		"       alias https://www.shop.example.com",
+		"       alias https://old.example.com  cert deferred · domain not pointing here yet",
+	}, readySummaryLines(style, status, readySummary{}))
+	require.Equal(t, []string{
+		"warning: old.example.com does not reach this installation yet (no address answers as this installation); TLS is issued automatically once its DNS points here",
+	}, readyWarningLines(style, status))
+	require.Equal(t, []string{
+		"web/public                https://shop.example.com  cert active  edge reachable",
+		"web/public alias          https://www.shop.example.com  cert active  edge reachable",
+		"web/public alias          https://old.example.com  cert deferred · domain not pointing here yet  edge unreachable",
+	}, routeListLines(style, status, edgePorts{}))
+	require.Equal(t, []string{
+		"web/public alias  old.example.com  unreachable",
+	}, routeProbeLines(style, []client.RouteProbe{
+		{Service: "web", Key: "public", Domain: "old.example.com", Alias: true, Edge: client.EdgeProbe{State: "unreachable"}},
+	}))
+}
