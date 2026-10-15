@@ -68,8 +68,8 @@ cp .env.example .env    # then set AUTH_SECRET: openssl rand -base64 32
 task db
 
 # 3. Migrate and create the first admin
-go run ./cmd/skalid migrate up
-go run ./cmd/skalid user create --email you@example.com --role admin
+task migrate
+task user -- create --email you@example.com --role admin
 
 # 4. Run the API on :7070
 task dev
@@ -82,6 +82,14 @@ go run ./cmd/skali remote status
 (cd studio && npm ci)
 task dev:studio
 ```
+
+`skalid` reads its configuration from the process environment only, in
+development as in production; no binary loads a `.env` file. Task is the
+development path: the Taskfile loads `.env` for every task, and variables
+already set in your shell take precedence over the file. Run skalid through
+`task dev`, `task migrate`, `task user`, and `task seed`, or export the
+variables yourself before a bare `go run ./cmd/skalid`, which otherwise fails
+naming the first missing variable.
 
 An API-only daemon has nothing to show until something is deployed. `task
 seed` (`skalid seed`) fabricates a data-rich installation for working on the
@@ -112,7 +120,7 @@ released migrations. Preserve existing installation identities and data with
 incremental migrations, and test upgrades against populated databases as well
 as fresh installs. Regenerate the store with `sqlc generate` after schema edits.
 
-Use `skalid migrate up` (or `go run ./cmd/skalid migrate up`) to apply the
+Use `skalid migrate up` (or `task migrate` in development) to apply the
 embedded migrations and their baseline compatibility check. `migrate status`
 performs the same check. Direct Goose commands bypass it; reserve them for
 disposable development databases, including destructive Down testing.
