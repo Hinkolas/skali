@@ -8,6 +8,7 @@
 
 import { goto, invalidateAll } from '$app/navigation';
 import { resolve } from '$app/paths';
+import { api, ApiError } from '$lib/api/client';
 import { openStream, type StreamHandle } from '$lib/sse';
 import { toast } from '$lib/stores/toast.svelte';
 import type { Project } from '$lib/types/project';
@@ -16,10 +17,11 @@ import type { Project } from '$lib/types/project';
 // to back) costs one refresh.
 const REFRESH_DEBOUNCE_MS = 250;
 
-export function followProject(
-	project: Pick<Project, 'id' | 'name' | 'display_name'>
-): StreamHandle {
-	let connected = false;
+type ProjectRef = Pick<Project, 'id' | 'name' | 'display_name'>;
+
+export function followProject(project: ProjectRef): StreamHandle {
+	let closed = false;
+	let checking = false;
 	let timer: ReturnType<typeof setTimeout> | null = null;
 	const refresh = () => {
 		if (timer) return;
@@ -28,36 +30,65 @@ export function followProject(
 			void invalidateAll();
 		}, REFRESH_DEBOUNCE_MS);
 	};
+	const close = () => {
+		closed = true;
+		if (timer) clearTimeout(timer);
+		timer = null;
+		handle.close();
+	};
+	// A project deleted, or access lost, while the stream was disconnected
+	// never reaches it as an event: the reconnect is refused with a 404
+	// instead, which EventSource does not show. A failed connection
+	// therefore asks whether the project is still there. Anything but a
+	// 404 (the daemon restarting, the network) keeps the stream retrying;
+	// the ready of its reconnect re-reads.
+	const recheck = async () => {
+		if (checking || closed) return;
+		checking = true;
+		try {
+			await api.get(`/v1/projects/${project.id}`);
+		} catch (err) {
+			if (!closed && err instanceof ApiError && err.status === 404) {
+				close();
+				toast.info(`Project "${label(project)}" was deleted, or you no longer have access to it`);
+				await leaveProject();
+			}
+		} finally {
+			checking = false;
+		}
+	};
 	const handle = openStream<Record<string, never>>({
 		path: `/v1/projects/${project.id}/stream`,
 		events: ['ready', 'changed', 'deleted', 'revoked'],
 		onEvent: (_data, _id, event) => {
 			if (event === 'deleted') {
-				handle.close();
+				close();
 				void leaveDeletedProject(project);
 				return;
 			}
 			if (event === 'revoked') {
-				handle.close();
-				toast.info(`You no longer have access to ${project.display_name || project.name}`);
-				void goto(resolve('/(app)/projects')).then(() => invalidateAll());
+				close();
+				toast.info(`You no longer have access to ${label(project)}`);
+				void leaveProject();
 				return;
 			}
-			// The first ready only opens the stream; a later one is a
-			// reconnect that may have missed changes.
-			if (event === 'ready' && !connected) {
-				connected = true;
-				return;
-			}
+			// Every ready re-reads: there is no cursor to replay from, so the
+			// first one covers what changed between the page's load and the
+			// subscription, and a later one what a disconnect missed.
 			refresh();
-		}
+		},
+		onFailure: () => void recheck()
 	});
-	return {
-		close() {
-			if (timer) clearTimeout(timer);
-			handle.close();
-		}
-	};
+	return { close };
+}
+
+function label(project: ProjectRef) {
+	return project.display_name || project.name;
+}
+
+async function leaveProject() {
+	await goto(resolve('/(app)/projects'));
+	await invalidateAll();
 }
 
 // Both the delete dialog (a project without environments goes at once) and
@@ -65,10 +96,9 @@ export function followProject(
 // is first announces it and leaves.
 const announced = new Set<string>();
 
-export async function leaveDeletedProject(project: Pick<Project, 'id' | 'name' | 'display_name'>) {
+export async function leaveDeletedProject(project: ProjectRef) {
 	if (announced.has(project.id)) return;
 	announced.add(project.id);
-	toast.success(`Project "${project.display_name || project.name}" deleted`);
-	await goto(resolve('/(app)/projects'));
-	await invalidateAll();
+	toast.success(`Project "${label(project)}" deleted`);
+	await leaveProject();
 }

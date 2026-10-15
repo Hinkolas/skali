@@ -19,6 +19,12 @@ export interface StreamOptions<T> {
 	after?: string;
 	onEvent: (data: T, id: string | null, event: string) => void;
 	onState?: (state: StreamState) => void;
+	/**
+	 * The source failed for good (an HTTP error answer, e.g. 404 or 502)
+	 * and is re-created after a backoff. EventSource hides the status, so a
+	 * caller that must tell "gone" from "down" asks the API itself.
+	 */
+	onFailure?: () => void;
 }
 
 const MAX_BACKOFF_MS = 15_000;
@@ -66,6 +72,7 @@ export function openStream<T>(options: StreamOptions<T>): StreamHandle {
 			source?.close();
 			source = null;
 			setState('retrying');
+			options.onFailure?.();
 			retryTimer = setTimeout(connect, backoff);
 			backoff = Math.min(backoff * 2, MAX_BACKOFF_MS);
 		};
