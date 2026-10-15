@@ -137,7 +137,8 @@ can remove them. Invalid YAML diagnostics identify the configuration file to edi
 
 ## Routes
 
-- `skali route list` shows each route of the environment with its URL,
+- `skali route list` shows each route of the environment, and each of its
+  aliases on a line of its own, with its URL,
   certificate state, and the reconciler's last verdict on whether the
   domain reaches this installation (`cert deferred · domain not pointing
   here yet` while DNS is elsewhere). `skali route probe` checks the domains

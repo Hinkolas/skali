@@ -96,6 +96,16 @@ type RouteStatus struct {
 	// reaches this installation; nil until a pass probed it, and always nil
 	// where no certificate is expected.
 	Edge *EdgeStatus
+	// Aliases are the hostnames redirecting to Domain, in manifest order.
+	Aliases []RouteAliasStatus
+}
+
+// RouteAliasStatus is one route alias: its hostname, and like a route its
+// own certificate and edge verdict under the route's TLS policy.
+type RouteAliasStatus struct {
+	Domain      string
+	Certificate *CertificateInfo
+	Edge        *EdgeStatus
 }
 
 // EdgeStatus projects one edge probe (see internal/edge/edgeprobe). State
@@ -403,6 +413,11 @@ func routesFor(definition compiler.ProjectDefinition, snapshot observe.Snapshot,
 			Compress: route.Compress != compiler.RouteCompressDisabled,
 		}
 		attachCertificate(&status, rendering.RouteTLSName(definition.Name, key, routeKey), certificates, edgeFor)
+		for _, expression := range route.Aliases {
+			alias := RouteStatus{Domain: routeDomain(expression, variables), TLS: route.TLS}
+			attachCertificate(&alias, rendering.AliasTLSName(definition.Name, key, routeKey, expression), certificates, edgeFor)
+			status.Aliases = append(status.Aliases, RouteAliasStatus{Domain: alias.Domain, Certificate: alias.Certificate, Edge: alias.Edge})
+		}
 		routes = append(routes, status)
 	}
 	return routes

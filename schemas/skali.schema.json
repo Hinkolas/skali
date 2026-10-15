@@ -502,6 +502,13 @@
                 "port"
               ],
               "properties": {
+                "aliases": {
+                  "type": "array",
+                  "description": "Hostnames the edge permanently redirects to this route's domain, keeping path and query. Each gets its own certificate under the route's TLS policy. Project variable expressions are allowed. To serve the application on another hostname instead, declare a second route.",
+                  "items": {
+                    "type": "string"
+                  }
+                },
                 "compress": {
                   "type": [
                     "null",

@@ -248,10 +248,19 @@ func (s *service) verdict(workload *module.WorkloadStatus, observed []module.Obs
 func (s *service) applyCertificateGate(observed []module.ObservedResource, evaluation module.Evaluation, now time.Time) module.Evaluation {
 	routes := make([]module.CertRoute, 0, len(s.application.Routes))
 	for _, routeKey := range utils.SortedKeys(s.application.Routes) {
+		route := s.application.Routes[routeKey]
 		routes = append(routes, module.CertRoute{
 			Name: kubernetes.RouteTLSName(s.project, s.key, routeKey),
-			TLS:  s.application.Routes[routeKey].TLS,
+			TLS:  route.TLS,
 		})
+		// An alias certificate gates like the route's own: its hostname is
+		// as public, and a deferred alias only warns.
+		for _, alias := range route.Aliases {
+			routes = append(routes, module.CertRoute{
+				Name: kubernetes.AliasTLSName(s.project, s.key, routeKey, alias),
+				TLS:  route.TLS,
+			})
+		}
 	}
 	return module.CertificateGate(observed, routes, evaluation, now)
 }

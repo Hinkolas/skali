@@ -2,7 +2,12 @@
 	import ExternalLink from '@lucide/svelte/icons/external-link';
 	import RadioTower from '@lucide/svelte/icons/radio-tower';
 	import { page } from '$app/state';
-	import type { RouteStatus, CertificateState, RouteProbe } from '$lib/types/status';
+	import type {
+		RouteStatus,
+		RouteAliasStatus,
+		CertificateState,
+		RouteProbe
+	} from '$lib/types/status';
 	import type { Environment } from '$lib/types/project';
 	import { api, ApiError } from '$lib/api/client';
 	import { requiredTitle, roleAtLeast } from '$lib/access';
@@ -14,7 +19,8 @@
 
 	// Live public routes of one application or bucket: domain, balancing
 	// policy, and the certificate lifecycle on TLS-capable installations.
-	// The panel renders nothing on services without routes.
+	// A route's aliases follow it, each with its own certificate and DNS
+	// state. The panel renders nothing on services without routes.
 	let { serviceKey, serviceType = 'application' }: { serviceKey: string; serviceType?: string } =
 		$props();
 
@@ -65,13 +71,17 @@
 		expired: { label: 'cert expired', dot: 'bg-status-danger', text: 'text-status-danger' }
 	};
 
-	function url(route: RouteStatus): string {
+	// A route or one of its aliases: everything a row needs about one
+	// hostname. Aliases redirect their whole hostname, so they carry no path.
+	type Host = RouteAliasStatus & { path?: string };
+
+	function url(route: Host): string {
 		const scheme = route.certificate ? 'https' : 'http';
 		const path = route.path && route.path !== '/' ? route.path : '';
 		return `${scheme}://${route.domain}${path}`;
 	}
 
-	function certTitle(route: RouteStatus): string {
+	function certTitle(route: Host): string {
 		const certificate = route.certificate;
 		if (!certificate) return '';
 		const parts = [certificate.reason, certificate.message].filter(Boolean);
@@ -81,11 +91,11 @@
 
 	// The certificate waits for DNS: the reconciler concluded that the domain
 	// does not reach this installation and nothing usable is on hand.
-	function dnsPending(route: RouteStatus): boolean {
+	function dnsPending(route: Host): boolean {
 		return route.edge?.deferred === true;
 	}
 
-	function dnsTitle(route: RouteStatus): string {
+	function dnsTitle(route: Host): string {
 		const edge = route.edge;
 		if (!edge) return '';
 		const parts: string[] = [edge.message ?? '', ...edge.addresses];
@@ -94,23 +104,55 @@
 	}
 </script>
 
+{#snippet link(host: Host)}
+	<!-- eslint-disable svelte/no-navigation-without-resolve -- external URL of the route's own domain -->
+	<a
+		href={url(host)}
+		target="_blank"
+		rel="noopener noreferrer"
+		class="text-text-primary flex items-center gap-1.5 font-mono hover:underline"
+	>
+		{url(host)}
+		<ExternalLink size={12} />
+	</a>
+	<!-- eslint-enable svelte/no-navigation-without-resolve -->
+{/snippet}
+
+{#snippet lifecycle(host: Host)}
+	{#if host.certificate || dnsPending(host)}
+		<span class="ml-auto flex items-center gap-3">
+			{#if dnsPending(host)}
+				<span class="text-status-warning flex items-center gap-1.5" title={dnsTitle(host)}>
+					<span class="size-[8px] rounded-full bg-status-warning"></span>DNS pending
+				</span>
+				<Button
+					size="sm"
+					variant="ghost"
+					disabled={!mayProbe}
+					busy={probing}
+					title={probeTitle}
+					onclick={probe}
+				>
+					<RadioTower size={12} /> Probe now
+				</Button>
+			{/if}
+			{#if host.certificate}
+				{@const meta = CERT_META[host.certificate.state]}
+				<span class="flex items-center gap-1.5 {meta.text}" title={certTitle(host)}>
+					<span class="size-[8px] rounded-full {meta.dot}"></span>{meta.label}
+				</span>
+			{/if}
+		</span>
+	{/if}
+{/snippet}
+
 {#if routes.length > 0}
 	<Card class="p-5">
 		<h3 class="text-text-primary mb-3.5 text-xl font-semibold">Routes</h3>
 		<div class="flex flex-col gap-2">
 			{#each routes as route (route.key)}
 				<div class="flex items-center gap-2.5 text-md">
-					<!-- eslint-disable svelte/no-navigation-without-resolve -- external URL of the route's own domain -->
-					<a
-						href={url(route)}
-						target="_blank"
-						rel="noopener noreferrer"
-						class="text-text-primary flex items-center gap-1.5 font-mono hover:underline"
-					>
-						{url(route)}
-						<ExternalLink size={12} />
-					</a>
-					<!-- eslint-enable svelte/no-navigation-without-resolve -->
+					{@render link(route)}
 					{#if route.strategy === 'least-requests'}
 						<span class="text-text-faint font-mono">least-requests</span>
 					{/if}
@@ -125,32 +167,18 @@
 							title="responses leave the edge uncompressed (compress: false)">no compression</span
 						>
 					{/if}
-					{#if route.certificate || dnsPending(route)}
-						<span class="ml-auto flex items-center gap-3">
-							{#if dnsPending(route)}
-								<span class="text-status-warning flex items-center gap-1.5" title={dnsTitle(route)}>
-									<span class="size-[8px] rounded-full bg-status-warning"></span>DNS pending
-								</span>
-								<Button
-									size="sm"
-									variant="ghost"
-									disabled={!mayProbe}
-									busy={probing}
-									title={probeTitle}
-									onclick={probe}
-								>
-									<RadioTower size={12} /> Probe now
-								</Button>
-							{/if}
-							{#if route.certificate}
-								{@const meta = CERT_META[route.certificate.state]}
-								<span class="flex items-center gap-1.5 {meta.text}" title={certTitle(route)}>
-									<span class="size-[8px] rounded-full {meta.dot}"></span>{meta.label}
-								</span>
-							{/if}
-						</span>
-					{/if}
+					{@render lifecycle(route)}
 				</div>
+				{#each route.aliases ?? [] as alias (alias.domain)}
+					<div class="flex items-center gap-2.5 pl-4 text-md">
+						<span
+							class="text-text-faint font-mono"
+							title="redirects permanently to {route.domain}, keeping path and query">alias</span
+						>
+						{@render link(alias)}
+						{@render lifecycle(alias)}
+					</div>
+				{/each}
 			{/each}
 		</div>
 	</Card>

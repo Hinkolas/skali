@@ -156,6 +156,28 @@ func RedirectMiddleware(namespace string, labels map[string]string) *unstructure
 	})
 }
 
+// AliasRedirectMiddleware builds a redirectRegex Middleware that answers
+// every request on a route alias with a permanent redirect to the route's
+// domain under scheme, keeping path and query. keepPort carries a
+// non-default port across (an alias reached on the same scheme lands on
+// the same edge port); a scheme change drops it, as redirectScheme does.
+// Traefik matches the regex against scheme://host[:port]/path?query and
+// answers 301 for GET and 308 for other methods, so a form post keeps its
+// method.
+func AliasRedirectMiddleware(namespace, name string, labels map[string]string, scheme, domain string, keepPort bool) *unstructured.Unstructured {
+	regex, replacement := `^[a-z]+://[^/]+(.*)$`, scheme+"://"+domain+"${1}"
+	if keepPort {
+		regex, replacement = `^[a-z]+://[^/:]+(:[0-9]+)?(.*)$`, scheme+"://"+domain+"${1}${2}"
+	}
+	return object(MiddlewareGVK, namespace, name, labels, map[string]any{
+		"redirectRegex": map[string]any{
+			"regex":       regex,
+			"replacement": replacement,
+			"permanent":   true,
+		},
+	})
+}
+
 // CompressExcludedContentTypes lists the response media types the compress
 // Middleware leaves alone. Traefik matches these exactly (no wildcards):
 // event streams would otherwise be buffered per event, and the rest are

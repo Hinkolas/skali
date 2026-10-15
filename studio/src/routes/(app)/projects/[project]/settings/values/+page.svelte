@@ -50,7 +50,10 @@
 		};
 		for (const [key, app] of Object.entries(data.definition?.applications ?? {})) {
 			for (const expr of Object.values(app.environment ?? {})) note(expr, key);
-			for (const route of Object.values(app.routes ?? {})) note(route.domain, key);
+			for (const route of Object.values(app.routes ?? {})) {
+				note(route.domain, key);
+				for (const alias of route.aliases ?? []) note(alias, key);
+			}
 		}
 		return byName;
 	});

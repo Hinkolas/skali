@@ -73,6 +73,11 @@ func Validate(document *Document) yamldoc.Diagnostics {
 			} else if number < 1 || number > 65535 {
 				add(routePath+".port", "must be between 1 and 65535")
 			}
+			for index, alias := range route.Aliases {
+				if alias == "" {
+					add(fmt.Sprintf("%s.aliases[%d]", routePath, index), "must not be empty")
+				}
+			}
 		}
 		for _, commandKey := range utils.SortedKeys(application.Commands) {
 			commandPath := path + ".commands." + commandKey

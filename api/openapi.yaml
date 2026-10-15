@@ -5164,6 +5164,34 @@ components:
             last probed by the reconciler. Present only for routes that get
             a certificate on certificate-enabled installations, once a
             reconcile pass has probed the domain; absent elsewhere.
+        aliases:
+          type: array
+          items: { $ref: "#/components/schemas/RouteAliasStatus" }
+          description: >
+            Hostnames the edge permanently redirects to the route's domain,
+            in manifest order. Absent when the route declares none.
+
+    RouteAliasStatus:
+      type: object
+      required: [domain]
+      properties:
+        domain:
+          type: string
+          description: >
+            The alias hostname: the resolved value when the certificate
+            carries it, otherwise the manifest expression.
+        certificate:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/CertificateStatus"
+          description: >
+            The alias's own certificate, issued under the route's TLS
+            policy; null where the route gets none.
+        edge:
+          $ref: "#/components/schemas/EdgeStatus"
+          description: >
+            Whether the alias hostname reaches this installation's edge,
+            present under the same conditions as the route's.
 
     EdgeStatus:
       type: object
@@ -5213,7 +5241,12 @@ components:
           description: The route key within the application.
         domain:
           type: string
-          description: The resolved, canonical route domain that was probed.
+          description: The resolved, canonical route domain (or alias hostname) that was probed.
+        alias:
+          type: boolean
+          description: >
+            True when the probe checked one of the route's aliases; absent
+            for the route's own domain.
         edge:
           type: object
           required: [state, checked_at, addresses]

@@ -11,12 +11,14 @@ type RouteError struct{ Field, Detail string }
 func (e *RouteError) Error() string { return e.Field + ": " + e.Detail }
 
 // ResolvedRoute is one hostname the environment claims: an application
-// route (Application and Key set) or a bucket route (Bucket set, Key
-// "route"). Field names the manifest path for diagnostics.
+// route (Application and Key set), one of its aliases (Alias also set,
+// Path "/"), or a bucket route (Bucket set, Key "route"). Field names the
+// manifest path for diagnostics.
 type ResolvedRoute struct {
 	Application string
 	Bucket      string
 	Key         string
+	Alias       bool
 	Domain      string
 	Path        string
 	Field       string
@@ -50,6 +52,28 @@ func ResolveRoutes(def ProjectDefinition, variables map[string]string) ([]Resolv
 			routes = append(routes, ResolvedRoute{Application: app, Key: key, Domain: domain, Path: route.Path, Field: field})
 		}
 	}
+	// An alias redirects its whole hostname, so it shares it with nothing:
+	// not with a route on any path, not with another alias.
+	aliasDomains := map[string]string{}
+	for _, app := range utils.SortedKeys(def.Applications) {
+		for _, key := range utils.SortedKeys(def.Applications[app].Routes) {
+			for index, alias := range def.Applications[app].Routes[key].Aliases {
+				field := fmt.Sprintf("applications.%s.routes.%s.aliases[%d]", app, key, index)
+				domain, err := resolveHostname(alias, field, variables)
+				if err != nil {
+					return nil, err
+				}
+				if prior, ok := appDomains[domain]; ok {
+					return nil, &RouteError{field, fmt.Sprintf("conflicts with %s after resolving values; a hostname is either a route domain or an alias", prior)}
+				}
+				if prior, ok := aliasDomains[domain]; ok {
+					return nil, &RouteError{field, fmt.Sprintf("conflicts with %s after resolving values; an alias may be declared once", prior)}
+				}
+				aliasDomains[domain] = field
+				routes = append(routes, ResolvedRoute{Application: app, Key: key, Alias: true, Domain: domain, Path: "/", Field: field})
+			}
+		}
+	}
 	// Bucket routes may share a hostname with each other (the edge keys
 	// each on its own bucket path) but not with an application route.
 	for _, key := range utils.SortedKeys(def.Buckets) {
@@ -65,18 +89,27 @@ func ResolveRoutes(def ProjectDefinition, variables map[string]string) ([]Resolv
 		if prior, ok := appDomains[domain]; ok {
 			return nil, &RouteError{field, fmt.Sprintf("conflicts with %s after resolving values; a bucket cannot share a hostname with an application route", prior)}
 		}
+		if prior, ok := aliasDomains[domain]; ok {
+			return nil, &RouteError{field, fmt.Sprintf("conflicts with %s after resolving values; an alias redirects its whole hostname", prior)}
+		}
 		routes = append(routes, ResolvedRoute{Bucket: key, Key: "route", Domain: domain, Path: "/", Field: field})
 	}
 	return routes, nil
 }
 
 // resolveRouteDomain resolves and canonicalizes one route domain
-// expression. A rejected domain names the value it resolved from; the
-// resolved text itself stays out of the error.
+// expression.
 func resolveRouteDomain(expression Expression, field string, variables map[string]string) (string, error) {
+	return resolveHostname(expression, field+".domain", variables)
+}
+
+// resolveHostname resolves and canonicalizes one hostname expression
+// declared at field. A rejected hostname names the value it resolved
+// from; the resolved text itself stays out of the error.
+func resolveHostname(expression Expression, field string, variables map[string]string) (string, error) {
 	raw, err := ResolveExpression(expression, variables)
 	if err != nil {
-		return "", &RouteError{field + ".domain", err.Error()}
+		return "", &RouteError{field, err.Error()}
 	}
 	domain, err := edge.CanonicalDomain(raw)
 	if err != nil {
@@ -84,7 +117,7 @@ func resolveRouteDomain(expression Expression, field string, variables map[strin
 		if expression.HasReferences() {
 			detail += " (resolved from " + expression.Source() + ")"
 		}
-		return "", &RouteError{field + ".domain", detail}
+		return "", &RouteError{field, detail}
 	}
 	return domain, nil
 }

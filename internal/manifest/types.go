@@ -112,6 +112,9 @@ type Route struct {
 	// Compress opts a route out of edge response compression; nil and
 	// true both mean compressed (the default).
 	Compress *bool `yaml:"compress,omitempty" json:"compress,omitempty" jsonschema:"Compress responses at the edge (gzip, br, zstd) for text-like content types. Defaults to true; set false for routes that stream events or already compress."`
+	// Aliases are hostnames the edge answers with a permanent redirect to
+	// this route's domain; they never reach the application.
+	Aliases []string `yaml:"aliases,omitempty" json:"aliases,omitempty" jsonschema:"Hostnames the edge permanently redirects to this route's domain, keeping path and query. Each gets its own certificate under the route's TLS policy. Project variable expressions are allowed. To serve the application on another hostname instead, declare a second route."`
 }
 
 type Health struct {

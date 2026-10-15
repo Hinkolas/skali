@@ -336,6 +336,28 @@ func RouteTLSName(projectName, applicationKey, routeKey string) string {
 	return objectName("tls", projectName, applicationKey, routeKey)
 }
 
+// AliasTLSName names one route alias's Certificate and Secret. It keys on
+// the alias's manifest spelling, not its position or resolved value, so
+// reordering the list reissues nothing and the app module can name it
+// without the environment's values; a changed value behaves like a
+// changed route domain.
+func AliasTLSName(projectName, applicationKey, routeKey string, alias compiler.Expression) string {
+	return objectName("alias-tls", projectName, applicationKey, routeKey, alias.Source())
+}
+
+// AliasRouteName names one route alias's IngressRoute per variant
+// ("primary" or "http").
+func AliasRouteName(projectName, applicationKey, routeKey string, alias compiler.Expression, variant string) string {
+	return objectName("alias", projectName, applicationKey, routeKey, alias.Source(), variant)
+}
+
+// AliasRedirectName names a route's alias redirect Middleware per
+// entrypoint variant ("primary" or "http"); every alias of the route
+// shares it, since the target depends on the route alone.
+func AliasRedirectName(projectName, applicationKey, routeKey, variant string) string {
+	return objectName("alias-redirect", projectName, applicationKey, routeKey, variant)
+}
+
 func renderApplication(project compiler.ProjectDefinition, key string, options Options) ([]runtime.Object, error) {
 	application := project.Applications[key]
 	name := ApplicationName(project.Name, key)
@@ -542,6 +564,11 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 				maps.Clone(labels), []string{edge.EntryPointWeb},
 				[]edge.Route{{Match: match, Service: backend, Middlewares: serving}}, ""))
 		}
+		aliases, err := renderRouteAliases(project.Name, key, routeKey, route, domain, backend, labels, options)
+		if err != nil {
+			return nil, err
+		}
+		objects = append(objects, aliases...)
 	}
 
 	// Record canonical hosts for conservative, fresh-read claim retirement.
@@ -550,7 +577,8 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 		return nil, err
 	}
 	for _, route := range resolved {
-		if route.Application != key {
+		// Alias routers carry their own hostname from renderRouteAliases.
+		if route.Application != key || route.Alias {
 			continue
 		}
 		for _, obj := range objects {
@@ -592,6 +620,65 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 				}},
 			},
 		})
+	}
+	return objects, nil
+}
+
+// renderRouteAliases renders the edge objects of one route's aliases: per
+// alias the routers answering its whole hostname with a redirect to the
+// route's domain, plus a Certificate under the route's TLS policy, and per
+// route the redirect Middlewares they share. The routers never reach the
+// backend; it is named only because a Traefik router needs a service.
+// The plain-HTTP router keeps the ACME challenge path for the solver, and
+// on `automatic` sends plain HTTP straight to https://domain instead of
+// detouring through https://alias.
+func renderRouteAliases(projectName, key, routeKey string, route compiler.Route, domain string,
+	backend edge.Service, labels map[string]string, options Options) ([]runtime.Object, error) {
+	if len(route.Aliases) == 0 {
+		return nil, nil
+	}
+	tls := options.Certificates && route.TLS != "disabled"
+	var objects []runtime.Object
+	plainName := AliasRedirectName(projectName, key, routeKey, "http")
+	if tls && route.TLS == "automatic" {
+		objects = append(objects, edge.AliasRedirectMiddleware(options.Namespace, plainName, maps.Clone(labels), "https", domain, false))
+	} else {
+		objects = append(objects, edge.AliasRedirectMiddleware(options.Namespace, plainName, maps.Clone(labels), "http", domain, true))
+	}
+	secureName := AliasRedirectName(projectName, key, routeKey, "primary")
+	if tls {
+		objects = append(objects, edge.AliasRedirectMiddleware(options.Namespace, secureName, maps.Clone(labels), "https", domain, true))
+	}
+	for index, alias := range route.Aliases {
+		host, err := compiler.ResolveExpression(alias, options.Variables)
+		if err != nil {
+			return nil, fmt.Errorf("route %s alias %d: %w", routeKey, index, err)
+		}
+		host, err = edge.CanonicalDomain(host)
+		if err != nil {
+			return nil, fmt.Errorf("route %s alias %d: %w", routeKey, index, err)
+		}
+		// Record the canonical host for conservative, fresh-read claim
+		// retirement, like the route's own routers.
+		annotate := func(obj *unstructured.Unstructured) *unstructured.Unstructured {
+			obj.SetAnnotations(map[string]string{"skali.dev/route-hostname": host})
+			return obj
+		}
+		plain := edge.Route{Match: edge.HTTPMatch(host, "/"), Service: backend, Middlewares: []string{plainName}}
+		if tls {
+			secretName := AliasTLSName(projectName, key, routeKey, alias)
+			objects = append(objects, annotate(edge.IngressRoute(options.Namespace, AliasRouteName(projectName, key, routeKey, alias, "primary"),
+				maps.Clone(labels), []string{edge.EntryPointWebSecure},
+				[]edge.Route{{Match: edge.HostMatch(host, "/"), Service: backend, Middlewares: []string{secureName}}}, secretName)))
+			objects = append(objects, annotate(edge.IngressRoute(options.Namespace, AliasRouteName(projectName, key, routeKey, alias, "http"),
+				maps.Clone(labels), []string{edge.EntryPointWeb}, []edge.Route{plain}, "")))
+			objects = append(objects, edge.Certificate(options.Namespace, secretName, host, maps.Clone(labels)))
+		} else {
+			// Without a certificate there is no solver to make room for.
+			plain.Match = edge.HostMatch(host, "/")
+			objects = append(objects, annotate(edge.IngressRoute(options.Namespace, AliasRouteName(projectName, key, routeKey, alias, "primary"),
+				maps.Clone(labels), []string{edge.EntryPointWeb}, []edge.Route{plain}, "")))
+		}
 	}
 	return objects, nil
 }
