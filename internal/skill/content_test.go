@@ -3,13 +3,17 @@ package skill_test
 import (
 	"io/fs"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
+
+	"github.com/google/jsonschema-go/jsonschema"
+	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 
 	"github.com/Hinkolas/skali/internal/compiler"
 	"github.com/Hinkolas/skali/internal/manifest"
 	"github.com/Hinkolas/skali/internal/skill"
-	"github.com/stretchr/testify/require"
 )
 
 // completeManifestBlock matches fenced blocks marked as complete manifests
@@ -45,9 +49,12 @@ func documents(t *testing.T) map[string]string {
 	return found
 }
 
+// Complete manifests pass the published editor schema as well as the
+// compiler, the two checks a reader's own manifest meets.
 func TestSkillCompleteManifestsCompile(t *testing.T) {
 	t.Parallel()
 
+	schema := resolvedSchema(t)
 	found := 0
 	for name, text := range documents(t) {
 		for index, match := range completeManifestBlock.FindAllStringSubmatch(text, -1) {
@@ -56,9 +63,117 @@ func TestSkillCompleteManifestsCompile(t *testing.T) {
 			require.NoError(t, err, "%s block %d", name, index)
 			_, err = compiler.Compile(document)
 			require.NoError(t, err, "%s block %d", name, index)
+			var value any
+			require.NoError(t, yaml.Unmarshal([]byte(match[1]), &value), "%s block %d", name, index)
+			require.NoError(t, schema.Validate(value), "%s block %d: schema", name, index)
 		}
 	}
 	require.GreaterOrEqual(t, found, 2, "no ```yaml manifest blocks found; the marker convention drifted")
+}
+
+// uncompiledFields lists manifest fields the reference documents in prose
+// only, each with the reason no complete manifest shows it. Every other
+// field must appear in a compiled example, so a new field cannot ship
+// without one.
+var uncompiledFields = map[string]string{
+	"buckets.*.versioning":                              "valid vocabulary, rejected at deploy",
+	"buckets.*.lifecycle.expireNoncurrentVersionsAfter": "valid vocabulary, rejected at deploy",
+	"buckets.*.quotas.objects":                          "valid vocabulary, rejected at deploy",
+	"buckets.*.quotas.maxObjectSize":                    "valid vocabulary, rejected at deploy",
+	"databases.*.recovery":                              "recorded but not acted on yet",
+	"databases.*.recovery.pointInTime":                  "recorded but not acted on yet",
+}
+
+// Every field of the manifest schema appears in at least one complete
+// manifest of the manifest reference, so each is compiled and checked
+// against the schema by TestSkillCompleteManifestsCompile.
+func TestManifestReferenceCoversEveryField(t *testing.T) {
+	t.Parallel()
+
+	schema, err := manifest.Schema()
+	require.NoError(t, err)
+	fields := map[string]bool{}
+	schemaFields(schema, "", fields)
+
+	reference, ok := skill.Reference("manifest")
+	require.True(t, ok)
+	used := map[string]bool{}
+	for _, match := range completeManifestBlock.FindAllStringSubmatch(string(reference), -1) {
+		var value any
+		require.NoError(t, yaml.Unmarshal([]byte(match[1]), &value))
+		usedFields(schema, value, "", used)
+	}
+
+	var missing []string
+	for field := range fields {
+		if reason, excused := uncompiledFields[field]; excused {
+			require.False(t, used[field], "%s is listed in uncompiledFields (%s) but a complete manifest uses it; remove it from the list", field, reason)
+			continue
+		}
+		if !used[field] {
+			missing = append(missing, field)
+		}
+	}
+	sort.Strings(missing)
+	require.Empty(t, missing, "fields in no ```yaml manifest block of the manifest reference")
+	for field := range uncompiledFields {
+		require.True(t, fields[field], "uncompiledFields lists %s, which is not a manifest field", field)
+	}
+}
+
+// schemaFields collects every property path, writing a collection key
+// (a map entry) as "*".
+func schemaFields(schema *jsonschema.Schema, prefix string, into map[string]bool) {
+	for name, property := range schema.Properties {
+		path := joinField(prefix, name)
+		into[path] = true
+		schemaFields(property, path, into)
+	}
+	if schema.AdditionalProperties != nil {
+		schemaFields(schema.AdditionalProperties, joinField(prefix, "*"), into)
+	}
+	if schema.Items != nil {
+		schemaFields(schema.Items, prefix, into)
+	}
+}
+
+// usedFields collects the property paths a YAML value sets, walking the
+// schema alongside it to tell fields from collection keys.
+func usedFields(schema *jsonschema.Schema, value any, prefix string, into map[string]bool) {
+	switch value := value.(type) {
+	case map[string]any:
+		for key, child := range value {
+			if property, ok := schema.Properties[key]; ok {
+				path := joinField(prefix, key)
+				into[path] = true
+				usedFields(property, child, path, into)
+			} else if schema.AdditionalProperties != nil {
+				usedFields(schema.AdditionalProperties, child, joinField(prefix, "*"), into)
+			}
+		}
+	case []any:
+		if schema.Items != nil {
+			for _, item := range value {
+				usedFields(schema.Items, item, prefix, into)
+			}
+		}
+	}
+}
+
+func joinField(prefix, name string) string {
+	if prefix == "" {
+		return name
+	}
+	return prefix + "." + name
+}
+
+func resolvedSchema(t *testing.T) *jsonschema.Resolved {
+	t.Helper()
+	schema, err := manifest.Schema()
+	require.NoError(t, err)
+	resolved, err := schema.Resolve(&jsonschema.ResolveOptions{ValidateDefaults: true})
+	require.NoError(t, err)
+	return resolved
 }
 
 // The installed set is version-neutral: no complete manifest (which would
