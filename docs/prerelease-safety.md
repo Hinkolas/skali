@@ -95,8 +95,12 @@ every component the failed one set out to rewrite, and lifts the hold when
 it completes. Or accept the data as it is with `skali backup accept` (Accept
 current data in the Studio): the hold lifts, the environment stays down,
 and the next deploy brings it back on that data and lifts the bucket
-fences. A restore cancelled before it stops the environment changes
-nothing.
+fences. Both first make sure the incomplete restore has stopped writing:
+its Jobs and their pods are deleted again and must be gone, since a
+restore's conclusion does not wait for them and its cleanup may have
+failed. Until Kubernetes confirms that, accepting and restoring are
+refused, the hold stays, and asking again retries the cleanup. A restore
+cancelled before it stops the environment changes nothing.
 
 Volume restore preserves numeric ownership, permissions, and timestamps on
 Linux, including the volume root in new archives. Unsupported entries and

@@ -7,10 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/Hinkolas/skali/internal/compiler"
 	"github.com/Hinkolas/skali/internal/journal"
@@ -475,22 +475,17 @@ func (c *Controller) backupVolume(ctx context.Context, log *journal.StepLog, bct
 }
 
 // cleanupJobs removes every Job and per-operation Secret the operation
-// created, in both namespaces it may have touched.
+// created, in both namespaces it may have touched. It does not wait for
+// the workers to terminate, and a failure here is only logged: whatever
+// relies on a restore's workers having stopped asks stopWorkers.
 func (c *Controller) cleanupJobs(ctx context.Context, row *store.Backup) {
 	if c.deps.Kube == nil {
 		return
 	}
-	namespaces := []string{substrate.Namespace,
-		kubernetes.NamespaceName(row.EnvironmentID.String())}
-	for _, namespace := range namespaces {
-		jobs, err := c.deps.Kube.Clientset.BatchV1().Jobs(namespace).List(ctx, metav1.ListOptions{
-			LabelSelector: backupJobLabel + "=" + row.ID.String(),
-		})
-		if err == nil {
-			for _, job := range jobs.Items {
-				c.deleteJob(ctx, namespace, job.Name)
-			}
-		}
+	if err := c.deleteWorkers(ctx, row.ID, row.EnvironmentID); err != nil {
+		slog.WarnContext(ctx, "backup: remove the operation's workers", "backup", row.ID, "err", err)
+	}
+	for _, namespace := range workerNamespaces(row.EnvironmentID) {
 		c.deleteTargetSecret(ctx, namespace)
 	}
 }

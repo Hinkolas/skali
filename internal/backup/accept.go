@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/google/uuid"
@@ -22,8 +23,10 @@ const KindAccept = "restore-accept"
 var ErrNoIncompleteRestore = errors.New("backup: the named restore does not hold the environment")
 
 // ErrRestoreStillRunning: the restore holding the environment has not
-// concluded; its worker may still be writing, even after its run was
-// cancelled, so its data cannot be accepted yet.
+// concluded, or its workers have not been confirmed stopped; either may
+// still be writing, even after its run was cancelled, so its data can be
+// neither accepted nor restored over yet. The hold stays; asking again
+// later retries the cleanup.
 var ErrRestoreStillRunning = errors.New("backup: the restore holding the environment is still running")
 
 // AcceptInput names the incomplete restore whose data the caller accepts:
@@ -106,7 +109,7 @@ type heldRestore struct {
 }
 
 // heldBy reads the restore holding the environment, refusing when it is
-// not restoreID.
+// not restoreID, or while it may still be writing.
 func (c *Controller) heldBy(ctx context.Context, environmentID, restoreID uuid.UUID) (*heldRestore, error) {
 	target, err := c.deps.Store.GetEnvironmentTarget(ctx, environmentID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -122,8 +125,23 @@ func (c *Controller) heldBy(ctx context.Context, environmentID, restoreID uuid.U
 	if err != nil {
 		return nil, fmt.Errorf("backup: get the incomplete restore: %w", err)
 	}
-	if row.Status == StatusPending || row.Status == StatusRunning {
-		return nil, ErrRestoreStillRunning
+	if err := c.restoreStopped(ctx, &row); err != nil {
+		return nil, err
 	}
 	return &heldRestore{Backup: row, components: target.IncompleteRestoreComponents}, nil
+}
+
+// restoreStopped proves a restore can no longer write: its row concluded,
+// and none of its workers is left, which is retried here when the
+// restore's own cleanup did not finish. Nothing may lift or replace the
+// hold of a restore before that.
+func (c *Controller) restoreStopped(ctx context.Context, row *store.Backup) error {
+	if row.Status == StatusPending || row.Status == StatusRunning {
+		return ErrRestoreStillRunning
+	}
+	if err := c.stopWorkers(ctx, row.ID, row.EnvironmentID); err != nil {
+		slog.WarnContext(ctx, "backup: restore workers not stopped", "backup", row.ID, "err", err)
+		return err
+	}
+	return nil
 }
