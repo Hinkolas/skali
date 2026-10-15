@@ -115,6 +115,14 @@ stops the command with the upgrade remedy instead. Mutating command bodies are
 never replayed automatically. Deployment and backup observation failures
 preserve the accepted run ID and show `skali run attach`.
 
+Independently of versions, the API client repeats a read (a GET) through
+transient failures for up to about 20 seconds with growing delays: a reset or
+dropped connection, the edge's 502/503/504 while skalid restarts, and a refused
+connection once the server has already answered the command. Authentication,
+authorization, validation, skalid's own coded errors, timeouts, and a changed
+installation identity fail at once; Ctrl-C ends the wait immediately, and no
+wait runs past a command's deadline. Requests of any other method are sent once.
+
 A managed cluster upgrade is submitted once. If the daemon changes release
 while `--wait` observes it, the CLI probes the same pinned installation and
 hands off to the new release with only the accepted operation ID, provided that
