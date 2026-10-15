@@ -278,6 +278,11 @@ references are outputs of the databases and buckets skali provisions.
 `skali validate` checks a manifest, and the schema line at the top gives you
 completion and inline errors in any editor with YAML language support.
 
+The [manifest reference](https://skali.dev/docs/manifest) lists every field,
+default, unit, and validation rule for the newest release. For the release
+your cluster runs, `skali skill read manifest` in the project directory prints
+the same reference from that release.
+
 [`examples/`](examples/) has complete projects:
 
 | Example | Shows |
@@ -300,6 +305,7 @@ the release your project's cluster runs.
 
 | Topic | |
 | --- | --- |
+| [Manifest reference](https://skali.dev/docs/manifest) | Every `skali.yaml` field, default, and validation rule |
 | [Databases](docs/databases.md) | Managed PostgreSQL: versions, extensions, isolation, availability |
 | [Buckets](docs/buckets.md) | S3 buckets: quotas, hostnames, browser uploads, topology |
 | [Storage](docs/storage.md) | Persistent volumes and storage drivers |

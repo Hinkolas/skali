@@ -30,11 +30,21 @@ repository. `scripts/assets.mjs` copies them into `static/` before every
   already describe fields the released binaries reject. The newest stable tag
   wins; while there is none, the newest prerelease is used. The build fails
   if a schema's `$id` is not the URL it is served at, so the `$id` is always
-  a working link. Set `SCHEMA_REF` to any git ref to override the tag, e.g.
-  `SCHEMA_REF=HEAD npm run dev` to preview unreleased schema changes.
+  a working link. Set `RELEASE_REF` to any git ref to override the tag, e.g.
+  `RELEASE_REF=HEAD npm run dev` to preview unreleased schema changes.
 
 The build needs the release tags. A shallow clone fails with a hint; fetch
-the tags or set `SCHEMA_REF`.
+the tags or set `RELEASE_REF`.
+
+## Manifest reference
+
+`/docs/manifest` renders `internal/skill/assets/reference/manifest.md`, the
+reference `skali skill read manifest` prints, from the same release as the
+schemas (`src/lib/server/reference.ts`; `RELEASE_REF` applies too). There is
+no copy to keep in sync: edit the reference in place, and the page picks it up
+with the next release. Its complete manifests (fenced as `yaml manifest`) are
+compiled and schema-checked by `internal/skill/content_test.go`, which also
+requires every manifest field to appear in one of them.
 
 The home page reads the tags too (`src/lib/server/release.ts`): the version
 in the navigation is the newest release.
