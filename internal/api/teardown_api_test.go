@@ -23,6 +23,7 @@ func TestTeardownEnvironment(t *testing.T) {
 		map[string]any{"purge": false})
 	require.Equal(t, http.StatusAccepted, status, "%v", body)
 	require.Equal(t, false, body["purge"])
+	require.Equal(t, false, body["existing"])
 	runID, err := uuid.Parse(body["run_id"].(string))
 	require.NoError(t, err)
 
@@ -44,12 +45,26 @@ func TestTeardownEnvironment(t *testing.T) {
 	require.Equal(t, http.StatusOK, status)
 	require.Equal(t, "down", body["state"])
 
-	// Purge escalates; a later down is refused because releasing is
-	// one-way, while repeating the purge stays accepted (idempotent).
+	// Repeating the stop while it runs attaches to the same run.
+	status, body = a.do("POST", "/v1/environments/"+envID+"/teardown", token,
+		map[string]any{"purge": false})
+	require.Equal(t, http.StatusAccepted, status, "%v", body)
+	require.Equal(t, runID.String(), body["run_id"])
+	require.Equal(t, true, body["existing"])
+
+	// Purge escalates and replaces the stop's run; a later down is refused
+	// because releasing is one-way, while repeating the purge stays
+	// accepted and hands out the purge run already running.
 	status, body = a.do("POST", "/v1/environments/"+envID+"/teardown", token,
 		map[string]any{"purge": true})
 	require.Equal(t, http.StatusAccepted, status, "%v", body)
 	require.Equal(t, "releasing", a.targetOf(t, envID).State)
+	require.Equal(t, false, body["existing"])
+	purgeRunID := body["run_id"].(string)
+	require.NotEqual(t, runID.String(), purgeRunID)
+	run, err = a.st.GetRunByID(context.Background(), runID)
+	require.NoError(t, err)
+	require.Equal(t, "cancelled", run.Status, "the purge replaces the stop")
 
 	status, body = a.do("POST", "/v1/environments/"+envID+"/teardown", token,
 		map[string]any{"purge": false})
@@ -59,6 +74,11 @@ func TestTeardownEnvironment(t *testing.T) {
 	status, body = a.do("POST", "/v1/environments/"+envID+"/teardown", token,
 		map[string]any{"purge": true})
 	require.Equal(t, http.StatusAccepted, status, "%v", body)
+	require.Equal(t, purgeRunID, body["run_id"])
+	require.Equal(t, true, body["existing"])
+	purgeRun, err := a.st.GetRunByID(context.Background(), uuid.MustParse(purgeRunID))
+	require.NoError(t, err)
+	require.Equal(t, "running", purgeRun.Status, "neither the refused stop nor the retry touched the purge run")
 }
 
 func TestTeardownRequiresFreshSession(t *testing.T) {

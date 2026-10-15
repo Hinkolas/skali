@@ -160,6 +160,22 @@ func TestEnvRmFollowsTheRemoval(t *testing.T) {
 	require.Equal(t, []string{"teardown:p1-e2:true", "teardown:p1-e1:true"}, install.posts)
 }
 
+// A removal already running (an earlier remove that looked stuck) is
+// followed, not restarted: the server hands out its run and the command
+// ends once the environment is gone.
+func TestEnvRmFollowsARemovalAlreadyRunning(t *testing.T) {
+	install := seedAccessScope(t)
+	install.mu.Lock()
+	install.environment("p1-e2").State = "releasing"
+	install.mu.Unlock()
+
+	out, err := runCommand(t, newEnvCommand(), "", "rm", "staging", "--yes")
+	require.NoError(t, err)
+	require.Contains(t, out, "run run-p1-e2  remove staging")
+	require.Contains(t, out, "the removal was already running; this follows it instead of starting another")
+	require.Contains(t, out, "staging is removed; nothing of it remains")
+}
+
 func TestEnvStopKeepsTheData(t *testing.T) {
 	install := seedAccessScope(t)
 	_, err := runCommand(t, newEnvCommand(), "n\n", "stop", "staging")

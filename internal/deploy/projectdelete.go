@@ -93,7 +93,7 @@ func (s *Service) DeleteProject(ctx context.Context, projectID uuid.UUID, jr *jo
 			deletion.Purges = append(deletion.Purges, EnvironmentPurge{EnvironmentID: env.ID})
 			continue
 		}
-		run, err := s.Teardown(ctx, env.ID, true, jr, actor)
+		run, _, err := s.Teardown(ctx, env.ID, true, jr, actor)
 		if errors.Is(err, ErrEnvironmentNotFound) {
 			continue // purged and deleted in the meantime
 		}

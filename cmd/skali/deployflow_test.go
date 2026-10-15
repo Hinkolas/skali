@@ -670,6 +670,9 @@ func newFakeInstall(t *testing.T) *fakeInstall {
 			if req["purge"] {
 				kind, state = "purge", "releasing"
 			}
+			// An environment already in the requested state stands for a
+			// decision still running: the server hands out its run.
+			existing := env.State == state
 			runID := "run-" + env.ID
 			f.runs[runID] = client.Run{ID: runID, Kind: kind, Status: "succeeded"}
 			env.State = state
@@ -679,7 +682,7 @@ func newFakeInstall(t *testing.T) *fakeInstall {
 				})
 			}
 			w.WriteHeader(http.StatusAccepted)
-			_ = json.NewEncoder(w).Encode(map[string]any{"run_id": runID, "purge": req["purge"]})
+			_ = json.NewEncoder(w).Encode(map[string]any{"run_id": runID, "purge": req["purge"], "existing": existing})
 		default:
 			writeError(w, http.StatusNotFound, "not_found", "not found")
 		}

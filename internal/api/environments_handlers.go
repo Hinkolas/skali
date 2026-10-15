@@ -390,7 +390,7 @@ func (h *environmentsHandlers) teardown(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	user := UserFrom(r.Context())
-	run, err := h.deploy.Teardown(r.Context(), id, req.Purge, h.journal, user.ID.String())
+	run, existing, err := h.deploy.Teardown(r.Context(), id, req.Purge, h.journal, user.ID.String())
 	if err != nil {
 		switch {
 		case errors.Is(err, deploy.ErrEnvironmentNotFound):
@@ -408,9 +408,10 @@ func (h *environmentsHandlers) teardown(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusAccepted, struct {
-		RunID string `json:"run_id"`
-		Purge bool   `json:"purge"`
-	}{run.ID.String(), req.Purge})
+		RunID    string `json:"run_id"`
+		Purge    bool   `json:"purge"`
+		Existing bool   `json:"existing"`
+	}{run.ID.String(), req.Purge, existing})
 }
 
 // DELETE /v1/environments/{id}. The raw delete removes rows only and leaves

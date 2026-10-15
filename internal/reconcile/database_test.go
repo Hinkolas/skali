@@ -60,7 +60,7 @@ func (f *fakeClaims) Ensure(_ context.Context, in ClaimEnsureInput) ([]ClaimStat
 	return states, nil
 }
 
-func (f *fakeClaims) Release(_ context.Context, _ uuid.UUID) (bool, []string, error) {
+func (f *fakeClaims) Release(_ context.Context, _ uuid.UUID) (bool, []ClaimRelease, error) {
 	return true, nil, nil
 }
 

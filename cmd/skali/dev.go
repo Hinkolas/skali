@@ -527,12 +527,12 @@ func runDevDown(command *cobra.Command, purge, yes bool) error {
 func teardownLocalEnvironment(ctx context.Context, out io.Writer, api *client.Client,
 	environmentID, name string, purge bool) (string, error) {
 	style := clirender.StyleFor(out)
-	runID, err := api.TeardownEnvironment(ctx, environmentID, purge)
+	runID, existing, err := api.TeardownEnvironment(ctx, environmentID, purge)
 	if isReauthRequired(err) {
 		if err := reauthLocal(ctx, api); err != nil {
 			return "", err
 		}
-		runID, err = api.TeardownEnvironment(ctx, environmentID, purge)
+		runID, existing, err = api.TeardownEnvironment(ctx, environmentID, purge)
 	}
 	if err != nil {
 		return "", err
@@ -543,6 +543,9 @@ func teardownLocalEnvironment(ctx context.Context, out io.Writer, api *client.Cl
 		verb = "purge"
 	}
 	fmt.Fprintf(out, "%s %s  %s %s\n", style.Dim("run"), style.Bold(runID), verb, name)
+	if existing {
+		fmt.Fprintln(out, style.Dim("already running; this follows it instead of starting another"))
+	}
 	outcome, err := attachRunMode(ctx, out, api, runID, localRemoteName, attachSessionEnds)
 	if err != nil {
 		// The purge epilogue deletes the environment row and every run
