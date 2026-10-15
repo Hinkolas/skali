@@ -11,13 +11,17 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/Hinkolas/skali/internal/bundle"
 	"github.com/Hinkolas/skali/internal/journal"
+	"github.com/Hinkolas/skali/internal/kubernetes"
+	"github.com/Hinkolas/skali/internal/substrate"
 )
 
 // Backup Jobs are deliberately invisible to the reconcile kernel: they
@@ -318,6 +322,9 @@ func (c *Controller) runJob(ctx context.Context, log *journal.StepLog, job *batc
 	job.Spec.ActiveDeadlineSeconds = spec.ActiveDeadlineSeconds
 	job.Spec.TTLSecondsAfterFinished = spec.TTLSecondsAfterFinished
 	job.Spec.Template.Spec = spec.Template.Spec
+	// The pods carry the operation's label too, so stopWorkers finds a
+	// pod that outlives its Job.
+	job.Spec.Template.Labels = map[string]string{backupJobLabel: job.Labels[backupJobLabel]}
 
 	jobs := c.deps.Kube.Clientset.BatchV1().Jobs(job.Namespace)
 	if err := c.deleteJobAndWait(ctx, job.Namespace, job.Name); err != nil {
@@ -438,8 +445,146 @@ func (c *Controller) deleteJob(ctx context.Context, namespace, name string) {
 	if err != nil || live.Labels[backupJobLabel] == "" {
 		return
 	}
-	propagation := metav1.DeletePropagationBackground
-	_ = jobs.Delete(ctx, name, metav1.DeleteOptions{PropagationPolicy: &propagation, Preconditions: &metav1.Preconditions{UID: &live.UID, ResourceVersion: &live.ResourceVersion}})
+	_ = jobs.Delete(ctx, name, foregroundDelete(live.UID, live.ResourceVersion))
+}
+
+// foregroundDelete deletes a Job only after its pods: the Job stays listed,
+// marked for deletion, until every pod of it has terminated.
+func foregroundDelete(uid types.UID, resourceVersion string) metav1.DeleteOptions {
+	propagation := metav1.DeletePropagationForeground
+	options := metav1.DeleteOptions{PropagationPolicy: &propagation, Preconditions: &metav1.Preconditions{UID: &uid}}
+	if resourceVersion != "" {
+		options.Preconditions.ResourceVersion = &resourceVersion
+	}
+	return options
+}
+
+// workerNamespaces are the namespaces an operation's Jobs run in: the
+// platform's for databases, the environment's for volumes.
+func workerNamespaces(environmentID uuid.UUID) []string {
+	return []string{substrate.Namespace, kubernetes.NamespaceName(environmentID.String())}
+}
+
+// workerStopWait bounds how long stopWorkers waits for the workers it
+// deleted to terminate.
+var workerStopWait = 15 * time.Second
+
+// WorkersRunningError: an operation's workers could not be confirmed
+// stopped. Left names what is still there; Err is the Kubernetes error
+// that kept the check from finishing, if any.
+type WorkersRunningError struct {
+	OperationID uuid.UUID
+	Left        []string
+	Err         error
+}
+
+func (e *WorkersRunningError) Error() string {
+	if e.Err != nil {
+		return fmt.Sprintf("its workers could not be confirmed stopped: %v", e.Err)
+	}
+	return "its workers have not stopped: " + strings.Join(e.Left, ", ")
+}
+
+func (e *WorkersRunningError) Is(target error) bool { return target == ErrRestoreStillRunning }
+
+// stopWorkers deletes what is left of an operation's Jobs and their pods
+// and waits, briefly, until none of them remains: no Job of the operation
+// in either namespace, and no pod of it that has not terminated. Only
+// then has the operation stopped writing; a restore's terminal row alone
+// does not prove it, since the cleanup that concludes it does not wait
+// and may have failed. A WorkersRunningError reports what is left after
+// the wait, or the Kubernetes error that prevented the check.
+func (c *Controller) stopWorkers(ctx context.Context, operationID, environmentID uuid.UUID) error {
+	if c.deps.Kube == nil {
+		return nil
+	}
+	deadline := time.Now().Add(workerStopWait)
+	for {
+		err := c.deleteWorkers(ctx, operationID, environmentID)
+		var left []string
+		if err == nil {
+			left, err = c.liveWorkers(ctx, operationID, environmentID)
+		}
+		if err == nil && len(left) == 0 {
+			return nil
+		}
+		if !time.Now().Before(deadline) || ctx.Err() != nil {
+			return &WorkersRunningError{OperationID: operationID, Left: left, Err: err}
+		}
+		select {
+		case <-ctx.Done():
+		case <-time.After(time.Second):
+		}
+	}
+}
+
+// deleteWorkers deletes every Job of the operation in the foreground, then
+// every pod of it still running: one a Job deleted in the background left
+// behind keeps running until it is deleted itself.
+func (c *Controller) deleteWorkers(ctx context.Context, operationID, environmentID uuid.UUID) error {
+	selector := metav1.ListOptions{LabelSelector: backupJobLabel + "=" + operationID.String()}
+	for _, namespace := range workerNamespaces(environmentID) {
+		jobs := c.deps.Kube.Clientset.BatchV1().Jobs(namespace)
+		list, err := jobs.List(ctx, selector)
+		if err != nil {
+			return fmt.Errorf("list jobs in %s: %w", namespace, err)
+		}
+		for _, job := range list.Items {
+			if job.DeletionTimestamp != nil {
+				continue
+			}
+			if err := jobs.Delete(ctx, job.Name, foregroundDelete(job.UID, "")); err != nil && !apierrors.IsNotFound(err) {
+				return fmt.Errorf("delete job %s/%s: %w", namespace, job.Name, err)
+			}
+		}
+		pods := c.deps.Kube.Clientset.CoreV1().Pods(namespace)
+		podList, err := pods.List(ctx, selector)
+		if err != nil {
+			return fmt.Errorf("list pods in %s: %w", namespace, err)
+		}
+		for _, pod := range podList.Items {
+			if podTerminated(&pod) || pod.DeletionTimestamp != nil {
+				continue
+			}
+			if err := pods.Delete(ctx, pod.Name, metav1.DeleteOptions{
+				Preconditions: &metav1.Preconditions{UID: &pod.UID}}); err != nil && !apierrors.IsNotFound(err) {
+				return fmt.Errorf("delete pod %s/%s: %w", namespace, pod.Name, err)
+			}
+		}
+	}
+	return nil
+}
+
+// liveWorkers names the operation's Jobs that still exist and its pods
+// that have not terminated.
+func (c *Controller) liveWorkers(ctx context.Context, operationID, environmentID uuid.UUID) ([]string, error) {
+	selector := metav1.ListOptions{LabelSelector: backupJobLabel + "=" + operationID.String()}
+	var left []string
+	for _, namespace := range workerNamespaces(environmentID) {
+		jobs, err := c.deps.Kube.Clientset.BatchV1().Jobs(namespace).List(ctx, selector)
+		if err != nil {
+			return nil, fmt.Errorf("list jobs in %s: %w", namespace, err)
+		}
+		for _, job := range jobs.Items {
+			left = append(left, "job "+namespace+"/"+job.Name)
+		}
+		pods, err := c.deps.Kube.Clientset.CoreV1().Pods(namespace).List(ctx, selector)
+		if err != nil {
+			return nil, fmt.Errorf("list pods in %s: %w", namespace, err)
+		}
+		for _, pod := range pods.Items {
+			if !podTerminated(&pod) {
+				left = append(left, "pod "+namespace+"/"+pod.Name)
+			}
+		}
+	}
+	return left, nil
+}
+
+// podTerminated reports whether none of the pod's containers can run
+// again: it succeeded or failed.
+func podTerminated(pod *corev1.Pod) bool {
+	return pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed
 }
 
 // deleteJobAndWait removes a leftover Job of the same name and waits until

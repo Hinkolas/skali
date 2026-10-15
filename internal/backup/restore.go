@@ -131,7 +131,8 @@ func (c *Controller) CreateRestore(ctx context.Context, in RestoreInput) (*Creat
 // resumeRevision is the revision a restore accepted now resumes: the
 // target of an active environment, or, for an environment an incomplete
 // restore holds, the revision that restore was to resume. A restore re-run
-// over a failed one is how the environment comes back on complete data.
+// over a failed one is how the environment comes back on complete data,
+// once the failed one has stopped writing.
 func (c *Controller) resumeRevision(ctx context.Context, environmentID uuid.UUID) (uuid.UUID, error) {
 	target, err := c.deps.Store.GetEnvironmentTarget(ctx, environmentID)
 	if err != nil {
@@ -150,6 +151,9 @@ func (c *Controller) resumeRevision(ctx context.Context, environmentID uuid.UUID
 		}
 		if held.RevisionID == nil {
 			return uuid.Nil, errors.New("backup: the incomplete restore carries no revision")
+		}
+		if err := c.restoreStopped(ctx, &held); err != nil {
+			return uuid.Nil, err
 		}
 		return *held.RevisionID, nil
 	case target.State != deploy.EnvironmentStateActive || target.TargetRevisionID == nil:
@@ -307,7 +311,8 @@ func declaresComponent(definition *compiler.ProjectDefinition, component Compone
 // and that the restore covers whatever an incomplete restore holding the
 // environment had set out to rewrite: lifting that hold on a restore that
 // leaves one of those components half-written would bring the environment
-// back on partial data after all.
+// back on partial data after all. That restore must also have stopped
+// writing, or the two would write the same data at once.
 func (c *Controller) verifySnapshot(ctx context.Context, log *journal.StepLog, bctx *backupContext,
 	manifest *Manifest, restored []Component) error {
 	labels := make(map[string]bool, len(restored))
@@ -329,6 +334,13 @@ func (c *Controller) verifySnapshot(ctx context.Context, log *journal.StepLog, b
 			return fmt.Errorf("the incomplete restore %s also rewrote %s, which snapshot %s does not restore; "+
 				"restore a snapshot that holds them, or accept the environment's data as it is",
 				held, strings.Join(uncovered, ", "), manifest.SnapshotID)
+		}
+		heldRow, err := c.deps.Store.GetBackup(ctx, *held)
+		if err != nil {
+			return fmt.Errorf("read the incomplete restore: %w", err)
+		}
+		if err := c.restoreStopped(ctx, &heldRow); err != nil {
+			return fmt.Errorf("the incomplete restore %s may still be writing: %w", held, err)
 		}
 		log.Info(ctx, fmt.Sprintf("replaces the incomplete restore %s", held))
 	}
