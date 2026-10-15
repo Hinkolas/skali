@@ -517,17 +517,20 @@ func (c *Client) GetProject(ctx context.Context, projectID string) (*Project, er
 }
 
 // TeardownEnvironment persists the destructive teardown decision on the
-// server and returns the run to attach to. Requires a fresh session.
-func (c *Client) TeardownEnvironment(ctx context.Context, environmentID string, purge bool) (runID string, err error) {
+// server and returns the run to attach to; existing reports that the same
+// decision was already running and no new run began. Requires a fresh
+// session.
+func (c *Client) TeardownEnvironment(ctx context.Context, environmentID string, purge bool) (runID string, existing bool, err error) {
 	var res struct {
-		RunID string `json:"run_id"`
+		RunID    string `json:"run_id"`
+		Existing bool   `json:"existing"`
 	}
 	err = c.do(ctx, http.MethodPost, "/v1/environments/"+environmentID+"/teardown",
 		map[string]bool{"purge": purge}, &res)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
-	return res.RunID, nil
+	return res.RunID, res.Existing, nil
 }
 
 // Reauthenticate refreshes the session's recent-authentication window with

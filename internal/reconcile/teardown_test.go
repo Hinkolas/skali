@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/Hinkolas/skali/internal/deploy"
 	"github.com/Hinkolas/skali/internal/edge"
+	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/kube"
 	rendering "github.com/Hinkolas/skali/internal/kubernetes"
 	"github.com/Hinkolas/skali/internal/module"
@@ -77,7 +79,7 @@ func TestTeardownDownRemovesWorkloadsAndKeepsData(t *testing.T) {
 	serviceRef, _, _ := f.deployedAndActive(t)
 	deploymentName := f.webDeploymentName(t)
 
-	run, err := f.deploy.Teardown(ctx, f.environmentID, false, f.journal, "tester")
+	run, _, err := f.deploy.Teardown(ctx, f.environmentID, false, f.journal, "tester")
 	require.NoError(t, err)
 
 	target := f.target(t)
@@ -142,7 +144,7 @@ func TestTeardownDownRemovesEnvironmentMiddlewares(t *testing.T) {
 	deploymentName := f.webDeploymentName(t)
 	middlewareRef := f.seedObject(edge.MiddlewareGVK, module.KindIngress, f.namespace, edge.CompressMiddlewareName, "")
 
-	run, err := f.deploy.Teardown(ctx, f.environmentID, false, f.journal, "tester")
+	run, _, err := f.deploy.Teardown(ctx, f.environmentID, false, f.journal, "tester")
 	require.NoError(t, err)
 
 	f.cluster.ops = nil
@@ -186,7 +188,7 @@ func TestTeardownDownIgnoresTerminalReleasePod(t *testing.T) {
 	f.fake.SetPod(f.environmentID, f.namespace, rendering.ReleaseServiceIdentity("web"),
 		"demo-web-release-abc123-x9", "node-a", module.PodStatus{Phase: "Running"})
 
-	run, err := f.deploy.Teardown(ctx, f.environmentID, false, f.journal, "tester")
+	run, _, err := f.deploy.Teardown(ctx, f.environmentID, false, f.journal, "tester")
 	require.NoError(t, err)
 
 	f.cluster.ops = nil
@@ -228,12 +230,12 @@ func TestTeardownPurgeRemovesEverything(t *testing.T) {
 	serviceRef, volumeRef, namespaceRef := f.deployedAndActive(t)
 	deploymentName := f.webDeploymentName(t)
 
-	run, err := f.deploy.Teardown(ctx, f.environmentID, true, f.journal, "tester")
+	run, _, err := f.deploy.Teardown(ctx, f.environmentID, true, f.journal, "tester")
 	require.NoError(t, err)
 	require.Equal(t, deploy.EnvironmentStateReleasing, f.target(t).State)
 
 	// Releasing is one-way: no down, no promote.
-	_, err = f.deploy.Teardown(ctx, f.environmentID, false, f.journal, "tester")
+	_, _, err = f.deploy.Teardown(ctx, f.environmentID, false, f.journal, "tester")
 	require.ErrorIs(t, err, deploy.ErrEnvironmentReleasing)
 	revisionID := f.revisionID
 	rows, err := f.st.SetEnvironmentTarget(ctx, store.SetEnvironmentTargetParams{
@@ -281,7 +283,7 @@ func TestTeardownNeverDeployedSettlesImmediately(t *testing.T) {
 	ctx := context.Background()
 	f.fake.SetFresh()
 
-	run, err := f.deploy.Teardown(ctx, f.environmentID, false, f.journal, "tester")
+	run, _, err := f.deploy.Teardown(ctx, f.environmentID, false, f.journal, "tester")
 	require.NoError(t, err)
 	requeue, err := f.kernel.reconcileEnvironment(ctx, f.environmentID)
 	require.NoError(t, err)
@@ -292,10 +294,175 @@ func TestTeardownNeverDeployedSettlesImmediately(t *testing.T) {
 	require.Equal(t, "succeeded", row.Status)
 
 	// Purging the empty environment removes the row on the first pass.
-	_, err = f.deploy.Teardown(ctx, f.environmentID, true, f.journal, "tester")
+	_, _, err = f.deploy.Teardown(ctx, f.environmentID, true, f.journal, "tester")
 	require.NoError(t, err)
 	_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
 	require.NoError(t, err)
 	_, err = f.st.GetEnvironmentByID(ctx, f.environmentID)
 	require.ErrorIs(t, err, pgx.ErrNoRows)
+}
+
+// scriptedRelease plays back the claim manager's Release answers, one per
+// pass; the last answer repeats.
+type scriptedRelease struct {
+	fakeClaims
+	answers []releaseAnswer
+	calls   int
+}
+
+type releaseAnswer struct {
+	released bool
+	pending  []ClaimRelease
+}
+
+func (s *scriptedRelease) Release(_ context.Context, _ uuid.UUID) (bool, []ClaimRelease, error) {
+	answer := s.answers[min(s.calls, len(s.answers)-1)]
+	s.calls++
+	return answer.released, answer.pending, nil
+}
+
+// stepLines reads one step of a run: its status and every journaled line.
+func (f *kernelFixture) stepLines(t *testing.T, runID uuid.UUID, key string) (string, []string) {
+	t.Helper()
+	ctx := context.Background()
+	tree, err := f.journal.RunTree(ctx, runID)
+	require.NoError(t, err)
+	for _, step := range tree.Steps {
+		if step.Step.Key != key {
+			continue
+		}
+		events, err := f.journal.StepLogs(ctx, step.Step.ID, journal.Cursor{}, 100)
+		require.NoError(t, err)
+		lines := make([]string, 0, len(events))
+		for _, event := range events {
+			lines = append(lines, event.Message)
+		}
+		return step.Step.Status, lines
+	}
+	t.Fatalf("run %s has no step %s", runID, key)
+	return "", nil
+}
+
+// A purge's claim release narrates what each claim waits for: a line per
+// changed reason, nothing for a pass that learned nothing new, and the step
+// closes as succeeded (not skipped) once the claims are gone, before the
+// epilogue deletes the environment.
+func TestTeardownPurgeNarratesClaimRelease(t *testing.T) {
+	t.Parallel()
+	f := newKernelFixture(t, Config{RolloutDeadline: time.Hour})
+	ctx := context.Background()
+	serviceRef, volumeRef, namespaceRef := f.deployedAndActive(t)
+	deploymentName := f.webDeploymentName(t)
+
+	dropping := "dropping the database: database db_data: database is being accessed by other users"
+	claims := &scriptedRelease{answers: []releaseAnswer{
+		{pending: []ClaimRelease{{Service: "databases.data"}, {Service: "buckets.uploads"}}},
+		{pending: []ClaimRelease{{Service: "databases.data"}, {Service: "buckets.uploads"}}},
+		{pending: []ClaimRelease{
+			{Service: "databases.data", Waiting: dropping},
+			{Service: "buckets.uploads", Waiting: "deleting the bucket with its objects"},
+		}},
+		{pending: []ClaimRelease{
+			{Service: "databases.data", Waiting: dropping},
+			{Service: "buckets.uploads", Waiting: "deleting the bucket with its objects"},
+		}},
+		{pending: []ClaimRelease{{Service: "databases.data", Waiting: dropping}}},
+		{released: true},
+	}}
+	f.kernel.deps.Claims = claims
+
+	run, existing, err := f.deploy.Teardown(ctx, f.environmentID, true, f.journal, "tester")
+	require.NoError(t, err)
+	require.False(t, existing)
+
+	for range 5 {
+		_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
+		require.NoError(t, err)
+	}
+	status, lines := f.stepLines(t, run.ID, claimsStepKey)
+	require.Equal(t, "waiting", status, "the step waits from the first pass on")
+	require.Equal(t, []string{
+		"databases.data: releasing; buckets.uploads: releasing",
+		"databases.data: " + dropping + "; buckets.uploads: deleting the bucket with its objects",
+		"databases.data: " + dropping,
+	}, lines, "an unchanged reason journals nothing")
+
+	// Removing again while the purge runs attaches to the same run.
+	again, existing, err := f.deploy.Teardown(ctx, f.environmentID, true, f.journal, "tester")
+	require.NoError(t, err)
+	require.True(t, existing)
+	require.Equal(t, run.ID, again.ID)
+
+	// The claims are released while the namespace still terminates: the
+	// step closes there and then.
+	_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	status, lines = f.stepLines(t, run.ID, claimsStepKey)
+	require.Equal(t, "succeeded", status)
+	require.Equal(t, claimsReleasedLine, lines[len(lines)-1])
+	row, err := f.st.GetRunByID(ctx, run.ID)
+	require.NoError(t, err)
+	require.Equal(t, "running", row.Status, "repeated removal never cancelled the run")
+
+	f.fake.Remove(f.workloadRef(deploymentName))
+	f.fake.Remove(f.podRef())
+	f.fake.Remove(serviceRef)
+	f.fake.Remove(volumeRef)
+	f.fake.Remove(namespaceRef)
+	_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	_, err = f.st.GetEnvironmentByID(ctx, f.environmentID)
+	require.ErrorIs(t, err, pgx.ErrNoRows)
+}
+
+// A claims wait the last claim pass resolved closes as succeeded in the
+// settled pass itself: the purge epilogue must not record it skipped.
+func TestTeardownPurgeSettledPassResolvesClaimWait(t *testing.T) {
+	t.Parallel()
+	f := newKernelFixture(t, Config{RolloutDeadline: time.Hour})
+	ctx := context.Background()
+	serviceRef, volumeRef, namespaceRef := f.deployedAndActive(t)
+	deploymentName := f.webDeploymentName(t)
+	f.kernel.deps.Claims = &scriptedRelease{answers: []releaseAnswer{
+		{pending: []ClaimRelease{{Service: "databases.data", Waiting: "waiting for the pool to settle before dropping the roles"}}},
+	}}
+
+	run, _, err := f.deploy.Teardown(ctx, f.environmentID, true, f.journal, "tester")
+	require.NoError(t, err)
+	_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	status, _ := f.stepLines(t, run.ID, claimsStepKey)
+	require.Equal(t, "waiting", status)
+
+	// The last claim pass released everything between environment passes;
+	// the next pass finds the snapshot settled and runs the epilogue, which
+	// cascades the run away. An attached client sees the step close on its
+	// live stream before that.
+	tree, err := f.journal.RunTree(ctx, run.ID)
+	require.NoError(t, err)
+	var stepID uuid.UUID
+	for _, step := range tree.Steps {
+		if step.Step.Key == claimsStepKey {
+			stepID = step.Step.ID
+		}
+	}
+	subscription, err := f.journal.Subscribe(ctx, stepID, journal.Cursor{AttemptNumber: 1 << 30})
+	require.NoError(t, err)
+	defer subscription.Cancel()
+
+	f.fake.Remove(f.workloadRef(deploymentName))
+	f.fake.Remove(f.podRef())
+	f.fake.Remove(serviceRef)
+	f.fake.Remove(volumeRef)
+	f.fake.Remove(namespaceRef)
+	_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	_, err = f.st.GetEnvironmentByID(ctx, f.environmentID)
+	require.ErrorIs(t, err, pgx.ErrNoRows)
+	select {
+	case event := <-subscription.Events:
+		require.Equal(t, claimsReleasedLine, event.Message)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the settled pass did not close the claims step")
+	}
 }

@@ -71,9 +71,9 @@ type ClaimManager interface {
 	// keyed by dotted service name ("databases.data").
 	Ensure(ctx context.Context, in ClaimEnsureInput) ([]ClaimState, error)
 	// Release starts (and re-drives) the teardown of every claim of a
-	// purging environment, reporting completion and, while unfinished, what
-	// is still going.
-	Release(ctx context.Context, environmentID uuid.UUID) (released bool, detail []string, err error)
+	// purging environment, reporting completion and, while unfinished, each
+	// claim still going with what its teardown waits for.
+	Release(ctx context.Context, environmentID uuid.UUID) (released bool, pending []ClaimRelease, err error)
 	// Outputs reports what rendering needs from the environment's live
 	// claims.
 	Outputs(ctx context.Context, environmentID uuid.UUID) (ClaimOutputs, error)
@@ -147,6 +147,15 @@ type ClaimState struct {
 	// because the pass did not allow its release. It gates nothing; the
 	// kernel only learns that activating the revision leaves work behind.
 	Retained bool
+}
+
+// ClaimRelease is one claim of a purging environment that is not released
+// yet.
+type ClaimRelease struct {
+	Service string // dotted form, e.g. "databases.data"
+	// Waiting is the claim teardown's current reason, empty until its
+	// first teardown pass recorded one.
+	Waiting string
 }
 
 // Deps wires the kernel. Cluster and Source are nil in API-only mode (no

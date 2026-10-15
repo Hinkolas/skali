@@ -94,7 +94,7 @@ func TestEnvironmentHealthEvictedOnTeardown(t *testing.T) {
 			ctx := context.Background()
 			f.deployHealthy(t)
 
-			_, err := f.deploy.Teardown(ctx, f.environmentID, purge, f.journal, "tester")
+			_, _, err := f.deploy.Teardown(ctx, f.environmentID, purge, f.journal, "tester")
 			require.NoError(t, err)
 			_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
 			require.NoError(t, err)

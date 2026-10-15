@@ -3007,6 +3007,10 @@ paths:
         namespace including its volumes and the environment itself with all
         values, revisions, and history are destroyed; this is one-way. The
         run's kind is `teardown` without purge and `purge` with it.
+        Repeating a decision whose run is still running changes nothing and
+        returns that run with `existing` set, so a retry attaches to the
+        teardown in progress instead of restarting it. A purge requested
+        while a stop runs replaces the stop.
         Requires recent authentication (sudo mode).
       tags: [environments]
       requestBody:
@@ -3024,10 +3028,13 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [run_id, purge]
+                required: [run_id, purge, existing]
                 properties:
                   run_id: { type: string, format: uuid }
                   purge: { type: boolean }
+                  existing:
+                    type: boolean
+                    description: The run was already executing this decision; no new run began.
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/ReauthRequired" }
         "404": { $ref: "#/components/responses/NotFound" }

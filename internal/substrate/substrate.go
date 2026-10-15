@@ -366,14 +366,20 @@ func (c *Controller) WaitingReason(claimID uuid.UUID) string {
 	return c.waiting[claimID]
 }
 
-func (c *Controller) setWaiting(claimID uuid.UUID, reason string) {
+// setWaiting records a claim's waiting reason, clearing it when empty, and
+// reports whether the reason changed.
+func (c *Controller) setWaiting(claimID uuid.UUID, reason string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.waiting[claimID] == reason {
+		return false
+	}
 	if reason == "" {
 		delete(c.waiting, claimID)
-		return
+	} else {
+		c.waiting[claimID] = reason
 	}
-	c.waiting[claimID] = reason
+	return true
 }
 
 // extensionsPendingReason is what a provisioned claim reports while CNPG

@@ -61,7 +61,10 @@ func (k *Kernel) teardownEnvironment(ctx context.Context, state store.GetEnviron
 		}
 		// Purge epilogue: conclude the run first, because deleting the row
 		// cascades the journal away with everything else. The journal is
-		// explanatory only, so losing it changes nothing.
+		// explanatory only, so losing it changes nothing. A claims wait no
+		// pass resolved yet closes as done, not skipped: settled means the
+		// claim projections are gone.
+		attachment.resolveWait(ctx, claimsStepKey, claimsStepTitle, []string{claimsReleasedLine})
 		attachment.finish(ctx, journal.RunSucceeded, "")
 		if err := k.deps.Deploy.DeleteEnvironment(ctx, environmentID); err != nil {
 			return 0, fmt.Errorf("reconcile: delete released environment: %w", err)
@@ -179,23 +182,46 @@ func (k *Kernel) teardownEnvironment(ctx context.Context, state store.GetEnviron
 	return requeueHealthCheck, nil
 }
 
+// The step a purge's claim release journals under.
+const (
+	claimsStepKey      = "delete:claims"
+	claimsStepTitle    = "Release infrastructure claims"
+	claimsReleasedLine = "all claims released"
+)
+
 // teardownClaims drives claim teardown through the claim manager. The
 // snapshot-settled gate above already guarantees the purge cannot conclude
-// while claim projections remain; this renders the wait visibly.
+// while claim projections remain; this renders the wait visibly, naming
+// what each claim's teardown waits for. waitStep appends a line only when
+// that changes, so a long wait narrates its transitions, not its passes.
 func (k *Kernel) teardownClaims(ctx context.Context, attachment *runAttachment, environmentID uuid.UUID) {
 	if k.deps.Claims == nil {
 		return
 	}
-	released, detail, err := k.deps.Claims.Release(ctx, environmentID)
+	released, pending, err := k.deps.Claims.Release(ctx, environmentID)
 	if err != nil {
 		slog.Warn("reconcile: release claims", "environment", environmentID, "error", err)
 		return
 	}
 	if released {
+		attachment.resolveWait(ctx, claimsStepKey, claimsStepTitle, []string{claimsReleasedLine})
 		return
 	}
-	attachment.waitStep(ctx, "delete:claims", "Release infrastructure claims",
-		strings.Join(detail, "; "))
+	attachment.waitStep(ctx, claimsStepKey, claimsStepTitle, describeClaimReleases(pending))
+}
+
+// describeClaimReleases renders the claims still releasing as one line,
+// each with its teardown's reason.
+func describeClaimReleases(pending []ClaimRelease) string {
+	parts := make([]string, 0, len(pending))
+	for _, claim := range pending {
+		reason := claim.Waiting
+		if reason == "" {
+			reason = "releasing"
+		}
+		parts = append(parts, claim.Service+": "+reason)
+	}
+	return strings.Join(parts, "; ")
 }
 
 // teardownSettled reports whether the destructive decision has been fully

@@ -410,7 +410,8 @@ func newEnvStopCommand() *cobra.Command {
 		Long: "Takes the running workloads down. The namespace with its volumes, the values,\n" +
 			"revisions, and history stay, and the next deploy starts the environment\n" +
 			"again. The command follows the stop until it is done; --detach returns\n" +
-			"right away. Environment admin and a recent login are required.",
+			"right away, and running it again while the stop is in progress follows that\n" +
+			"stop. Environment admin and a recent login are required.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
 			ctx := command.Context()
@@ -440,14 +441,18 @@ func newEnvStopCommand() *cobra.Command {
 				}
 			}
 			var runID string
+			var existing bool
 			err = withReauth(ctx, out, in, scope.api, func() (err error) {
-				runID, err = scope.api.TeardownEnvironment(ctx, environment.ID, false)
+				runID, existing, err = scope.api.TeardownEnvironment(ctx, environment.ID, false)
 				return err
 			})
 			if err != nil {
 				return err
 			}
 			fmt.Fprintf(out, "%s %s  stop %s\n", style.Dim("run"), style.Bold(runID), environment.Name)
+			if existing {
+				fmt.Fprintln(out, style.Dim("the stop was already running; this follows it instead of starting another"))
+			}
 			if detach {
 				fmt.Fprintln(out, style.Dim("follow it with "+runAttachHint(remote, runID)))
 				return nil
@@ -478,8 +483,9 @@ func newEnvRmCommand() *cobra.Command {
 		Long: "Purges the environment: the namespace with its volumes, the databases and\n" +
 			"buckets with their data, and the environment with all values, revisions, and\n" +
 			"history are deleted. This is one-way. The command follows the removal until\n" +
-			"the environment is gone; --detach returns right away. Environment admin and a\n" +
-			"recent login are required.",
+			"the environment is gone; --detach returns right away, and running it again\n" +
+			"while the removal is in progress follows that removal instead of restarting\n" +
+			"it. Environment admin and a recent login are required.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
 			ctx := command.Context()
@@ -510,14 +516,18 @@ func newEnvRmCommand() *cobra.Command {
 				}
 			}
 			var runID string
+			var existing bool
 			err = withReauth(ctx, out, in, scope.api, func() (err error) {
-				runID, err = scope.api.TeardownEnvironment(ctx, environment.ID, true)
+				runID, existing, err = scope.api.TeardownEnvironment(ctx, environment.ID, true)
 				return err
 			})
 			if err != nil {
 				return err
 			}
 			fmt.Fprintf(out, "%s %s  remove %s\n", style.Dim("run"), style.Bold(runID), environment.Name)
+			if existing {
+				fmt.Fprintln(out, style.Dim("the removal was already running; this follows it instead of starting another"))
+			}
 			if detach {
 				fmt.Fprintln(out, style.Dim("follow it with "+runAttachHint(remote, runID)))
 				return nil

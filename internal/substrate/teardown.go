@@ -14,6 +14,7 @@ import (
 	"github.com/Hinkolas/skali/internal/kube"
 	"github.com/Hinkolas/skali/internal/kubernetes"
 	"github.com/Hinkolas/skali/internal/observe"
+	"github.com/Hinkolas/skali/internal/reconcile"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/substrate/cnpg"
 )
@@ -24,8 +25,8 @@ var secretGVK = schema.GroupVersionKind{Version: "v1", Kind: "Secret"}
 // claim of the environment enters releasing (the destructive gate ran at
 // deploy open; environment purge is itself a persisted destructive
 // decision). It reports whether all claims are fully released and, while
-// not, which are still going.
-func (c *Controller) Release(ctx context.Context, environmentID uuid.UUID) (bool, []string, error) {
+// not, which are still going and what each teardown waits for.
+func (c *Controller) Release(ctx context.Context, environmentID uuid.UUID) (bool, []reconcile.ClaimRelease, error) {
 	live, err := c.deps.DB.ListEnvironmentClaims(ctx, environmentID)
 	if err != nil {
 		return false, nil, err
@@ -37,26 +38,72 @@ func (c *Controller) Release(ctx context.Context, environmentID uuid.UUID) (bool
 	if len(live)+len(liveBuckets) == 0 {
 		return true, nil, nil
 	}
-	detail := make([]string, 0, len(live)+len(liveBuckets))
+	pending := make([]reconcile.ClaimRelease, 0, len(live)+len(liveBuckets))
 	for _, row := range live {
 		released, err := c.deps.DB.ReleaseClaim(ctx, row.ID)
 		if err != nil {
 			return false, nil, err
 		}
+		name := databaseClaimName(row)
+		if released.Phase != row.Phase {
+			logReleaseStarted(name, row.ID, row.EnvironmentID, released.Phase)
+		}
 		c.EnqueueClaim(row.ID, reasonTeardown)
 		c.publishClaim(*released)
-		detail = append(detail, "releasing databases."+row.ServiceKey)
+		pending = append(pending, reconcile.ClaimRelease{Service: name, Waiting: c.WaitingReason(row.ID)})
 	}
 	for _, row := range liveBuckets {
 		released, err := c.deps.DB.ReleaseBucketClaim(ctx, row.ID)
 		if err != nil {
 			return false, nil, err
 		}
+		name := bucketClaimName(row)
+		if released.Phase != row.Phase {
+			logReleaseStarted(name, row.ID, row.EnvironmentID, released.Phase)
+		}
 		c.EnqueueBucketClaim(row.ID, reasonTeardown)
 		c.publishBucketClaim(*released)
-		detail = append(detail, "releasing buckets."+row.ServiceKey)
+		pending = append(pending, reconcile.ClaimRelease{Service: name, Waiting: c.WaitingReason(row.ID)})
 	}
-	return false, detail, nil
+	return false, pending, nil
+}
+
+func databaseClaimName(row store.DatabaseClaim) string { return "databases." + row.ServiceKey }
+func bucketClaimName(row store.BucketClaim) string     { return "buckets." + row.ServiceKey }
+
+// Claim release logs one line per transition: started, each changed
+// waiting reason, released. A reason repeated across passes logs nothing.
+func logReleaseStarted(name string, id uuid.UUID, environmentID *uuid.UUID, phase string) {
+	slog.Info("substrate: claim release started", "claim", name, "claim_id", id,
+		"environment", environmentString(environmentID), "phase", phase)
+}
+
+func logReleased(name string, id uuid.UUID, environmentID *uuid.UUID) {
+	slog.Info("substrate: claim released", "claim", name, "claim_id", id,
+		"environment", environmentString(environmentID))
+}
+
+// environmentString renders a claim's environment for a log line; system
+// claims have none.
+func environmentString(environmentID *uuid.UUID) string {
+	if environmentID == nil {
+		return ""
+	}
+	return environmentID.String()
+}
+
+// releaseWaiting records a releasing claim's waiting reason. A changed
+// reason is logged and pokes the claim's environment, so the purge's
+// teardown step shows it without waiting out the environment's requeue.
+func (c *Controller) releaseWaiting(name string, id uuid.UUID, environmentID *uuid.UUID, reason string) {
+	if !c.setWaiting(id, reason) {
+		return
+	}
+	slog.Info("substrate: claim release waiting", "claim", name, "claim_id", id,
+		"environment", environmentString(environmentID), "reason", reason)
+	if environmentID != nil && c.deps.Enqueue != nil {
+		c.deps.Enqueue(*environmentID)
+	}
 }
 
 // teardownClaim walks a releasing claim to released: the logical database
@@ -97,7 +144,7 @@ func (c *Controller) teardownClaim(ctx context.Context, row store.DatabaseClaim)
 	if err := c.execPrimarySQL(ctx, *pool, "postgres", cnpg.TerminateSessionsSQL(tenantRoleNames(*tenant))); err != nil {
 		var waiting errWaiting
 		if errors.As(err, &waiting) {
-			c.setWaiting(row.ID, waiting.reason)
+			c.releaseWaiting(databaseClaimName(row), row.ID, row.EnvironmentID, waiting.reason)
 			return requeueWait, nil
 		}
 		return 0, err
@@ -107,7 +154,7 @@ func (c *Controller) teardownClaim(ctx context.Context, row store.DatabaseClaim)
 		return 0, err
 	}
 	if !dropped {
-		c.setWaiting(row.ID, "dropping the database: "+reason)
+		c.releaseWaiting(databaseClaimName(row), row.ID, row.EnvironmentID, "dropping the database: "+reason)
 		return requeueWait, nil
 	}
 	if _, err := c.deps.Cluster.Delete(ctx, kube.ObjectRef{
@@ -143,7 +190,7 @@ func (c *Controller) teardownClaim(ctx context.Context, row store.DatabaseClaim)
 	if err != nil {
 		var waiting errWaiting
 		if errors.As(err, &waiting) {
-			c.setWaiting(row.ID, waiting.reason)
+			c.releaseWaiting(databaseClaimName(row), row.ID, row.EnvironmentID, waiting.reason)
 			return requeueWait, nil
 		}
 		return 0, err
@@ -170,6 +217,7 @@ func (c *Controller) finishClaimRelease(ctx context.Context, row store.DatabaseC
 	if err := c.deps.DB.CompleteClaimRelease(ctx, row.ID); err != nil {
 		return err
 	}
+	logReleased(databaseClaimName(row), row.ID, row.EnvironmentID)
 	c.setWaiting(row.ID, "")
 	c.deps.Observed.Remove(observe.ClaimRef(row.ID))
 	if row.EnvironmentID != nil && c.deps.Enqueue != nil {

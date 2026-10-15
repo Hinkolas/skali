@@ -381,13 +381,16 @@ func (c *Controller) teardownBucketClaim(ctx context.Context, row store.BucketCl
 			if reason == "" {
 				reason = "waiting for the object store"
 			}
-			c.setWaiting(row.ID, reason+"; the bucket releases once it serves")
+			c.releaseWaiting(bucketClaimName(row), row.ID, row.EnvironmentID, reason+"; the bucket releases once it serves")
 			return requeueWait, nil
 		}
 		if c.deps.Seaweed == nil {
-			c.setWaiting(row.ID, "the object-storage substrate is not available")
+			c.releaseWaiting(bucketClaimName(row), row.ID, row.EnvironmentID, "the object-storage substrate is not available")
 			return requeueWait, nil
 		}
+		// The bucket delete walks every directory on the filer and blocks
+		// this pass for as long as that takes; name it while it runs.
+		c.releaseWaiting(bucketClaimName(row), row.ID, row.EnvironmentID, "deleting the bucket with its objects")
 		if err := c.deps.Seaweed.DeleteIdentity(ctx, allocation.BucketName); err != nil {
 			return 0, err
 		}
@@ -429,6 +432,7 @@ func (c *Controller) finishBucketClaimRelease(ctx context.Context, row store.Buc
 		return err
 	}
 	c.pokeProbe()
+	logReleased(bucketClaimName(row), row.ID, row.EnvironmentID)
 	c.setWaiting(row.ID, "")
 	if c.deps.Observed != nil {
 		c.deps.Observed.Remove(observe.BucketClaimRef(row.ID))
