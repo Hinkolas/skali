@@ -25,8 +25,9 @@ type projectStreamHandlers struct {
 // GET /v1/projects/{id}/stream (SSE)
 //
 // Payload-free change signals for everything a project's pages show:
-// "ready" on connect (a reconnecting client re-reads, since it may have
-// missed changes), "changed" when the project, its draft, its environments,
+// "ready" on connect (the client re-reads: there is no cursor, so changes
+// since its last read, or while it was disconnected, are otherwise lost),
+// "changed" when the project, its draft, its environments,
 // their settings, values, or access change or a run starts or finishes in
 // an environment the caller can read, and a final "deleted" once the
 // project is gone or "revoked" once the caller lost access to it.
