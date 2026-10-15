@@ -80,6 +80,13 @@ type Client struct {
 	observedVersion string
 	onAdopt         func(observed string)
 	onVersion       func(observed string)
+	// answered records that the master answered a request at all, which
+	// turns a later refused connection from "nothing listens there" into
+	// "skalid is restarting"; set by checkInstance, read by transientTransport.
+	answered bool
+
+	// reads paces the retries of idempotent reads; see read.
+	reads readRetry
 }
 
 // Master reports the base URL this client talks to.
@@ -95,6 +102,7 @@ func New(master, token string, caller Caller) *Client {
 		http:      &http.Client{Timeout: 15 * time.Second, Transport: transport},
 		streaming: &http.Client{Transport: transport},
 		tls:       tlsConfig,
+		reads:     defaultReadRetry,
 	}
 }
 
@@ -203,12 +211,14 @@ func (c *Client) OnVersion(fn func(observed string)) {
 	c.onVersion = fn
 }
 
-// checkInstance records the response's platform headers and enforces the
-// install-identity pin before publishing version observations. A response
-// from a different installation cannot change the selected release.
+// checkInstance notes that the master answered, records the response's
+// platform headers, and enforces the install-identity pin before
+// publishing version observations. A response from a different
+// installation cannot change the selected release.
 func (c *Client) checkInstance(res *http.Response) error {
 	observed, release := res.Header.Get(InstanceHeader), res.Header.Get(VersionHeader)
 	c.mu.Lock()
+	c.answered = true
 	pinned, adopt, notify := c.pinned, c.onAdopt, c.onVersion
 	if observed != "" {
 		c.observed = observed
@@ -411,19 +421,32 @@ func (c *Client) Health(ctx context.Context) error {
 }
 
 // do sends one JSON request and decodes either the response into out or the
-// error envelope into an *APIError.
+// error envelope into an *APIError. A GET is an idempotent read and rides
+// out transient failures (see read); every other method is sent exactly
+// once, so a mutation is never replayed.
 func (c *Client) do(ctx context.Context, method, path string, body, out any) error {
+	if method == http.MethodGet && body == nil {
+		return c.read(ctx, path, out)
+	}
+	_, err := c.send(ctx, method, path, body, out)
+	return err
+}
+
+// send makes one attempt at a JSON request. transient reports a failure
+// that repeating the same request may get past: a broken connection or a
+// gateway error the edge answered while skalid was away.
+func (c *Client) send(ctx context.Context, method, path string, body, out any) (transient bool, err error) {
 	var reqBody io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
-			return fmt.Errorf("client: encode request: %w", err)
+			return false, fmt.Errorf("client: encode request: %w", err)
 		}
 		reqBody = bytes.NewReader(b)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, c.base+path, reqBody)
 	if err != nil {
-		return fmt.Errorf("client: %w", err)
+		return false, fmt.Errorf("client: %w", err)
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -432,28 +455,28 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 
 	res, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("client: %s unreachable: %w", c.base, err)
+		return c.transientTransport(ctx, err), fmt.Errorf("client: %s unreachable: %w", c.base, err)
 	}
 	defer res.Body.Close()
 
 	if err := c.checkInstance(res); err != nil {
-		return err
+		return false, err
 	}
 
 	raw, err := io.ReadAll(io.LimitReader(res.Body, 1<<20))
 	if err != nil {
-		return fmt.Errorf("client: read response: %w", err)
+		return c.transientTransport(ctx, err), fmt.Errorf("client: read response: %w", err)
 	}
 
 	if res.StatusCode >= 400 {
-		return decodeErrorEnvelope(res.StatusCode, raw)
+		return edgeUnavailable(res.StatusCode, raw), decodeErrorEnvelope(res.StatusCode, raw)
 	}
 
 	if out == nil || len(raw) == 0 {
-		return nil
+		return false, nil
 	}
 	if err := json.Unmarshal(raw, out); err != nil {
-		return fmt.Errorf("client: decode response: %w", err)
+		return false, fmt.Errorf("client: decode response: %w", err)
 	}
-	return nil
+	return false, nil
 }
