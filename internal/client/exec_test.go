@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -232,4 +233,36 @@ func TestExecRunContextCancel(t *testing.T) {
 	}()
 	err = session.Run(ctx, nil, nil, nil, nil)
 	require.ErrorIs(t, err, context.Canceled)
+}
+
+// A client trusting extra roots shares its TLS config between the HTTP
+// transport and the exec dialer. net/http adds h2 to that config on its
+// first request; the WebSocket handshake must still offer only HTTP/1.1,
+// or an HTTP/2 edge answers the upgrade in frames gorilla cannot read.
+func TestExecAfterRequestOnHTTP2Edge(t *testing.T) {
+	upgrader := websocket.Upgrader{}
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !websocket.IsWebSocketUpgrade(r) {
+			require.Equal(t, 2, r.ProtoMajor, "regular requests negotiate HTTP/2")
+			_, _ = w.Write([]byte(`{"user":{"id":"u1","email":"dev@skali.localhost"}}`))
+			return
+		}
+		conn, err := upgrader.Upgrade(w, r, nil)
+		require.NoError(t, err)
+		defer conn.Close()
+		sendControl(t, conn, execproto.Control{Type: execproto.ControlExit})
+	}))
+	srv.EnableHTTP2 = true
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+	rootPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw})
+
+	c := New(srv.URL, "tok", Caller{RootCAs: rootPEM})
+	_, err := c.CurrentSession(context.Background())
+	require.NoError(t, err)
+
+	session, err := c.Exec(context.Background(), "env-1", ExecOptions{Service: "web"})
+	require.NoError(t, err)
+	defer session.Close()
+	require.NoError(t, session.Run(context.Background(), nil, nil, nil, nil))
 }
