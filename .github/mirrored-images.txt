@@ -1,11 +1,13 @@
 # Images that CI and the release pull, copied by .github/workflows/mirror.yml
-# to ghcr.io/hinkolas/mirror/<name>:<tag> with the same digest. One source per
-# line, pinned by tag and digest; the copy keeps the last path segment and the
-# tag, so ghcr.io/hinkolas/mirror/postgres:17.11@sha256:... below.
+# to ghcr.io/hinkolas/mirror/<name>:<tag> with the same digest. One Docker Hub
+# image per line, pinned by tag and digest; the copy keeps the last path
+# segment and the tag, so ghcr.io/hinkolas/mirror/postgres:17.11@sha256:...
+# below. The workflow pulls each digest from the first of Google's mirror,
+# Docker Hub, and (for official images) ECR Public that serves it.
 #
 # To bump an image: change its line here and push, wait for the mirror run,
 # then update the references (ci.yml, release.yml, the release Dockerfile).
-public.ecr.aws/docker/library/postgres:17.11@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3
-public.ecr.aws/docker/library/alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
-mirror.gcr.io/tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
-mirror.gcr.io/moby/buildkit:v0.33.1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
+library/postgres:17.11@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3
+library/alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+moby/buildkit:v0.33.1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea

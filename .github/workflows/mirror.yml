@@ -48,26 +48,43 @@ jobs:
             sum=$(skopeo inspect --raw "docker://$1" </dev/null 2>/dev/null | sha256sum) || return 0
             printf 'sha256:%s' "${sum%% *}"
           }
-          mapfile -t sources < <(grep -vE '^[[:space:]]*(#|$)' .github/mirrored-images.txt)
-          for source in "${sources[@]}"; do
-            digest=${source##*@}
-            ref=${source%@*}
+          mapfile -t images < <(grep -vE '^[[:space:]]*(#|$)' .github/mirrored-images.txt)
+          for image in "${images[@]}"; do
+            digest=${image##*@}
+            ref=${image%@*}
             case "$ref" in
               */*:*) ;;
-              *) echo "::error::$source: want registry/name:tag@sha256:..."; exit 1 ;;
+              *) echo "::error::$image: want namespace/name:tag@sha256:..."; exit 1 ;;
             esac
             target=ghcr.io/hinkolas/mirror/${ref##*/}
-            # skopeo refuses a tag and a digest together: pull by digest.
-            pull=${ref%:*}@$digest
             if [ "$(digest_of "$target")" = "$digest" ]; then
               echo "$target is current"
               continue
             fi
-            echo "Copying $pull to $target"
-            # --all keeps every platform and attestation in the index;
-            # --preserve-digests fails instead of rewriting any manifest.
-            skopeo copy --all --preserve-digests --retry-times 5 \
-              "docker://$pull" "docker://$target" </dev/null
+            # The same digest from several registries, so one refusing
+            # anonymous pulls does not stop the copy. skopeo refuses a tag
+            # and a digest together: pull by digest.
+            repo=${ref%:*}
+            pulls=("mirror.gcr.io/$repo@$digest" "docker.io/$repo@$digest")
+            case "$repo" in
+              library/*) pulls+=("public.ecr.aws/docker/$repo@$digest") ;;
+            esac
+            copied=false
+            for pull in "${pulls[@]}"; do
+              echo "Copying $pull to $target"
+              # --all keeps every platform and attestation in the index;
+              # --preserve-digests fails instead of rewriting any manifest.
+              if skopeo copy --all --preserve-digests --retry-times 2 \
+                "docker://$pull" "docker://$target" </dev/null; then
+                copied=true
+                break
+              fi
+              echo "::warning::could not copy $pull"
+            done
+            if ! $copied; then
+              echo "::error::no registry served $image"
+              exit 1
+            fi
             got=$(digest_of "$target")
             if [ "$got" != "$digest" ]; then
               echo "::error::$target resolves to ${got:-nothing}, want $digest"
