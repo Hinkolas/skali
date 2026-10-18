@@ -68,8 +68,10 @@ type Client struct {
 	// streaming has no client timeout: SSE subscriptions outlive any
 	// sensible request deadline.
 	streaming *http.Client
-	// tls is the verification config every transport shares (nil for the
-	// system defaults); the exec WebSocket dialer reuses it.
+	// tls is the verification config every transport starts from (nil for
+	// the system defaults). Each transport takes its own clone: net/http
+	// adds h2 to its config on first use, which the exec WebSocket dialer
+	// must never offer.
 	tls *tls.Config
 
 	// Install-identity pinning and version observation state; see
@@ -150,7 +152,7 @@ func localhostTransport(tlsConfig *tls.Config) *http.Transport {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.DialContext = localhostDialContext()
 	if tlsConfig != nil {
-		transport.TLSClientConfig = tlsConfig
+		transport.TLSClientConfig = tlsConfig.Clone()
 	}
 	return transport
 }

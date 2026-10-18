@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -97,11 +98,18 @@ func (c *Client) Exec(ctx context.Context, environmentID string, opts ExecOption
 	header := http.Header{}
 	c.stamp(header)
 
+	// The upgrade only exists in HTTP/1.1: an edge that negotiates h2
+	// through ALPN answers it in frames gorilla cannot read.
+	var tlsConfig *tls.Config
+	if c.tls != nil {
+		tlsConfig = c.tls.Clone()
+		tlsConfig.NextProtos = []string{"http/1.1"}
+	}
 	// Never c.http: its 15s client timeout would sever the session. The
 	// dialer bounds only the handshake.
 	dialer := &websocket.Dialer{
 		NetDialContext:   localhostDialContext(),
-		TLSClientConfig:  c.tls,
+		TLSClientConfig:  tlsConfig,
 		HandshakeTimeout: execHandshakeTimeout,
 		Proxy:            http.ProxyFromEnvironment,
 		ReadBufferSize:   32 * 1024,
