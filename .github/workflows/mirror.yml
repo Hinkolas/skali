@@ -1,0 +1,93 @@
+name: mirror
+
+# Copies the images in .github/mirrored-images.txt to ghcr.io/hinkolas/mirror
+# with their digests unchanged. CI and the release pull only those copies:
+# anonymous pulls from Docker Hub and ECR Public share their limit with every
+# other job on the runner's IP and failed whole runs before a test started.
+# Only this workflow pulls from a public registry, so a refusal here is
+# rerun later instead of failing a pull request or a release.
+#
+# It runs whenever the list changes, on any branch, so a branch that bumps an
+# image gets its copy before its CI needs it. Images already copied are
+# skipped, so a run only pulls what is new.
+on:
+  push:
+    paths:
+      - .github/mirrored-images.txt
+      - .github/workflows/mirror.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write # push to ghcr.io
+
+concurrency:
+  group: mirror
+  cancel-in-progress: false
+
+jobs:
+  copy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Log in to ghcr.io
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GITHUB_TOKEN" | skopeo login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+      - name: Copy images
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The digest of what a reference resolves to, empty if it does not.
+          digest_of() {
+            # Hash the bytes straight from the pipe: $(...) would strip a
+            # trailing newline and change the digest.
+            local sum
+            sum=$(skopeo inspect --raw "docker://$1" </dev/null 2>/dev/null | sha256sum) || return 0
+            printf 'sha256:%s' "${sum%% *}"
+          }
+          mapfile -t images < <(grep -vE '^[[:space:]]*(#|$)' .github/mirrored-images.txt)
+          for image in "${images[@]}"; do
+            digest=${image##*@}
+            ref=${image%@*}
+            case "$ref" in
+              */*:*) ;;
+              *) echo "::error::$image: want namespace/name:tag@sha256:..."; exit 1 ;;
+            esac
+            target=ghcr.io/hinkolas/mirror/${ref##*/}
+            if [ "$(digest_of "$target")" = "$digest" ]; then
+              echo "$target is current"
+              continue
+            fi
+            # The same digest from several registries, so one refusing
+            # anonymous pulls does not stop the copy. skopeo refuses a tag
+            # and a digest together: pull by digest.
+            repo=${ref%:*}
+            pulls=("mirror.gcr.io/$repo@$digest" "docker.io/$repo@$digest")
+            case "$repo" in
+              library/*) pulls+=("public.ecr.aws/docker/$repo@$digest") ;;
+            esac
+            copied=false
+            for pull in "${pulls[@]}"; do
+              echo "Copying $pull to $target"
+              # --all keeps every platform and attestation in the index;
+              # --preserve-digests fails instead of rewriting any manifest.
+              if skopeo copy --all --preserve-digests --retry-times 2 \
+                "docker://$pull" "docker://$target" </dev/null; then
+                copied=true
+                break
+              fi
+              echo "::warning::could not copy $pull"
+            done
+            if ! $copied; then
+              echo "::error::no registry served $image"
+              exit 1
+            fi
+            got=$(digest_of "$target")
+            if [ "$got" != "$digest" ]; then
+              echo "::error::$target resolves to ${got:-nothing}, want $digest"
+              exit 1
+            fi
+          done
