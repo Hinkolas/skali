@@ -19,10 +19,11 @@
 	import ConnectedAppsList from './ConnectedAppsList.svelte';
 	import DbConnectionPanel from './DbConnectionPanel.svelte';
 	import DbInstancePanel from './DbInstancePanel.svelte';
+	import ServiceChangesSection from './ServiceChangesSection.svelte';
 
 	// The database's overview: how full it is, how it is backed up, who
 	// talks to it, the server it runs on and how to reach it, then the
-	// newest snapshots of its environment.
+	// rollouts that changed it and the newest snapshots of its environment.
 	let {
 		service,
 		services,
@@ -80,6 +81,8 @@
 <div class="mb-6.5">
 	<ConnectedAppsList {service} {services} />
 </div>
+
+<ServiceChangesSection {service} {envId} {runs} />
 
 <div class="mb-3.5 flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
 	<h2 class="text-text-primary text-xl font-semibold">Recent operations</h2>

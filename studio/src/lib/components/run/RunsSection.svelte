@@ -4,6 +4,7 @@
 	import type { Run, RunKind } from '$lib/types/runs';
 	import { runCancellable, runKindLabel } from '$lib/types/runs';
 	import { describeActor, formatDuration, relativeTime } from '$lib/format';
+	import { actionWord, deploymentSummary, serviceChanges } from '$lib/models/rundeployment';
 	import { clock } from '$lib/stores/clock.svelte';
 	import { dialog } from '$lib/stores/dialog.svelte';
 	import { envRuns } from '$lib/stores/envruns.svelte';
@@ -20,11 +21,15 @@
 	// The environment's run feed: seeded by the caller's load, kept live by
 	// the project's run store (one runs-list stream per open project).
 	// `kinds` narrows the feed to some run kinds (a database's backups),
-	// `limit` keeps only the newest rows (the overview's digest).
+	// `service` to the rollouts that changed one service (by dotted name),
+	// `limit` keeps only the newest rows (the overview's digest). A rollout
+	// says under its row what it changed: the whole run, or with `service`
+	// what it did to that service.
 	let {
 		envId,
 		seed,
 		kinds,
+		service,
 		limit,
 		emptyTitle = 'No runs yet',
 		emptyDescription = 'deploys, rollbacks, and stops appear here'
@@ -32,6 +37,7 @@
 		envId: string | null;
 		seed: Run[] | null;
 		kinds?: RunKind[];
+		service?: string;
 		limit?: number;
 		emptyTitle?: string;
 		emptyDescription?: string;
@@ -40,11 +46,18 @@
 	// Actor ids resolve to names once the directory is here; one fetch per page life.
 	users.load();
 
-	const runs = $derived(
-		(envRuns.of(envId) ?? seed ?? [])
-			.filter((r) => !kinds || kinds.includes(r.kind))
-			.slice(0, limit)
-	);
+	const rows = $derived.by(() => {
+		const feed = (envRuns.of(envId) ?? seed ?? []).filter((r) => !kinds || kinds.includes(r.kind));
+		if (service) {
+			return serviceChanges(feed, service)
+				.slice(0, limit)
+				.map((change) => ({
+					run: change.run,
+					line: [actionWord(change.action), change.detail].filter(Boolean).join(' · ')
+				}));
+		}
+		return feed.slice(0, limit).map((run) => ({ run, line: deploymentSummary(run) }));
+	});
 
 	// The run column holds the kind and the id chip side by side; narrower, the
 	// chip ran into the actor.
@@ -82,11 +95,11 @@
 	}
 </script>
 
-{#if runs.length === 0}
+{#if rows.length === 0}
 	<EmptyState icon={Rocket} title={emptyTitle} description={emptyDescription} />
 {:else}
 	<Table columns={['Run', 'Actor', 'Started', 'Duration', 'Status', '']} {grid}>
-		{#each runs as run (run.id)}
+		{#each rows as { run, line } (run.id)}
 			{@const status = statusClass[run.status]}
 			<div
 				class="border-border-subtle border-b px-4.5 py-3 transition-colors last:border-0 hover:bg-white/2 @max-2xl:flex @max-2xl:flex-wrap @max-2xl:items-center @max-2xl:gap-x-3 @max-2xl:gap-y-1.5 @2xl:grid @2xl:items-center {grid}"
@@ -150,6 +163,16 @@
 						<Button size="sm" variant="ghost" onclick={() => cancelRun(run)}>Cancel</Button>
 					{/if}
 				</div>
+				<!-- What the run changed, across the whole row: a second line on a
+				     wide pane, the last line on a narrow one. -->
+				{#if line}
+					<div
+						class="text-text-faint min-w-0 truncate text-sm @max-2xl:order-2 @max-2xl:basis-full @2xl:col-span-full @2xl:mt-1"
+						title={line}
+					>
+						{line}
+					</div>
+				{/if}
 			</div>
 		{/each}
 	</Table>

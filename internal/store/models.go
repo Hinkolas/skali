@@ -490,6 +490,7 @@ type Run struct {
 	FinishedAt       *time.Time
 	BypassProtection bool
 	Failure          *string
+	Deployment       []byte
 }
 
 type RunLog struct {

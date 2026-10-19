@@ -4886,6 +4886,8 @@ components:
             One-line reason recorded by the code that finished the run
             failed. Present only on failed runs that recorded one; the
             step logs hold the detail.
+        deployment:
+          $ref: "#/components/schemas/RunDeployment"
         project_id:
           type: [string, "null"]
           format: uuid
@@ -4906,6 +4908,63 @@ components:
         finished_at:
           type: [string, "null"]
           format: date-time
+
+    RunDeployment:
+      type: object
+      description: |
+        What a deployment, rollback, or restart run changes. Present on
+        those runs only, and absent on runs from before servers recorded
+        it. A deployment's plan is against the environment's active
+        revision: it records the plan its deployer confirmed when it opens
+        and replaces it with the stored revision's plan at promotion, so
+        its changes carry real artifact digests from then on; a deployment
+        that failed earlier keeps what it set out to change. A rollback's
+        plan is against the target it moves away from. Every list is
+        omitted when empty.
+      properties:
+        revision:
+          type: string
+          description: |
+            Checksum of the revision the run moves the target to. Absent on
+            restarts, which move no target, and on deployments until their
+            revision is stored.
+        from_environment:
+          type: string
+          description: Name of the environment a promotion copied.
+        changes:
+          type: array
+          description: Service changes the plan makes.
+          items:
+            $ref: "#/components/schemas/PlanChange"
+        values:
+          type: array
+          description: Value changes the plan makes, by name.
+          items:
+            $ref: "#/components/schemas/RunValueChange"
+        restarts:
+          type: array
+          description: |
+            Applications the run restarts, by dotted name: the one a
+            single-application restart addresses, every one for an
+            environment-wide restart or a forced deployment.
+          items:
+            type: string
+
+    RunValueChange:
+      description: |
+        One value change of a run's plan with the services that use the
+        value. A new version rolls the pods of the applications whose
+        environment references it and moves the routes whose domain does,
+        though their own plan rows may say nothing.
+      allOf:
+        - $ref: "#/components/schemas/PlanValueChange"
+        - type: object
+          properties:
+            services:
+              type: array
+              description: Dotted names, omitted when no service uses the value.
+              items:
+                type: string
 
     Step:
       type: object
@@ -6242,29 +6301,41 @@ components:
         changes:
           type: array
           items:
-            type: object
-            required: [service, action]
-            properties:
-              service:
-                type: string
-              action:
-                type: string
-                enum: [create, update, remove]
-              destructive:
-                type: boolean
-              detail:
-                type: string
+            $ref: "#/components/schemas/PlanChange"
         values:
           type: array
           items:
-            type: object
-            required: [name, action]
-            properties:
-              name:
-                type: string
-              action:
-                type: string
-                enum: [create, update, remove]
+            $ref: "#/components/schemas/PlanValueChange"
+
+    PlanChange:
+      type: object
+      description: One service a plan creates, updates, or removes.
+      required: [service, action]
+      properties:
+        service:
+          type: string
+          description: Dotted name, e.g. applications.web or databases.main.
+        action:
+          type: string
+          enum: [create, update, remove]
+        destructive:
+          type: boolean
+        detail:
+          type: string
+
+    PlanValueChange:
+      type: object
+      description: |
+        One value a plan changes, by name. prune unsets a stored value the
+        definition no longer references; it appears only when the
+        deployment was asked to prune.
+      required: [name, action]
+      properties:
+        name:
+          type: string
+        action:
+          type: string
+          enum: [create, update, remove, prune]
 
     PlanRequest:
       type: object

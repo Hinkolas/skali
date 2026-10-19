@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"strconv"
 	"sync"
@@ -178,6 +179,11 @@ type Prepared struct {
 	// LocalApplications is the intercept set Promote writes; it always
 	// replaces the environment's stored rows, so an empty set clears them.
 	LocalApplications map[string]LocalApplication
+	// Replaced is the revision that was active when Promote moved the
+	// target, read in the same transaction: activation is guarded on the
+	// target it activates, so no late activation of the previous target
+	// can slip in between. Nil before a first activation; Promote sets it.
+	Replaced *uuid.UUID
 }
 
 // Prepare loads and re-validates the inputs, resolves artifacts outside any
@@ -317,7 +323,8 @@ func (s *Service) Promote(ctx context.Context, p *Prepared) error {
 		return err
 	}
 	defer unlock()
-	return s.st.WithTx(ctx, func(q *store.Queries) error {
+	var replaced *uuid.UUID
+	err = s.st.WithTx(ctx, func(q *store.Queries) error {
 		if err := s.claimRoutesTx(ctx, q, p.EnvironmentID, p.RevisionID, routes); err != nil {
 			return err
 		}
@@ -332,6 +339,13 @@ func (s *Service) Promote(ctx context.Context, p *Prepared) error {
 		if rows == 0 {
 			return unmovedTarget(ctx, q, p.EnvironmentID)
 		}
+		// The moved row is locked now: its active pointer is the revision
+		// this promotion replaces.
+		moved, err := q.GetEnvironmentTarget(ctx, p.EnvironmentID)
+		if err != nil {
+			return fmt.Errorf("deploy: get target: %w", err)
+		}
+		replaced = moved.ActiveRevisionID
 		if err := s.values.PromoteTx(ctx, q, p.EnvironmentID, p.CandidateID); err != nil {
 			return err
 		}
@@ -369,6 +383,11 @@ func (s *Service) Promote(ctx context.Context, p *Prepared) error {
 		}
 		return setDeploymentStatusTx(ctx, q, p.DeploymentID, DeploymentPromoted, p.RevisionID)
 	})
+	if err != nil {
+		return err
+	}
+	p.Replaced = replaced
+	return nil
 }
 
 // RollbackInput describes one rollback: re-point the target at an existing
@@ -455,6 +474,11 @@ func (s *Service) Rollback(ctx context.Context, in RollbackInput) (*RollbackResu
 	if err != nil {
 		return nil, finishRunFailed(ctx, in.Journal, run.ID, err)
 	}
+	// The run says what the rollback reverses: the target it moves away
+	// from. Explanatory only, like the deployment's.
+	if err := s.recordRollback(ctx, in.Journal, run.ID, target.TargetRevisionID, rev); err != nil {
+		slog.WarnContext(ctx, "deploy: record the rollback's plan", "run", run.ID, "err", err)
+	}
 	routes, err := s.revisionRoutes(ctx, in.EnvironmentID, rev)
 	if err != nil {
 		return nil, finishRunFailed(ctx, in.Journal, run.ID, err)
@@ -527,8 +551,17 @@ type RestartResult struct {
 // and hands rollout to the kernel like a promotion. The run is created
 // before the stamp so a failed stamp leaves a failed run and untouched
 // state; the unique running-run index serializes restarts against
-// deployments.
+// deployments. The environment lock holds the target still from its read
+// to the stamp: a failed rollout's fallback and a cancellation move it
+// back without a run of their own, and the restart must check and name
+// the applications of the revision it actually restarts.
 func (s *Service) Restart(ctx context.Context, in RestartInput) (*RestartResult, error) {
+	unlock, err := s.st.LockEnvironmentWithin(ctx, in.EnvironmentID, s.requestWait)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+
 	target, err := s.st.GetEnvironmentTarget(ctx, in.EnvironmentID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -558,11 +591,20 @@ func (s *Service) Restart(ctx context.Context, in RestartInput) (*RestartResult,
 		return nil, fmt.Errorf("deploy: get environment: %w", err)
 	}
 
+	document := RunDeployment{Restarts: restartedApplications(rev)}
+	if in.ApplicationKey != "" {
+		document.Restarts = []string{"applications." + in.ApplicationKey}
+	}
+	encoded, err := document.encode()
+	if err != nil {
+		return nil, err
+	}
 	run, err := in.Journal.BeginRun(ctx, journal.RunInput{
 		Kind:          "restart",
 		ProjectID:     env.ProjectID,
 		EnvironmentID: in.EnvironmentID,
 		Actor:         in.Actor,
+		Deployment:    encoded,
 	})
 	if errors.Is(err, journal.ErrRunConflict) {
 		return nil, ErrDeploymentInFlight

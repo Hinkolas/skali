@@ -1,5 +1,7 @@
 // Shapes mirror the skali API (api/openapi.yaml), snake_case included.
 
+import type { PlanChange, PlanValueChange } from './deploy';
+
 export type RunKind =
 	| 'deployment'
 	| 'rollback'
@@ -35,6 +37,31 @@ export interface Run {
 	deferred_routes?: number;
 	/** One-line reason a failed run recorded; the step logs hold the detail. */
 	failure?: string;
+	/** What a deployment, rollback, or restart changes; absent on other runs and older ones. */
+	deployment?: RunDeployment;
+}
+
+/**
+ * What a rollout run changes, as the server records it: a deployment's
+ * plan (the one its deployer confirmed until promotion stores the real
+ * revision), a rollback's plan back to an earlier revision, a restart's
+ * applications. Lists are omitted when empty.
+ */
+export interface RunDeployment {
+	/** Checksum of the revision the run moves the target to. */
+	revision?: string;
+	/** The environment a promotion copied. */
+	from_environment?: string;
+	changes?: PlanChange[];
+	values?: RunValueChange[];
+	/** Applications the run restarts, by dotted name. */
+	restarts?: string[];
+}
+
+/** A plan's value change with the services that use the value (their pods roll, or their routes move). */
+export interface RunValueChange extends PlanValueChange {
+	/** Dotted names. */
+	services?: string[];
 }
 
 export interface Attempt {

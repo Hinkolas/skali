@@ -20,10 +20,12 @@
 	import BucketDetailsPanel from './BucketDetailsPanel.svelte';
 	import ConnectedAppsList from './ConnectedAppsList.svelte';
 	import RoutesPanel from './RoutesPanel.svelte';
+	import ServiceChangesSection from './ServiceChangesSection.svelte';
 
 	// The bucket's overview: how full it is against its quota, how it is
 	// backed up, who holds its keys, what the claim asked for and how to
-	// reach it, then the newest snapshots of its environment.
+	// reach it, then the rollouts that changed it and the newest snapshots
+	// of its environment.
 	let {
 		service,
 		services,
@@ -93,6 +95,8 @@
 <div class="mb-6.5">
 	<ConnectedAppsList {service} {services} />
 </div>
+
+<ServiceChangesSection {service} {envId} {runs} />
 
 <div class="mb-3.5 flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
 	<h2 class="text-text-primary text-xl font-semibold">Recent operations</h2>

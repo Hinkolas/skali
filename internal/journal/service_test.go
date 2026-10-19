@@ -2,6 +2,7 @@ package journal
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -373,6 +374,44 @@ func TestStepService(t *testing.T) {
 	require.Equal(t, "applications.web", *services["apply:web"])
 	require.Equal(t, "applications.web", *services["artifacts.web"])
 	require.Nil(t, services["verify"])
+}
+
+func TestRunDeploymentDocument(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	ctx := context.Background()
+
+	run, err := f.svc.BeginRun(ctx, RunInput{
+		Kind: "restart", ProjectID: f.projectID, EnvironmentID: f.environmentID, Actor: "tester",
+		Deployment: json.RawMessage(`{"restarts":["applications.web"]}`),
+	})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"restarts":["applications.web"]}`, string(run.Deployment))
+	plain, err := f.svc.CreateRun(ctx, RunInput{
+		Kind: "backup", ProjectID: f.projectID, EnvironmentID: f.environmentID, Actor: "tester",
+	})
+	require.NoError(t, err)
+	require.Nil(t, plain.Deployment, "runs that change nothing record nothing")
+
+	// A replacement signals the environment's run list, which carries it.
+	signals, cancel := f.svc.SubscribeEnvironmentRuns(f.environmentID)
+	defer cancel()
+	require.NoError(t, f.svc.SetRunDeployment(ctx, run.ID, json.RawMessage(`{"revision":"abc"}`)))
+	select {
+	case <-signals:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no run-list signal")
+	}
+	runs, err := f.svc.ListRuns(ctx, f.environmentID)
+	require.NoError(t, err)
+	for _, listed := range runs {
+		if listed.ID == run.ID {
+			require.JSONEq(t, `{"revision":"abc"}`, string(listed.Deployment))
+		}
+	}
+
+	// A run retention already pruned is left alone.
+	require.NoError(t, f.svc.SetRunDeployment(ctx, uuid.New(), json.RawMessage(`{}`)))
 }
 
 func TestFinishRunForcesTerminality(t *testing.T) {

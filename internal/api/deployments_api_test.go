@@ -241,6 +241,15 @@ func TestDeploymentFlowEndToEnd(t *testing.T) {
 	require.Contains(t, services, "artifacts")
 	require.Nil(t, services["artifacts"])
 
+	// The run says what the deployment changes, as its deployer confirmed
+	// it; the revision follows once it is stored.
+	opened := body["run"].(map[string]any)["deployment"].(map[string]any)
+	require.Equal(t, []any{map[string]any{"service": "applications.web", "action": "create"}}, opened["changes"])
+	require.Equal(t, []any{map[string]any{
+		"name": "SESSION_SECRET", "action": "create", "services": []any{"applications.web"},
+	}}, opened["values"])
+	require.NotContains(t, opened, "revision")
+
 	// Completion before verification is refused.
 	status, body = a.do("POST", "/v1/deployments/"+deploymentID+"/complete", token, nil)
 	require.Equal(t, http.StatusConflict, status)
@@ -278,6 +287,13 @@ func TestDeploymentFlowEndToEnd(t *testing.T) {
 	require.Equal(t, http.StatusOK, status)
 	require.Equal(t, "running", body["run"].(map[string]any)["status"],
 		"the kernel, not completion, concludes the run")
+	revisionUUID, err := uuid.Parse(revisionID)
+	require.NoError(t, err)
+	stored, err := a.st.GetRevisionByID(context.Background(), revisionUUID)
+	require.NoError(t, err)
+	promoted := body["run"].(map[string]any)["deployment"].(map[string]any)
+	require.Equal(t, stored.Checksum, promoted["revision"])
+	require.Equal(t, opened["changes"], promoted["changes"])
 
 	// Simulate the kernel concluding the rollout and activating.
 	a.finishRun(t, runID)
@@ -320,6 +336,20 @@ func TestDeploymentFlowEndToEnd(t *testing.T) {
 	require.NotNil(t, a.targetOf(t, envID).RestartedAt)
 	a.finishRun(t, forcedRun)
 	a.activate(t, envID)
+	// The run list carries what each run changed: the forced deployment
+	// changed nothing and restarted the application.
+	status, body = a.do("GET", "/v1/environments/"+envID+"/runs", token, nil)
+	require.Equal(t, http.StatusOK, status)
+	listed := map[string]map[string]any{}
+	for _, raw := range body["runs"].([]any) {
+		run := raw.(map[string]any)
+		document, _ := run["deployment"].(map[string]any)
+		listed[run["id"].(string)] = document
+	}
+	require.Equal(t, map[string]any{
+		"revision": stored.Checksum, "restarts": []any{"applications.web"},
+	}, listed[forcedRun])
+	require.Equal(t, promoted, listed[runID])
 
 	// Rebuild discards artifact reuse: the plan wants the build again even
 	// though a verified artifact matches the inputs.
@@ -343,9 +373,17 @@ func TestDeploymentFlowEndToEnd(t *testing.T) {
 	require.Equal(t, http.StatusCreated, status, "%v", body)
 	require.Equal(t, "reuse", body["actions"].([]any)[0].(map[string]any)["action"])
 	secondDeployment := body["deployment"].(map[string]any)["id"].(string)
+	secondRun := body["deployment"].(map[string]any)["run_id"].(string)
 	status, body = a.do("POST", "/v1/deployments/"+secondDeployment+"/complete", token, nil)
 	require.Equal(t, http.StatusAccepted, status, "%v", body)
 	require.NotEqual(t, revisionID, a.awaitDeployment(t, token, secondDeployment)["revision_id"])
+	status, body = a.do("GET", "/v1/runs/"+secondRun, token, nil)
+	require.Equal(t, http.StatusOK, status)
+	valuesOnly := body["run"].(map[string]any)["deployment"].(map[string]any)
+	require.NotContains(t, valuesOnly, "changes")
+	require.Equal(t, []any{map[string]any{
+		"name": "SESSION_SECRET", "action": "update", "services": []any{"applications.web"},
+	}}, valuesOnly["values"])
 }
 
 // While the first completion is still promoting (here: waiting on the
