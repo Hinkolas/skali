@@ -71,6 +71,10 @@ type RunInput struct {
 	// BypassProtection marks a deployment that entered a promote-only
 	// environment on an explicit admin bypass.
 	BypassProtection bool
+	// Deployment is what a deployment, rollback, or restart run changes,
+	// as the deploy service encodes it; the journal stores it unread. Nil
+	// for every other run.
+	Deployment json.RawMessage
 }
 
 func (s *Service) CreateRun(ctx context.Context, in RunInput) (*store.Run, error) {
@@ -109,7 +113,8 @@ func (s *Service) BeginRun(ctx context.Context, in RunInput) (*store.Run, error)
 }
 
 func runParams(id uuid.UUID, in RunInput) store.CreateRunParams {
-	params := store.CreateRunParams{ID: id, Kind: in.Kind, Actor: in.Actor, BypassProtection: in.BypassProtection}
+	params := store.CreateRunParams{ID: id, Kind: in.Kind, Actor: in.Actor, BypassProtection: in.BypassProtection,
+		Deployment: in.Deployment}
 	if in.ProjectID != uuid.Nil {
 		params.ProjectID = &in.ProjectID
 	}
@@ -117,6 +122,23 @@ func runParams(id uuid.UUID, in RunInput) store.CreateRunParams {
 		params.EnvironmentID = &in.EnvironmentID
 	}
 	return params
+}
+
+// SetRunDeployment replaces what a run records it changes (RunInput's
+// Deployment) once the writer knows more, such as the revision a
+// deployment actually promoted. A run retention already pruned is left
+// alone.
+func (s *Service) SetRunDeployment(ctx context.Context, runID uuid.UUID, document json.RawMessage) error {
+	environmentID, err := s.st.SetRunDeployment(ctx, store.SetRunDeploymentParams{ID: runID, Deployment: document})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("journal: set run deployment: %w", err)
+	}
+	s.notifyRun(runID)
+	s.notifyEnvironment(environmentID)
+	return nil
 }
 
 // StartRun moves pending -> running. The partial unique index turns a

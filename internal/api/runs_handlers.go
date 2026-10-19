@@ -44,6 +44,10 @@ type runPayload struct {
 	// the run failed. Present only on failed runs that recorded one; the
 	// step logs hold the detail.
 	Failure string `json:"failure,omitempty"`
+	// Deployment is what a deployment, rollback, or restart run changes,
+	// as the deploy service recorded it (deploy.RunDeployment). Absent on
+	// other runs and on runs from before servers recorded it.
+	Deployment json.RawMessage `json:"deployment,omitempty"`
 }
 
 // runListPayload projects the environment's runs with their deferred-route
@@ -86,6 +90,9 @@ func newRunPayload(r *store.Run) runPayload {
 	}
 	if r.Failure != nil {
 		payload.Failure = *r.Failure
+	}
+	if len(r.Deployment) > 0 {
+		payload.Deployment = r.Deployment
 	}
 	return payload
 }

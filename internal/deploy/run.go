@@ -163,6 +163,13 @@ func (s *Service) runStages(ctx context.Context, runID uuid.UUID, in ExecuteInpu
 			append(promoteLog, journal.LogEntry{Level: "error", Message: "promotion failed: " + err.Error()}))
 		return result, s.fail(cctx, in, runID, redactor, err)
 	}
+	// The run says what the stored revision changed against the one it
+	// replaced. Explanatory only: a failed write costs the history its
+	// summary, never the deployment, and a deployment that never promoted
+	// keeps the plan it set out with.
+	if err := s.recordPromotion(ctx, in.Journal, runID, prepared, in.Restart); err != nil {
+		slog.WarnContext(ctx, "deploy: record the run's plan", "run", runID, "err", err)
+	}
 	promoteLog = append(promoteLog, info("target set to revision "+prepared.Revision.Checksum))
 	if err := unlessConcluded(step(ctx, promoteKey, promoteTitle, journal.StepSucceeded, promoteLog)); err != nil {
 		return result, s.fail(ctx, in, runID, redactor, err)

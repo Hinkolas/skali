@@ -1,15 +1,23 @@
 -- name: CreateRun :one
-INSERT INTO runs (id, kind, project_id, environment_id, actor, bypass_protection)
-VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO runs (id, kind, project_id, environment_id, actor, bypass_protection, deployment)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 RETURNING *;
 
 -- BeginRun creates a run already running. The partial unique index turns
 -- a second running run for the same environment into a unique violation,
 -- and then no row exists.
 -- name: BeginRun :one
-INSERT INTO runs (id, kind, project_id, environment_id, actor, bypass_protection, status, started_at)
-VALUES ($1, $2, $3, $4, $5, $6, 'running', now())
+INSERT INTO runs (id, kind, project_id, environment_id, actor, bypass_protection, deployment, status, started_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, 'running', now())
 RETURNING *;
+
+-- SetRunDeployment replaces what a run records it changes (see the
+-- column's migration); the deploy service writes it once the plan is
+-- known and refines it at promotion. It returns the run's environment for
+-- the change signal, and no row once retention pruned the run.
+-- name: SetRunDeployment :one
+UPDATE runs SET deployment = $2 WHERE id = $1
+RETURNING environment_id;
 
 -- name: GetRunByID :one
 SELECT * FROM runs WHERE id = $1;

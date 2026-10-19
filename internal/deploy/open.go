@@ -522,12 +522,27 @@ func (s *Service) Open(ctx context.Context, in OpenInput) (*Opened, error) {
 		return nil, ErrRegistryDisabled
 	}
 
+	// The run records what the deployer confirmed; promotion replaces the
+	// plan with the stored revision's.
+	document := RunDeployment{}
+	document.setPlan(preview.Plan, preview.Candidate)
+	if src != nil && !in.Redeploy {
+		document.FromEnvironment = src.Environment
+	}
+	if in.Force {
+		document.Restarts = restartedApplications(preview.Candidate)
+	}
+	encoded, err := document.encode()
+	if err != nil {
+		return nil, err
+	}
 	run, err := in.Journal.BeginRun(ctx, journal.RunInput{
 		Kind:             "deployment",
 		ProjectID:        env.ProjectID,
 		EnvironmentID:    env.ID,
 		Actor:            in.Actor,
 		BypassProtection: in.BypassProtection,
+		Deployment:       encoded,
 	})
 	if errors.Is(err, journal.ErrRunConflict) {
 		return nil, ErrDeploymentInFlight
@@ -1285,14 +1300,8 @@ func (s *Service) finishPreview(ctx context.Context, env store.Environment,
 	}
 
 	if active == nil {
-		target, err := s.st.GetEnvironmentTarget(ctx, env.ID)
-		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return nil, fmt.Errorf("deploy: get target: %w", err)
-		}
-		if err == nil && target.ActiveRevisionID != nil {
-			if active, err = s.GetRevision(ctx, *target.ActiveRevisionID); err != nil {
-				return nil, err
-			}
+		if active, err = s.activeRevision(ctx, env.ID); err != nil {
+			return nil, err
 		}
 	}
 	activeChecksum := ""
@@ -1362,6 +1371,8 @@ func localNames(locals map[string]LocalApplication) map[string]bool {
 // definition version, the verbatim artifact set, and all-reuse actions over
 // the revision's leased artifact rows.
 type promotionSource struct {
+	// Environment is the source environment's name.
+	Environment         string
 	DefinitionVersionID uuid.UUID
 	Actions             []ArtifactAction
 	Artifacts           map[string]revision.Artifact
@@ -1442,6 +1453,7 @@ func (s *Service) loadSourceRevision(ctx context.Context, env store.Environment,
 		})
 	}
 	return &promotionSource{
+		Environment:         source.Name,
 		DefinitionVersionID: row.DefinitionVersionID,
 		Actions:             actions,
 		Artifacts:           document.Artifacts,

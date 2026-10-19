@@ -1,4 +1,5 @@
 <script lang="ts">
+	import ChevronRight from '@lucide/svelte/icons/chevron-right';
 	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
 	import X from '@lucide/svelte/icons/x';
 	import { invalidateAll } from '$app/navigation';
@@ -6,7 +7,8 @@
 	import type { RunTree, Step } from '$lib/types/runs';
 	import { runCancellable, runKindLabel, runUnsettled } from '$lib/types/runs';
 	import { openStream } from '$lib/sse';
-	import { describeActor, formatDuration, formatDateTime } from '$lib/format';
+	import { describeActor, formatDuration, formatDateTime, shortId } from '$lib/format';
+	import { deploymentSummary } from '$lib/models/rundeployment';
 	import { serviceProgress } from '$lib/models/runservices';
 	import { readPref, writePref } from '$lib/prefs';
 	import { authState } from '$lib/stores/auth.svelte';
@@ -18,6 +20,7 @@
 	import CopyId from '$lib/components/ui/CopyId.svelte';
 	import ProgressBar from '$lib/components/ui/ProgressBar.svelte';
 	import Segmented from '$lib/components/ui/Segmented.svelte';
+	import PlanChanges from './PlanChanges.svelte';
 	import RunServices from './RunServices.svelte';
 	import RunStepTree from './RunStepTree.svelte';
 
@@ -122,6 +125,21 @@
 		writePref(VIEW_PREF, view);
 	}
 
+	// What a rollout changed: its one-line summary, opening to the plan's
+	// rows. Closed by default so the run's progress stays in view.
+	const deployment = $derived(tree?.run.deployment ?? null);
+	const summary = $derived(tree ? deploymentSummary(tree.run) : null);
+	const changeRows = $derived(
+		(deployment?.changes?.length ?? 0) +
+			(deployment?.values?.length ?? 0) +
+			(deployment?.restarts?.length ?? 0)
+	);
+	let changesOpen = $state(false);
+	$effect(() => {
+		void runId;
+		changesOpen = false;
+	});
+
 	const statusText: Record<string, string> = {
 		pending: 'text-text-muted',
 		running: 'text-status-warning',
@@ -181,6 +199,11 @@
 					{#if tree.run.started_at}
 						· {formatDuration(tree.run.started_at, tree.run.finished_at, clock.now)}
 					{/if}
+					{#if deployment?.revision}
+						· <span title="revision {deployment.revision}"
+							>revision {shortId(deployment.revision)}</span
+						>
+					{/if}
 					{#if tree.run.bypass_protection}
 						· <span class="text-status-warning">bypassed protection</span>
 					{/if}
@@ -214,6 +237,40 @@
 </div>
 
 <div class="min-h-0 flex-1 overflow-y-auto px-2.5 py-2.5">
+	{#if summary}
+		<div class="mb-1.5 px-2">
+			{#if changeRows > 0}
+				<button
+					type="button"
+					aria-expanded={changesOpen}
+					onclick={() => (changesOpen = !changesOpen)}
+					class="group flex w-full min-w-0 cursor-pointer items-center gap-1.5 py-1 text-left text-sm"
+				>
+					<ChevronRight
+						size={13}
+						class="text-text-ghost group-hover:text-text-faint flex-none transition-transform {changesOpen
+							? 'rotate-90'
+							: ''}"
+					/>
+					<span class="text-text-secondary flex-none font-medium">Changes</span>
+					<span class="text-text-faint min-w-0 truncate" title={summary}>{summary}</span>
+				</button>
+				{#if changesOpen}
+					<PlanChanges
+						changes={deployment?.changes}
+						values={deployment?.values}
+						restarts={deployment?.restarts}
+						class="mt-1 mb-1.5"
+					/>
+				{/if}
+			{:else}
+				<div class="flex min-w-0 items-center gap-1.5 py-1 text-sm">
+					<span class="text-text-secondary flex-none font-medium">Changes</span>
+					<span class="text-text-faint min-w-0 truncate" title={summary}>{summary}</span>
+				</div>
+			{/if}
+		</div>
+	{/if}
 	{#if failed}
 		<div class="text-text-muted px-2 py-6 text-center text-base">
 			Could not load this run. It may have been pruned.

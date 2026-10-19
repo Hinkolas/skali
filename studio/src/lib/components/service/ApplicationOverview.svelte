@@ -1,25 +1,21 @@
 <script lang="ts">
-	import { resolve } from '$app/paths';
-	import { page } from '$app/state';
-	import ArrowRight from '@lucide/svelte/icons/arrow-right';
 	import type { ApplicationView, ServiceView } from '$lib/models/service';
 	import { usageLimits, usageStats } from '$lib/models/usage';
 	import type { StatCardData } from '$lib/models/view';
 	import type { EnvironmentMetrics, ServiceStorage } from '$lib/types/metrics';
 	import type { Run } from '$lib/types/runs';
 	import { envStatus } from '$lib/stores/envstatus.svelte';
-	import { withEnv } from '$lib/urls';
 	import Skeleton from '$lib/components/ui/Skeleton.svelte';
 	import StatCard from '$lib/components/ui/StatCard.svelte';
-	import RunsSection from '$lib/components/run/RunsSection.svelte';
 	import ApplicationStoragePanel from './ApplicationStoragePanel.svelte';
 	import ConnectedServicesPanel from './ConnectedServicesPanel.svelte';
 	import RoutesPanel from './RoutesPanel.svelte';
 	import RuntimePanel from './RuntimePanel.svelte';
+	import ServiceChangesSection from './ServiceChangesSection.svelte';
 
 	// The application's overview: its usage over the last day, the process
 	// and pods that run it, what it talks to and is reached at, its storage,
-	// and the newest runs of its environment.
+	// and the rollouts that changed it.
 	let {
 		service,
 		services,
@@ -37,9 +33,6 @@
 		storage?: ServiceStorage | null;
 		temporaryStorage?: ServiceStorage | null;
 	} = $props();
-
-	const projectName = $derived((page.data.project as { name: string }).name);
-	const envName = $derived((page.data.env as { name: string } | null)?.name ?? null);
 
 	// The same four tiles as the project overview, scoped to this
 	// application's series and its own declared limits. An application
@@ -87,8 +80,6 @@
 	const pendingStats = $derived(
 		envStatus.pending && !routed ? new Set(['REPLICAS', 'RESTARTS']) : new Set<string>()
 	);
-
-	const RECENT_RUNS = 5;
 </script>
 
 <div class="mb-6.5 grid grid-cols-2 gap-3.5 @4xl:grid-cols-4">
@@ -119,24 +110,4 @@
 	</div>
 {/if}
 
-<div class="mb-3.5 flex items-center gap-3">
-	<div class="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
-		<h2 class="text-text-primary text-xl font-semibold">Recent runs</h2>
-		<div class="text-text-muted text-md">the newest {RECENT_RUNS} in this environment</div>
-	</div>
-	<!-- eslint-disable svelte/no-navigation-without-resolve -- path built with resolve(), env appended by $lib/urls -->
-	<a
-		href={withEnv(
-			resolve('/(app)/projects/[project]/deployments', { project: projectName }),
-			envName
-		)}
-		class="text-text-muted hover:text-text-primary flex flex-none items-center gap-1 text-md whitespace-nowrap transition-colors"
-	>
-		All deployments <ArrowRight size={13} />
-	</a>
-	<!-- eslint-enable svelte/no-navigation-without-resolve -->
-</div>
-
-<div class="pb-6">
-	<RunsSection {envId} seed={runs} limit={RECENT_RUNS} />
-</div>
+<ServiceChangesSection {service} {envId} {runs} />

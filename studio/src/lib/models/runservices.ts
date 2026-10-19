@@ -29,6 +29,17 @@ const KINDS: Record<string, ServiceKind> = {
 	databases: 'database',
 	buckets: 'bucket'
 };
+
+/**
+ * A dotted service name's kind and bare key ("applications.web" is the
+ * application "web"). A collection this Studio does not know keeps its
+ * dotted name and no kind.
+ */
+export function splitService(service: string): { kind: ServiceKind | null; name: string } {
+	const dot = service.indexOf('.');
+	const kind = dot > 0 ? (KINDS[service.slice(0, dot)] ?? null) : null;
+	return { kind, name: kind ? service.slice(dot + 1) : service };
+}
 const KIND_ORDER: (ServiceKind | null)[] = ['application', 'database', 'bucket', null];
 
 // The status a row shows, most telling first: a failure anywhere, then
@@ -113,13 +124,7 @@ function summarize(service: string | null, steps: Step[], counted: Step[]): Serv
 		.map((s) => s.finished_at)
 		.filter((t): t is string => t !== null)
 		.sort();
-	let kind: ServiceKind | null = null;
-	let name = 'environment';
-	if (service) {
-		const dot = service.indexOf('.');
-		kind = dot > 0 ? (KINDS[service.slice(0, dot)] ?? null) : null;
-		name = kind ? service.slice(dot + 1) : service;
-	}
+	const { kind, name } = service ? splitService(service) : { kind: null, name: 'environment' };
 	return {
 		service,
 		kind,

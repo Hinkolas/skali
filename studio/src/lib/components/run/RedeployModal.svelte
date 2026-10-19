@@ -23,6 +23,7 @@
 	import Button from '$lib/components/ui/Button.svelte';
 	import ModalHeader from '$lib/components/ui/ModalHeader.svelte';
 	import RunDetailPanel from '$lib/components/run/RunDetailPanel.svelte';
+	import PlanChanges from '$lib/components/run/PlanChanges.svelte';
 	import type { Environment } from '$lib/types/project';
 	import type { EnvironmentStatus } from '$lib/types/status';
 	import type { OpenedDeployment, PlanResult } from '$lib/types/deploy';
@@ -99,12 +100,6 @@
 			redeploying = false;
 		}
 	}
-
-	function actionClass(action: string, destructive?: boolean): string {
-		if (destructive || action === 'delete' || action === 'unset') return 'text-status-danger';
-		if (action === 'create' || action === 'set') return 'text-status-success';
-		return 'text-text-tertiary';
-	}
 </script>
 
 {#if activeRev === null}
@@ -157,35 +152,11 @@
 					</span>
 				</div>
 			{:else}
-				{@const changes = planned.plan?.changes ?? []}
-				{@const values = planned.plan?.values ?? []}
-				<div
-					class="border-border-subtle divide-border-subtle max-h-60 divide-y overflow-y-auto rounded-xl border"
-				>
-					{#each changes as change, i (`c${i}`)}
-						<div class="flex items-center gap-2.5 px-3 py-1.75 font-mono text-sm">
-							<span class="w-14 flex-none {actionClass(change.action, change.destructive)}">
-								{change.action}
-							</span>
-							<span class="text-text-primary">{change.service}</span>
-							{#if change.detail}
-								<span class="text-text-faint min-w-0 truncate" title={change.detail}>
-									{change.detail}
-								</span>
-							{/if}
-							{#if change.destructive}
-								<span class="text-status-danger ml-auto flex-none text-xs">destructive</span>
-							{/if}
-						</div>
-					{/each}
-					{#each values as value, i (`v${i}`)}
-						<div class="flex items-center gap-2.5 px-3 py-1.75 font-mono text-sm">
-							<span class="w-14 flex-none {actionClass(value.action)}">{value.action}</span>
-							<span class="text-text-primary">{value.name}</span>
-							<span class="text-text-faint">value</span>
-						</div>
-					{/each}
-				</div>
+				<PlanChanges
+					changes={planned.plan?.changes ?? []}
+					values={planned.plan?.values ?? []}
+					class="max-h-60"
+				/>
 			{/if}
 		{/if}
 	</div>

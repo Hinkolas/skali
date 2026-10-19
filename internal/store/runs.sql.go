@@ -13,9 +13,9 @@ import (
 )
 
 const beginRun = `-- name: BeginRun :one
-INSERT INTO runs (id, kind, project_id, environment_id, actor, bypass_protection, status, started_at)
-VALUES ($1, $2, $3, $4, $5, $6, 'running', now())
-RETURNING id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection, failure
+INSERT INTO runs (id, kind, project_id, environment_id, actor, bypass_protection, deployment, status, started_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, 'running', now())
+RETURNING id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection, failure, deployment
 `
 
 type BeginRunParams struct {
@@ -25,6 +25,7 @@ type BeginRunParams struct {
 	EnvironmentID    *uuid.UUID
 	Actor            string
 	BypassProtection bool
+	Deployment       []byte
 }
 
 // BeginRun creates a run already running. The partial unique index turns
@@ -38,6 +39,7 @@ func (q *Queries) BeginRun(ctx context.Context, arg BeginRunParams) (Run, error)
 		arg.EnvironmentID,
 		arg.Actor,
 		arg.BypassProtection,
+		arg.Deployment,
 	)
 	var i Run
 	err := row.Scan(
@@ -52,6 +54,7 @@ func (q *Queries) BeginRun(ctx context.Context, arg BeginRunParams) (Run, error)
 		&i.FinishedAt,
 		&i.BypassProtection,
 		&i.Failure,
+		&i.Deployment,
 	)
 	return i, err
 }
@@ -70,9 +73,9 @@ func (q *Queries) CountRunningRuns(ctx context.Context) (int64, error) {
 }
 
 const createRun = `-- name: CreateRun :one
-INSERT INTO runs (id, kind, project_id, environment_id, actor, bypass_protection)
-VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection, failure
+INSERT INTO runs (id, kind, project_id, environment_id, actor, bypass_protection, deployment)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection, failure, deployment
 `
 
 type CreateRunParams struct {
@@ -82,6 +85,7 @@ type CreateRunParams struct {
 	EnvironmentID    *uuid.UUID
 	Actor            string
 	BypassProtection bool
+	Deployment       []byte
 }
 
 func (q *Queries) CreateRun(ctx context.Context, arg CreateRunParams) (Run, error) {
@@ -92,6 +96,7 @@ func (q *Queries) CreateRun(ctx context.Context, arg CreateRunParams) (Run, erro
 		arg.EnvironmentID,
 		arg.Actor,
 		arg.BypassProtection,
+		arg.Deployment,
 	)
 	var i Run
 	err := row.Scan(
@@ -106,6 +111,7 @@ func (q *Queries) CreateRun(ctx context.Context, arg CreateRunParams) (Run, erro
 		&i.FinishedAt,
 		&i.BypassProtection,
 		&i.Failure,
+		&i.Deployment,
 	)
 	return i, err
 }
@@ -159,7 +165,7 @@ func (q *Queries) FinishRun(ctx context.Context, arg FinishRunParams) (*uuid.UUI
 }
 
 const getRunByID = `-- name: GetRunByID :one
-SELECT id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection, failure FROM runs WHERE id = $1
+SELECT id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection, failure, deployment FROM runs WHERE id = $1
 `
 
 func (q *Queries) GetRunByID(ctx context.Context, id uuid.UUID) (Run, error) {
@@ -177,12 +183,13 @@ func (q *Queries) GetRunByID(ctx context.Context, id uuid.UUID) (Run, error) {
 		&i.FinishedAt,
 		&i.BypassProtection,
 		&i.Failure,
+		&i.Deployment,
 	)
 	return i, err
 }
 
 const getRunForUpdate = `-- name: GetRunForUpdate :one
-SELECT id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection, failure FROM runs WHERE id = $1 FOR UPDATE
+SELECT id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection, failure, deployment FROM runs WHERE id = $1 FOR UPDATE
 `
 
 // Row lock so status transitions are guarded under the lifecycle machine.
@@ -201,12 +208,13 @@ func (q *Queries) GetRunForUpdate(ctx context.Context, id uuid.UUID) (Run, error
 		&i.FinishedAt,
 		&i.BypassProtection,
 		&i.Failure,
+		&i.Deployment,
 	)
 	return i, err
 }
 
 const getRunningRunByEnvironment = `-- name: GetRunningRunByEnvironment :one
-SELECT id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection, failure FROM runs WHERE environment_id = $1 AND status = 'running'
+SELECT id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection, failure, deployment FROM runs WHERE environment_id = $1 AND status = 'running'
 `
 
 // Journal attachment for the reconcile worker: adopt the environment's
@@ -227,12 +235,13 @@ func (q *Queries) GetRunningRunByEnvironment(ctx context.Context, environmentID 
 		&i.FinishedAt,
 		&i.BypassProtection,
 		&i.Failure,
+		&i.Deployment,
 	)
 	return i, err
 }
 
 const listRunningRunsByKind = `-- name: ListRunningRunsByKind :many
-SELECT id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection, failure FROM runs WHERE kind = $1 AND status = 'running' ORDER BY created_at
+SELECT id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection, failure, deployment FROM runs WHERE kind = $1 AND status = 'running' ORDER BY created_at
 `
 
 // Boot recovery for controllers that own runs of one kind without a
@@ -260,6 +269,7 @@ func (q *Queries) ListRunningRunsByKind(ctx context.Context, kind string) ([]Run
 			&i.FinishedAt,
 			&i.BypassProtection,
 			&i.Failure,
+			&i.Deployment,
 		); err != nil {
 			return nil, err
 		}
@@ -272,7 +282,7 @@ func (q *Queries) ListRunningRunsByKind(ctx context.Context, kind string) ([]Run
 }
 
 const listRunsByEnvironment = `-- name: ListRunsByEnvironment :many
-SELECT id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection, failure FROM runs WHERE environment_id = $1 ORDER BY created_at DESC
+SELECT id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection, failure, deployment FROM runs WHERE environment_id = $1 ORDER BY created_at DESC
 `
 
 // A run that never started explains nothing and nothing will ever finish
@@ -300,6 +310,7 @@ func (q *Queries) ListRunsByEnvironment(ctx context.Context, environmentID *uuid
 			&i.FinishedAt,
 			&i.BypassProtection,
 			&i.Failure,
+			&i.Deployment,
 		); err != nil {
 			return nil, err
 		}
@@ -362,4 +373,25 @@ type PruneRunsParams struct {
 func (q *Queries) PruneRuns(ctx context.Context, arg PruneRunsParams) error {
 	_, err := q.db.Exec(ctx, pruneRuns, arg.Cutoff, arg.EnvironmentID, arg.Keep)
 	return err
+}
+
+const setRunDeployment = `-- name: SetRunDeployment :one
+UPDATE runs SET deployment = $2 WHERE id = $1
+RETURNING environment_id
+`
+
+type SetRunDeploymentParams struct {
+	ID         uuid.UUID
+	Deployment []byte
+}
+
+// SetRunDeployment replaces what a run records it changes (see the
+// column's migration); the deploy service writes it once the plan is
+// known and refines it at promotion. It returns the run's environment for
+// the change signal, and no row once retention pruned the run.
+func (q *Queries) SetRunDeployment(ctx context.Context, arg SetRunDeploymentParams) (*uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, setRunDeployment, arg.ID, arg.Deployment)
+	var environment_id *uuid.UUID
+	err := row.Scan(&environment_id)
+	return environment_id, err
 }
