@@ -220,6 +220,27 @@ func TestDeploymentFlowEndToEnd(t *testing.T) {
 	status, body = a.do("PATCH", "/v1/steps/"+buildStepID, token, map[string]any{"status": "succeeded"})
 	require.Equal(t, http.StatusOK, status, "%v", body)
 
+	// The client's steps are the application's work; the server's opening
+	// steps are the environment's.
+	status, body = a.do("GET", "/v1/runs/"+runID, token, nil)
+	require.Equal(t, http.StatusOK, status)
+	services := map[string]any{}
+	var collect func(steps []any)
+	collect = func(steps []any) {
+		for _, raw := range steps {
+			step := raw.(map[string]any)
+			services[step["key"].(string)] = step["service"]
+			if children, ok := step["children"].([]any); ok {
+				collect(children)
+			}
+		}
+	}
+	collect(body["steps"].([]any))
+	require.Equal(t, "applications.web", services["artifacts.web"])
+	require.Equal(t, "applications.web", services["artifacts.web.build"])
+	require.Contains(t, services, "artifacts")
+	require.Nil(t, services["artifacts"])
+
 	// Completion before verification is refused.
 	status, body = a.do("POST", "/v1/deployments/"+deploymentID+"/complete", token, nil)
 	require.Equal(t, http.StatusConflict, status)

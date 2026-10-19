@@ -1,37 +1,20 @@
 <script lang="ts">
-	import CircleCheck from '@lucide/svelte/icons/circle-check';
-	import CircleDashed from '@lucide/svelte/icons/circle-dashed';
-	import CircleMinus from '@lucide/svelte/icons/circle-minus';
-	import CircleSlash from '@lucide/svelte/icons/circle-slash';
-	import CircleX from '@lucide/svelte/icons/circle-x';
-	import Clock from '@lucide/svelte/icons/clock';
-	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
-	import type { NavIcon } from '$lib/navigation';
-	import type { Step, StepStatus } from '$lib/types/runs';
+	import type { Step } from '$lib/types/runs';
 	import { formatDuration } from '$lib/format';
 	import { clock } from '$lib/stores/clock.svelte';
 	import RunStepTree from './RunStepTree.svelte';
 	import StepLogView from './StepLogView.svelte';
+	import { deferredTLS, STEP_META } from './stepmeta';
 
 	let { steps, depth = 0 }: { steps: Step[]; depth?: number } = $props();
 
 	// Expansion is per step id, local to this level of the tree.
 	let expanded = $state<Record<string, boolean>>({});
-
-	const stepMeta: Record<StepStatus, { icon: NavIcon; class: string; spin?: boolean }> = {
-		pending: { icon: CircleDashed, class: 'text-text-ghost' },
-		waiting: { icon: Clock, class: 'text-status-warning' },
-		running: { icon: LoaderCircle, class: 'text-status-warning', spin: true },
-		succeeded: { icon: CircleCheck, class: 'text-status-success' },
-		failed: { icon: CircleX, class: 'text-status-danger' },
-		skipped: { icon: CircleMinus, class: 'text-text-ghost' },
-		cancelled: { icon: CircleSlash, class: 'text-text-muted' }
-	};
 </script>
 
 <div class="flex flex-col">
 	{#each steps as step (step.id)}
-		{@const meta = stepMeta[step.status]}
+		{@const meta = STEP_META[step.status]}
 		{@const Icon = meta.icon}
 		{@const tls = step.key.startsWith('tls:')}
 		<!-- A skipped TLS checkpoint is a deferred certificate: its snapshot is the only explanation, so it opens like a failure. -->
@@ -48,9 +31,9 @@
 				<!-- A skipped TLS checkpoint is a deferral, not an omission: it reads as a warning. -->
 				<Icon
 					size={15}
-					class="flex-none {tls && step.status === 'skipped'
-						? 'text-status-warning'
-						: meta.class} {meta.spin ? 'animate-spin' : ''}"
+					class="flex-none {deferredTLS(step) ? 'text-status-warning' : meta.class} {meta.spin
+						? 'animate-spin'
+						: ''}"
 				/>
 				<span class="text-text-secondary min-w-0 text-base {tls ? 'break-words' : 'truncate'}"
 					>{step.title}</span

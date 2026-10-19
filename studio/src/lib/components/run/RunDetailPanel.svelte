@@ -7,6 +7,8 @@
 	import { runCancellable, runKindLabel, runUnsettled } from '$lib/types/runs';
 	import { openStream } from '$lib/sse';
 	import { describeActor, formatDuration, formatDateTime } from '$lib/format';
+	import { serviceProgress } from '$lib/models/runservices';
+	import { readPref, writePref } from '$lib/prefs';
 	import { authState } from '$lib/stores/auth.svelte';
 	import { clock } from '$lib/stores/clock.svelte';
 	import { dialog } from '$lib/stores/dialog.svelte';
@@ -15,6 +17,8 @@
 	import Button from '$lib/components/ui/Button.svelte';
 	import CopyId from '$lib/components/ui/CopyId.svelte';
 	import ProgressBar from '$lib/components/ui/ProgressBar.svelte';
+	import Segmented from '$lib/components/ui/Segmented.svelte';
+	import RunServices from './RunServices.svelte';
 	import RunStepTree from './RunStepTree.svelte';
 
 	// Lives in the shared side panel; re-opening with a different runId
@@ -103,6 +107,20 @@
 	}
 	const deferredRoutes = $derived(countDeferred(tree?.steps));
 	const withWarnings = $derived(tree?.run.status === 'succeeded' && deferredRoutes > 0);
+
+	// A run whose steps name their services reads one row per service, the
+	// way the CLI shows a deploy; the step tree stays one switch away. Runs
+	// without services (backups, runs from before servers recorded them)
+	// only have the tree.
+	const services = $derived(tree ? serviceProgress(tree.steps) : null);
+	const VIEWS = ['services', 'steps'] as const;
+	type View = (typeof VIEWS)[number];
+	const VIEW_PREF = 'skali.run.view';
+	let view = $state<View>(readPref(VIEW_PREF, VIEWS, 'services'));
+	function setView(id: string) {
+		view = id as View;
+		writePref(VIEW_PREF, view);
+	}
 
 	const statusText: Record<string, string> = {
 		pending: 'text-text-muted',
@@ -213,6 +231,23 @@
 			</div>
 		{:else}
 			<div class="text-text-faint px-2 py-6 text-center text-base">no steps were recorded</div>
+		{/if}
+	{:else if services}
+		<div class="mb-1.5 px-2">
+			<Segmented
+				label="Run view"
+				value={view}
+				onchange={setView}
+				segments={[
+					{ id: 'services', label: 'Services' },
+					{ id: 'steps', label: 'Steps' }
+				]}
+			/>
+		</div>
+		{#if view === 'services'}
+			<RunServices rows={services} />
+		{:else}
+			<RunStepTree steps={tree.steps} />
 		{/if}
 	{:else}
 		<RunStepTree steps={tree.steps} />

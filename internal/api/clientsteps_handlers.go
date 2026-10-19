@@ -55,6 +55,22 @@ func clientStepKey(key string) bool {
 	return strings.HasPrefix(key, "artifacts.")
 }
 
+// clientStepService is the service a client step belongs to, which the
+// step records. The deployment hands each application its subtree root,
+// artifacts.<application> (the action's step_key), and an application key
+// never contains a dot, so the key's second segment names it.
+func clientStepService(key string) string {
+	rest, ok := strings.CutPrefix(key, "artifacts.")
+	if !ok {
+		return ""
+	}
+	application, _, _ := strings.Cut(rest, ".")
+	if application == "" {
+		return ""
+	}
+	return "applications." + application
+}
+
 // POST /v1/runs/{id}/steps
 func (h *clientStepsHandlers) ensureStep(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
@@ -98,7 +114,7 @@ func (h *clientStepsHandlers) ensureStep(w http.ResponseWriter, r *http.Request)
 		writeInternalError(r.Context(), w, "get parent step", err)
 		return
 	}
-	step, err := h.journal.EnsureStep(r.Context(), id, &parent.ID, req.Key, req.Title)
+	step, err := h.journal.EnsureServiceStep(r.Context(), id, &parent.ID, req.Key, req.Title, clientStepService(req.Key))
 	if errors.Is(err, journal.ErrRunFinished) {
 		writeError(w, http.StatusConflict, codeConflict, "the run has finished")
 		return

@@ -98,17 +98,19 @@ func (k *Kernel) reconcileTLS(ctx context.Context, a *runAttachment, target stor
 	for _, ref := range refs {
 		key := routeKeyOf(target.EnvironmentID, ref.Name)
 		var cert *module.CertificateStatus
-		var service, route string
+		// service names the route's owner in the title; owner is its dotted
+		// name, which the checkpoint records.
+		var service, owner, route string
 		var alias bool
 		for appKey, app := range rev.Definition.Applications {
 			for routeKey, declared := range app.Routes {
 				if rendering.RouteTLSName(rev.Definition.Name, appKey, routeKey) == ref.Name {
-					service = appKey
+					service, owner = appKey, "applications."+appKey
 					route = routeKey
 				}
 				for _, expression := range declared.Aliases {
 					if rendering.AliasTLSName(rev.Definition.Name, appKey, routeKey, expression) == ref.Name {
-						service, route, alias = appKey, routeKey, true
+						service, owner, route, alias = appKey, "applications."+appKey, routeKey, true
 					}
 				}
 			}
@@ -116,6 +118,7 @@ func (k *Kernel) reconcileTLS(ctx context.Context, a *runAttachment, target stor
 		for bucketKey, bucket := range rev.Definition.Buckets {
 			if bucket.Route != nil && rendering.BucketRouteTLSName(rev.Definition.Name, bucketKey) == ref.Name {
 				service = "buckets." + bucketKey
+				owner = service
 				route = "route"
 			}
 		}
@@ -262,9 +265,9 @@ func (k *Kernel) reconcileTLS(ctx context.Context, a *runAttachment, target stor
 			// outcome of the issuance it started, are the only events worth
 			// a run of their own.
 			if arrival != nil {
-				k.recordArrival(ctx, a, key, ref.Name, domain, probe, cert, arrival, now)
+				k.recordArrival(ctx, a, key, ref.Name, owner, domain, probe, cert, arrival, now)
 			} else if !record.awaiting.IsZero() && cert != nil {
-				if line := k.recordOutcome(ctx, a, key, ref.Name, title, domain, cert, usable, record.awaiting, now); line != "" {
+				if line := k.recordOutcome(ctx, a, key, ref.Name, owner, title, domain, cert, usable, record.awaiting, now); line != "" {
 					out.noteFailure(line)
 				}
 			}
@@ -329,7 +332,7 @@ func (k *Kernel) reconcileTLS(ctx context.Context, a *runAttachment, target stor
 			delete(fields, "retry_estimated")
 			detail = fmt.Sprintf("TLS deferred · %s does not reach this installation yet", probe.Domain) + serving
 			if attached {
-				a.tlsStep(ctx, "tls:"+ref.Name, title, journal.StepSkipped, "warn", detail, fields)
+				a.tlsStep(ctx, owner, "tls:"+ref.Name, title, journal.StepSkipped, "warn", detail, fields)
 			}
 			continue
 		}
@@ -357,7 +360,7 @@ func (k *Kernel) reconcileTLS(ctx context.Context, a *runAttachment, target stor
 			}
 		}
 		if attached {
-			a.tlsStep(ctx, "tls:"+ref.Name, title, state, level, detail, fields)
+			a.tlsStep(ctx, owner, "tls:"+ref.Name, title, state, level, detail, fields)
 		}
 	}
 	return out
@@ -367,7 +370,7 @@ func (k *Kernel) reconcileTLS(ctx context.Context, a *runAttachment, target stor
 // domain reached this edge and what the pass did about the certificate.
 // The run it creates closes with the pass; the issuance outcome follows in
 // a later pass through recordOutcome.
-func (k *Kernel) recordArrival(ctx context.Context, a *runAttachment, key routeKey, certName, domain string,
+func (k *Kernel) recordArrival(ctx context.Context, a *runAttachment, key routeKey, certName, owner, domain string,
 	probe *edgeprobe.Result, cert *module.CertificateStatus, arrival *arrivalNote, now time.Time) {
 	a.ensure(ctx)
 	fields := map[string]any{
@@ -385,14 +388,14 @@ func (k *Kernel) recordArrival(ctx context.Context, a *runAttachment, key routeK
 	lines := []string{domain + " now reaches this installation: " + probe.Message}
 	lines = append(lines, edgeAddressLines(probe.Addresses)...)
 	lines = append(lines, arrival.line)
-	a.completeStepFields(ctx, "arrival:"+certName, "Domain arrived: "+domain, arrival.status, lines, fields)
+	a.completeStepFields(ctx, owner, "arrival:"+certName, "Domain arrived: "+domain, arrival.status, lines, fields)
 	k.awaitIssuance(key, now)
 }
 
 // recordOutcome closes the story an arrival opened: the certificate became
 // usable, or the issuance attempt after the arrival failed. Either clears
 // the wait; a failure also fails the run this pass created.
-func (k *Kernel) recordOutcome(ctx context.Context, a *runAttachment, key routeKey, certName, title, domain string,
+func (k *Kernel) recordOutcome(ctx context.Context, a *runAttachment, key routeKey, certName, owner, title, domain string,
 	cert *module.CertificateStatus, usable bool, awaiting, now time.Time) (failure string) {
 	fields := map[string]any{"tls": true, "certificate": certName, "domain": domain, "secret": cert.SecretName,
 		"failed_attempts": cert.FailedAttempts, "reason": cert.Reason, "message": cert.Message}
@@ -401,7 +404,7 @@ func (k *Kernel) recordOutcome(ctx context.Context, a *runAttachment, key routeK
 		a.ensure(ctx)
 		fields["phase"] = "active"
 		fields["valid_until"] = cert.NotAfter.UTC().Format(time.RFC3339)
-		a.completeStepFields(ctx, "tls:"+certName, title, journal.StepSucceeded,
+		a.completeStepFields(ctx, owner, "tls:"+certName, title, journal.StepSucceeded,
 			[]string{"TLS certificate issued for " + domain}, fields)
 	case !cert.Issuing && !cert.LastFailureTime.Before(awaiting.Truncate(time.Second)):
 		a.ensure(ctx)
@@ -418,7 +421,7 @@ func (k *Kernel) recordOutcome(ctx context.Context, a *runAttachment, key routeK
 		if cert.Message != "" {
 			line += ": " + cert.Message
 		}
-		a.completeStepFields(ctx, "tls:"+certName, title, journal.StepFailed, []string{line}, fields)
+		a.completeStepFields(ctx, owner, "tls:"+certName, title, journal.StepFailed, []string{line}, fields)
 		failure = line
 	default:
 		return ""
@@ -440,10 +443,11 @@ func retriedCertificate(cert *module.CertificateStatus, message string) *module.
 	return &copy
 }
 
-// tlsStep persists a structured snapshot when state changes. The readable
-// message carries the same facts for CLI logs; stable absolute timestamps
-// avoid writing a new row every second of a countdown.
-func (a *runAttachment) tlsStep(ctx context.Context, key, title string, state journal.StepStatus, level, summary string, fields map[string]any) {
+// tlsStep persists a structured snapshot when state changes, as the work
+// of service (the route owner's dotted name). The readable message carries
+// the same facts for CLI logs; stable absolute timestamps avoid writing a
+// new row every second of a countdown.
+func (a *runAttachment) tlsStep(ctx context.Context, service, key, title string, state journal.StepStatus, level, summary string, fields map[string]any) {
 	step, known := a.steps[key]
 	if journal.Steps.Terminal(step.Status) {
 		return
@@ -472,6 +476,6 @@ func (a *runAttachment) tlsStep(ctx context.Context, key, title string, state jo
 	}
 	// A deferred route ends skipped straight from waiting, which reads as
 	// "set aside", exactly what happened; a decided one goes through running.
-	a.record(ctx, "journal TLS checkpoint", journal.StepRecord{Key: key, Title: title, To: state,
+	a.record(ctx, "journal TLS checkpoint", journal.StepRecord{Key: key, Title: title, Service: service, To: state,
 		Entries: []journal.LogEntry{{Level: level, Message: message, Fields: fields}}, Dedupe: true})
 }

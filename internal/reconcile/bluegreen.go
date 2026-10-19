@@ -244,12 +244,12 @@ func journalTraffic(ctx context.Context, attachment *runAttachment, plans map[st
 		plan := plans[key]
 		switch {
 		case plan.switching:
-			attachment.completeStep(ctx, "rollout:"+key, "Roll out "+key, journal.StepSucceeded, []string{
+			attachment.completeServiceStep(ctx, "applications."+key, "rollout:"+key, "Roll out "+key, journal.StepSucceeded, []string{
 				fmt.Sprintf("switching traffic to %d new replicas", plan.members),
 				fmt.Sprintf("retiring previous replicas after %s", drain.Truncate(time.Second)),
 			})
 		case plan.held():
-			attachment.waitStep(ctx, "rollout:"+key, "Roll out "+key,
+			attachment.waitServiceStep(ctx, "applications."+key, "rollout:"+key, "Roll out "+key,
 				fmt.Sprintf("starting %d new replicas (%d/%d ready)", plan.members, plan.ready, plan.members))
 		}
 	}

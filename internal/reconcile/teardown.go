@@ -75,6 +75,7 @@ func (k *Kernel) teardownEnvironment(ctx context.Context, state store.GetEnviron
 
 	// Runtime workloads, grouped per service for the journal.
 	for _, service := range teardownServices(snapshot) {
+		dotted := labelService(service)
 		var deleted []string
 		for _, kind := range workloadKinds {
 			for _, obj := range snapshot.Objects {
@@ -83,7 +84,7 @@ func (k *Kernel) teardownEnvironment(ctx context.Context, state store.GetEnviron
 				}
 				removed, err := k.deps.Cluster.Delete(ctx, obj.Ref)
 				if err != nil {
-					k.journalOpFailure(ctx, attachment, "delete:"+service, "Remove "+service, deleted, err)
+					k.journalServiceOpFailure(ctx, attachment, dotted, "delete:"+service, "Remove "+service, deleted, err)
 					return 0, err
 				}
 				if removed {
@@ -93,7 +94,7 @@ func (k *Kernel) teardownEnvironment(ctx context.Context, state store.GetEnviron
 		}
 		if len(deleted) > 0 {
 			attachment.ensure(ctx)
-			attachment.completeStep(ctx, "delete:"+service, "Remove "+service, journal.StepSucceeded, deleted)
+			attachment.completeServiceStep(ctx, dotted, "delete:"+service, "Remove "+service, journal.StepSucceeded, deleted)
 		}
 	}
 
@@ -272,6 +273,16 @@ func teardownServices(snapshot observe.Snapshot) []string {
 	}
 	sort.Strings(services)
 	return services
+}
+
+// labelService is the dotted name of the service a skali.dev/service label
+// value names: an application's objects carry its bare key, a bucket
+// route's its dotted name.
+func labelService(label string) string {
+	if strings.Contains(label, ".") {
+		return label
+	}
+	return "applications." + label
 }
 
 // observedNamespace finds the environment's namespace in the snapshot.

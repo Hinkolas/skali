@@ -714,15 +714,19 @@ func (s *seeder) runDeployment(ctx context.Context, proj *store.Project, env *st
 		return uuid.Nil, err
 	}
 	for _, key := range services {
-		lines := []string{"applied " + key + " resources"}
+		// Claims are provisioned, applications applied, under the keys and
+		// service names the reconciler journals.
+		service, stepKey, title := key, "claim:"+key, "Provision "+key
+		var lines []string
 		if strings.HasPrefix(key, "databases.") {
 			lines = []string{"claim bound to pool pg17-shared", "tenant provisioned", "credentials published"}
 		} else if strings.HasPrefix(key, "buckets.") {
 			lines = []string{"bucket allocated on the object store", "credentials published"}
 		} else {
-			lines = append(lines, "deployment "+key+" rolled to the new image")
+			service, stepKey, title = "applications."+key, "apply:"+key, "Apply "+key
+			lines = []string{"applied " + key + " resources", "deployment " + key + " rolled to the new image"}
 		}
-		if err := s.completeStep(ctx, result.RunID, &rollout.ID, "apply:"+key, "Apply "+key, redactor, lines); err != nil {
+		if err := s.completeServiceStep(ctx, result.RunID, &rollout.ID, service, stepKey, title, redactor, lines); err != nil {
 			return uuid.Nil, err
 		}
 	}
@@ -847,7 +851,7 @@ func (s *seeder) finishRollout(ctx context.Context, runID, envID uuid.UUID, appl
 		return err
 	}
 	for _, app := range applications {
-		if err := s.completeStep(ctx, runID, &rollout.ID, "apply:"+app, "Apply "+app, redactor,
+		if err := s.completeServiceStep(ctx, runID, &rollout.ID, "applications."+app, "apply:"+app, "Apply "+app, redactor,
 			[]string{"deployment " + app + " restarted"}); err != nil {
 			return err
 		}
@@ -1012,17 +1016,24 @@ func (s *seeder) holdRestore(ctx context.Context, env *store.Environment, runID,
 
 func (s *seeder) completeStep(ctx context.Context, runID uuid.UUID, parent *uuid.UUID, key, title string,
 	redactor *redact.Redactor, lines []string) error {
-	return s.closeStep(ctx, runID, parent, key, title, redactor, lines, journal.AttemptSucceeded, journal.StepSucceeded)
+	return s.closeStep(ctx, runID, parent, "", key, title, redactor, lines, journal.AttemptSucceeded, journal.StepSucceeded)
+}
+
+// completeServiceStep is completeStep for the work of one service, named
+// by its dotted name.
+func (s *seeder) completeServiceStep(ctx context.Context, runID uuid.UUID, parent *uuid.UUID, service, key, title string,
+	redactor *redact.Redactor, lines []string) error {
+	return s.closeStep(ctx, runID, parent, service, key, title, redactor, lines, journal.AttemptSucceeded, journal.StepSucceeded)
 }
 
 func (s *seeder) failStep(ctx context.Context, runID uuid.UUID, parent *uuid.UUID, key, title string,
 	redactor *redact.Redactor, lines []string) error {
-	return s.closeStep(ctx, runID, parent, key, title, redactor, lines, journal.AttemptFailed, journal.StepFailed)
+	return s.closeStep(ctx, runID, parent, "", key, title, redactor, lines, journal.AttemptFailed, journal.StepFailed)
 }
 
-func (s *seeder) closeStep(ctx context.Context, runID uuid.UUID, parent *uuid.UUID, key, title string,
+func (s *seeder) closeStep(ctx context.Context, runID uuid.UUID, parent *uuid.UUID, service, key, title string,
 	redactor *redact.Redactor, lines []string, attemptStatus journal.AttemptStatus, stepStatus journal.StepStatus) error {
-	step, err := s.journal.EnsureStep(ctx, runID, parent, key, title)
+	step, err := s.journal.EnsureServiceStep(ctx, runID, parent, key, title, service)
 	if err != nil {
 		return err
 	}
