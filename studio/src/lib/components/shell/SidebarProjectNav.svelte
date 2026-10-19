@@ -5,7 +5,9 @@
 	import type { ServiceView } from '$lib/models/service';
 	import type { Project } from '$lib/types/project';
 	import { PROJECT_TABS, shipped } from '$lib/navigation';
+	import { envRuns } from '$lib/stores/envruns.svelte';
 	import { envStatus } from '$lib/stores/envstatus.svelte';
+	import { runKindLabel } from '$lib/types/runs';
 	import Skeleton from '$lib/components/ui/Skeleton.svelte';
 	import StatusDot from '$lib/components/ui/StatusDot.svelte';
 	import TypeBadge from '$lib/components/ui/TypeBadge.svelte';
@@ -18,6 +20,12 @@
 	const pathname = $derived(page.url.pathname);
 	const base = $derived(`/projects/${project.name}`);
 	const env = $derived((page.data.env as { name: string } | null)?.name ?? null);
+
+	// The Deployments item marks a run in flight in the selected
+	// environment, whatever its kind: the page leads with it.
+	const activity = $derived(
+		envRuns.active ? `${runKindLabel(envRuns.active.kind)} in progress` : null
+	);
 
 	// Active service row tint follows the service type (cyan for DBs etc.),
 	// matching the underline tints in ServiceTabs.
@@ -38,6 +46,7 @@
 			label={tab.label}
 			icon={tab.icon}
 			active={tab.slug ? pathname.startsWith(path) : pathname === base}
+			activity={tab.slug === 'deployments' ? activity : null}
 		/>
 	{/each}
 </div>

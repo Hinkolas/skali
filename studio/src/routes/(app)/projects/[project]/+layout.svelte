@@ -1,12 +1,13 @@
 <script lang="ts">
-	// Drives the live status store for the resolved environment. $effect runs
-	// in the browser only; sync() is idempotent per environment id, so load
-	// re-runs do not churn the stream. The stream's first event is the full
-	// status document, so the layout paints before any status arrives and
-	// consumers show a pending state until then.
+	// Drives the live status and run stores for the resolved environment.
+	// $effect runs in the browser only; sync() is idempotent per environment
+	// id, so load re-runs do not churn the streams. Each stream's first
+	// event is the full document, so the layout paints before either
+	// arrives and consumers show a pending state (or their seed) until then.
 	import { onDestroy, untrack, type Snippet } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
+	import { envRuns } from '$lib/stores/envruns.svelte';
 	import { envStatus } from '$lib/stores/envstatus.svelte';
 	import { toast } from '$lib/stores/toast.svelte';
 	import { followProject } from '$lib/projectstream';
@@ -29,9 +30,16 @@
 	$effect(() => {
 		if (data.env && data.env.access !== 'none' && data.env.state !== 'releasing') {
 			envStatus.sync(data.env.id);
-		} else envStatus.stop();
+			envRuns.sync(data.env.id);
+		} else {
+			envStatus.stop();
+			envRuns.stop();
+		}
 	});
-	onDestroy(() => envStatus.stop());
+	onDestroy(() => {
+		envStatus.stop();
+		envRuns.stop();
+	});
 
 	// One change stream per open project keeps every page below current.
 	// Keyed on the id alone: each refresh hands in a new project object.

@@ -7,6 +7,7 @@
 		icon: Icon,
 		active = false,
 		badge,
+		activity,
 		activeClass = 'bg-accent/10 inset-ring inset-ring-accent/25 text-accent-nav'
 	}: {
 		href: string;
@@ -14,6 +15,8 @@
 		icon: NavIcon;
 		active?: boolean;
 		badge?: string | number;
+		/** Work in flight behind the page, as a pulsing mark; the text is its title. */
+		activity?: string | null;
 		/** Override for non-violet contexts (e.g. cyan in the database sidebar). */
 		activeClass?: string;
 	} = $props();
@@ -28,6 +31,14 @@
 >
 	<Icon size={17} strokeWidth={1.75} class="flex-none opacity-90" />
 	{label}
+	{#if activity}
+		<span
+			title={activity}
+			class="bg-status-warning ml-auto size-[7px] flex-none animate-pulse rounded-full"
+		>
+			<span class="sr-only">{activity}</span>
+		</span>
+	{/if}
 	{#if badge !== undefined}
 		<span class="font-mono text-text-secondary ml-auto rounded-md bg-white/8 px-1.75 py-px text-xs">
 			{badge}
