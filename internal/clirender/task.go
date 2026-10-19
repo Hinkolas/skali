@@ -158,6 +158,10 @@ func (task *Task) Skip(detail string) { task.finish("skipped", detail, false) }
 // cause survives the transient spinner display.
 func (task *Task) Fail() { task.finish("failed", "", true) }
 
+// Cancel settles the task as stopped by an interrupt. Nothing failed, so
+// its output is not replayed.
+func (task *Task) Cancel() { task.finish("cancelled", "", false) }
+
 func (task *Task) finish(status, detail string, replayTail bool) {
 	if task.stop != nil {
 		close(task.stop)

@@ -42,10 +42,11 @@ func newDeployCommand() *cobra.Command {
 			"remembered for the environment in .skali/, else a one-time pick among\n" +
 			"the checkout's .env/.env.* files that is remembered from then on;\n" +
 			"--pick-env-file asks again. Without env files the stored values apply.\n\n" +
-			"Builds and pushes need this terminal; once they are done the run\n" +
-			"continues on the server and the live view says so: d detaches and\n" +
-			"leaves it running, Ctrl-C pressed twice cancels it. --detach returns\n" +
-			"as soon as the run is handed over.",
+			"Builds and pushes need this terminal, so Ctrl-C during them (or\n" +
+			"closing the terminal) cancels the deployment. Once they are done the\n" +
+			"run continues on the server and the live view says so: d detaches\n" +
+			"and leaves it running, Ctrl-C pressed twice cancels it. --detach\n" +
+			"returns as soon as the run is handed over.",
 		Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
 			if opts.BuildMode != "" && opts.BuildMode != "local" && opts.BuildMode != "auto" {
