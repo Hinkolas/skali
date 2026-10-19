@@ -102,6 +102,7 @@ type stepPayload struct {
 	ID              string           `json:"id"`
 	Key             string           `json:"key"`
 	Title           string           `json:"title"`
+	Service         *string          `json:"service,omitempty"`
 	Status          string           `json:"status"`
 	ProgressCurrent *int64           `json:"progress_current,omitempty"`
 	ProgressTotal   *int64           `json:"progress_total,omitempty"`
@@ -117,6 +118,7 @@ func newStepPayload(node *journal.TreeStep) stepPayload {
 		ID:              node.Step.ID.String(),
 		Key:             node.Step.Key,
 		Title:           node.Step.Title,
+		Service:         node.Step.Service,
 		Status:          node.Step.Status,
 		ProgressCurrent: node.Step.ProgressCurrent,
 		ProgressTotal:   node.Step.ProgressTotal,

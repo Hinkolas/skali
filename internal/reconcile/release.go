@@ -42,24 +42,25 @@ const releaseTailLines = int64(40)
 func (k *Kernel) ensureRelease(ctx context.Context, attachment *runAttachment, target store.EnvironmentTarget,
 	service string, job *batchv1.Job, snapshot observe.Snapshot) (releaseState, string, error) {
 	stepKey, title := "release:"+service, "Run release command for "+service
+	dotted := "applications." + service
 	live := liveReleaseJob(snapshot, job.Namespace, job.Name)
 	if live == nil || live.Job == nil {
 		changed, err := k.executeOps(ctx, []Op{{Kind: OpApply, Object: job}})
 		if err != nil {
-			k.journalOpFailure(ctx, attachment, stepKey, title, changed, err)
+			k.journalServiceOpFailure(ctx, attachment, dotted, stepKey, title, changed, err)
 			return releaseRunning, "", err
 		}
 		if len(changed) > 0 {
 			attachment.ensure(ctx)
 		}
 		reason := "the release command is starting"
-		attachment.waitStep(ctx, stepKey, title, reason)
+		attachment.waitServiceStep(ctx, dotted, stepKey, title, reason)
 		return releaseRunning, reason, nil
 	}
 	status := live.Job
 	switch {
 	case status.Succeeded:
-		attachment.completeStep(ctx, stepKey, title, journal.StepSucceeded,
+		attachment.completeServiceStep(ctx, dotted, stepKey, title, journal.StepSucceeded,
 			[]string{"release command completed"})
 		return releaseDone, "", nil
 	case status.Failed:
@@ -67,24 +68,24 @@ func (k *Kernel) ensureRelease(ctx context.Context, attachment *runAttachment, t
 			// The failure predates the promote, so it belongs to an earlier
 			// attempt; deleting it lets this attempt run afresh.
 			if _, err := k.deps.Cluster.Delete(ctx, live.Ref); err != nil {
-				k.journalOpFailure(ctx, attachment, stepKey, title, nil, err)
+				k.journalServiceOpFailure(ctx, attachment, dotted, stepKey, title, nil, err)
 				return releaseRunning, "", err
 			}
 			reason := "retrying the release command"
-			attachment.waitStep(ctx, stepKey, title, reason)
+			attachment.waitServiceStep(ctx, dotted, stepKey, title, reason)
 			return releaseRunning, reason, nil
 		}
 		// Only an in-flight run journals the failure (and pays for the log
 		// read); the run-less resync passes that follow a failed first
 		// deployment stay silent until a new promote retries.
 		if attachment.active() {
-			attachment.completeStep(ctx, stepKey, title, journal.StepFailed,
+			attachment.completeServiceStep(ctx, dotted, stepKey, title, journal.StepFailed,
 				k.releaseFailureLines(ctx, job.Namespace, job.Name, status))
 		}
 		return releaseFailed, releaseFailureLine(status), nil
 	default:
 		reason := "the release command is running"
-		attachment.waitStep(ctx, stepKey, title, reason)
+		attachment.waitServiceStep(ctx, dotted, stepKey, title, reason)
 		return releaseRunning, reason, nil
 	}
 }

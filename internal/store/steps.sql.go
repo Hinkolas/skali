@@ -61,15 +61,16 @@ WITH open_run AS (
     WHERE runs.id = $1::uuid AND runs.status IN ('pending', 'running')
     FOR KEY SHARE
 ), inserted AS (
-    INSERT INTO steps (id, run_id, parent_id, key, title)
-    SELECT $2::uuid, open_run.id, $3::uuid, $4::text, $5::text
+    INSERT INTO steps (id, run_id, parent_id, key, title, service)
+    SELECT $2::uuid, open_run.id, $3::uuid, $4::text, $5::text,
+           $6::text
     FROM open_run
     ON CONFLICT (run_id, key) DO NOTHING
-    RETURNING id, run_id, parent_id, key, title, status, progress_current, progress_total, created_at, started_at, finished_at
+    RETURNING id, run_id, parent_id, key, title, status, progress_current, progress_total, created_at, started_at, finished_at, service
 )
-SELECT id, run_id, parent_id, key, title, status, progress_current, progress_total, created_at, started_at, finished_at FROM inserted
+SELECT id, run_id, parent_id, key, title, status, progress_current, progress_total, created_at, started_at, finished_at, service FROM inserted
 UNION ALL
-SELECT id, run_id, parent_id, key, title, status, progress_current, progress_total, created_at, started_at, finished_at FROM steps WHERE steps.run_id = $1::uuid AND steps.key = $4::text
+SELECT id, run_id, parent_id, key, title, status, progress_current, progress_total, created_at, started_at, finished_at, service FROM steps WHERE steps.run_id = $1::uuid AND steps.key = $4::text
 `
 
 type EnsureStepParams struct {
@@ -78,6 +79,7 @@ type EnsureStepParams struct {
 	ParentID *uuid.UUID
 	Key      string
 	Title    string
+	Service  *string
 }
 
 type EnsureStepRow struct {
@@ -92,10 +94,12 @@ type EnsureStepRow struct {
 	CreatedAt       time.Time
 	StartedAt       *time.Time
 	FinishedAt      *time.Time
+	Service         *string
 }
 
 // Steps are addressed by their deterministic (run_id, key); creation is
 // idempotent so a restarted controller reattaches instead of duplicating.
+// A step's service is set when it is created and never changes.
 // EnsureStep creates the step unless its (run_id, key) exists and returns
 // the step either way, in one round trip. The select cannot see this
 // statement's own insert, so the two halves never both return; a step
@@ -110,6 +114,7 @@ func (q *Queries) EnsureStep(ctx context.Context, arg EnsureStepParams) (EnsureS
 		arg.ParentID,
 		arg.Key,
 		arg.Title,
+		arg.Service,
 	)
 	var i EnsureStepRow
 	err := row.Scan(
@@ -124,12 +129,13 @@ func (q *Queries) EnsureStep(ctx context.Context, arg EnsureStepParams) (EnsureS
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.FinishedAt,
+		&i.Service,
 	)
 	return i, err
 }
 
 const getStepByID = `-- name: GetStepByID :one
-SELECT id, run_id, parent_id, key, title, status, progress_current, progress_total, created_at, started_at, finished_at FROM steps WHERE id = $1
+SELECT id, run_id, parent_id, key, title, status, progress_current, progress_total, created_at, started_at, finished_at, service FROM steps WHERE id = $1
 `
 
 func (q *Queries) GetStepByID(ctx context.Context, id uuid.UUID) (Step, error) {
@@ -147,12 +153,13 @@ func (q *Queries) GetStepByID(ctx context.Context, id uuid.UUID) (Step, error) {
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.FinishedAt,
+		&i.Service,
 	)
 	return i, err
 }
 
 const getStepByRunAndKey = `-- name: GetStepByRunAndKey :one
-SELECT id, run_id, parent_id, key, title, status, progress_current, progress_total, created_at, started_at, finished_at FROM steps WHERE run_id = $1 AND key = $2
+SELECT id, run_id, parent_id, key, title, status, progress_current, progress_total, created_at, started_at, finished_at, service FROM steps WHERE run_id = $1 AND key = $2
 `
 
 type GetStepByRunAndKeyParams struct {
@@ -175,6 +182,7 @@ func (q *Queries) GetStepByRunAndKey(ctx context.Context, arg GetStepByRunAndKey
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.FinishedAt,
+		&i.Service,
 	)
 	return i, err
 }
@@ -227,7 +235,7 @@ func (q *Queries) ListStepStates(ctx context.Context, runID uuid.UUID) ([]ListSt
 }
 
 const listStepsByRun = `-- name: ListStepsByRun :many
-SELECT id, run_id, parent_id, key, title, status, progress_current, progress_total, created_at, started_at, finished_at FROM steps WHERE run_id = $1 ORDER BY created_at
+SELECT id, run_id, parent_id, key, title, status, progress_current, progress_total, created_at, started_at, finished_at, service FROM steps WHERE run_id = $1 ORDER BY created_at
 `
 
 func (q *Queries) ListStepsByRun(ctx context.Context, runID uuid.UUID) ([]Step, error) {
@@ -251,6 +259,7 @@ func (q *Queries) ListStepsByRun(ctx context.Context, runID uuid.UUID) ([]Step, 
 			&i.CreatedAt,
 			&i.StartedAt,
 			&i.FinishedAt,
+			&i.Service,
 		); err != nil {
 			return nil, err
 		}
@@ -281,25 +290,25 @@ WITH open_run AS (
         LIMIT 1
     ) IS DISTINCT FROM (($5::jsonb -> -1) ->> 'message') AS lines
 ), inserted AS (
-    INSERT INTO steps (id, run_id, parent_id, key, title, status, started_at, finished_at)
+    INSERT INTO steps (id, run_id, parent_id, key, title, service, status, started_at, finished_at)
     SELECT $1::uuid, $2::uuid, $6::uuid,
-           $3::text, $7::text, $8::text,
-           CASE WHEN $8::text IN ('running', 'succeeded', 'failed') THEN now() END,
-           CASE WHEN $8::text IN ('succeeded', 'failed', 'skipped', 'cancelled') THEN now() END
+           $3::text, $7::text, $8::text, $9::text,
+           CASE WHEN $9::text IN ('running', 'succeeded', 'failed') THEN now() END,
+           CASE WHEN $9::text IN ('succeeded', 'failed', 'skipped', 'cancelled') THEN now() END
     WHERE NOT EXISTS (SELECT 1 FROM existing) AND EXISTS (SELECT 1 FROM open_run)
     ON CONFLICT (run_id, key) DO NOTHING
     RETURNING steps.id
 ), updated AS (
     UPDATE steps SET
-        status = $8::text,
-        started_at = CASE WHEN $8::text IN ('running', 'succeeded', 'failed')
+        status = $9::text,
+        started_at = CASE WHEN $9::text IN ('running', 'succeeded', 'failed')
             THEN COALESCE(steps.started_at, now()) ELSE steps.started_at END,
-        finished_at = CASE WHEN $8::text IN ('succeeded', 'failed', 'skipped', 'cancelled')
+        finished_at = CASE WHEN $9::text IN ('succeeded', 'failed', 'skipped', 'cancelled')
             THEN now() ELSE steps.finished_at END
     FROM existing, fresh
     WHERE steps.id = existing.id
-      AND steps.status = ANY($9::text[])
-      AND (steps.status <> $8::text OR fresh.lines)
+      AND steps.status = ANY($10::text[])
+      AND (steps.status <> $9::text OR fresh.lines)
       AND EXISTS (SELECT 1 FROM open_run)
       AND NOT EXISTS (
           SELECT 1 FROM attempts WHERE attempts.step_id = steps.id AND attempts.status = 'running')
@@ -310,11 +319,11 @@ WITH open_run AS (
     SELECT updated.id FROM updated
 ), attempt AS (
     INSERT INTO attempts (id, step_id, number, status, executor_id, finished_at)
-    SELECT $10::uuid, step.id,
+    SELECT $11::uuid, step.id,
            (SELECT COALESCE(MAX(number), 0) + 1 FROM attempts WHERE attempts.step_id = step.id),
-           $11::text, $12::text, now()
+           $12::text, $13::text, now()
     FROM step, fresh
-    WHERE fresh.lines AND $8::text <> 'running'
+    WHERE fresh.lines AND $9::text <> 'running'
     RETURNING attempts.id, attempts.number
 ), entries AS (
     INSERT INTO run_logs (id, attempt_id, seq, level, message, fields)
@@ -341,6 +350,7 @@ type RecordStepParams struct {
 	Entries       []byte
 	ParentID      *uuid.UUID
 	Title         string
+	Service       *string
 	Status        string
 	FromStatuses  []string
 	AttemptID     uuid.UUID
@@ -382,6 +392,7 @@ func (q *Queries) RecordStep(ctx context.Context, arg RecordStepParams) (RecordS
 		arg.Entries,
 		arg.ParentID,
 		arg.Title,
+		arg.Service,
 		arg.Status,
 		arg.FromStatuses,
 		arg.AttemptID,

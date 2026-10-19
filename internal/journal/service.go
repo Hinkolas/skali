@@ -257,12 +257,20 @@ func (s *Service) concluded(ctx context.Context, id uuid.UUID, environmentID *uu
 // EnsureStep is idempotent on (run_id, key): after a restart the controller
 // reattaches to the same logical step instead of duplicating it.
 func (s *Service) EnsureStep(ctx context.Context, runID uuid.UUID, parentID *uuid.UUID, key, title string) (*store.Step, error) {
+	return s.EnsureServiceStep(ctx, runID, parentID, key, title, "")
+}
+
+// EnsureServiceStep is EnsureStep for a step of one service, named by its
+// dotted name (applications.web); a step that already exists keeps the
+// service it was created with. An empty service marks environment-wide
+// work.
+func (s *Service) EnsureServiceStep(ctx context.Context, runID uuid.UUID, parentID *uuid.UUID, key, title, service string) (*store.Step, error) {
 	id, err := uuid.NewV7()
 	if err != nil {
 		return nil, fmt.Errorf("journal: generate id: %w", err)
 	}
 	row, err := s.st.EnsureStep(ctx, store.EnsureStepParams{
-		ID: id, RunID: runID, ParentID: parentID, Key: key, Title: title,
+		ID: id, RunID: runID, ParentID: parentID, Key: key, Title: title, Service: serviceTag(service),
 	})
 	step := store.Step(row)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -320,6 +328,10 @@ type StepRecord struct {
 	ParentID *uuid.UUID
 	Key      string
 	Title    string
+	// Service names the service the step belongs to by its dotted name
+	// (applications.web, databases.main); empty for environment-wide work.
+	// Only the record that creates the step sets it.
+	Service string
 	// To is the status the step moves to.
 	To StepStatus
 	// Entries are the lines of the finished attempt the record writes; it
@@ -389,7 +401,7 @@ func (s *Service) RecordStep(ctx context.Context, record StepRecord, redactor *r
 		}
 		row, err = s.st.RecordStep(ctx, store.RecordStepParams{
 			ID: stepID, RunID: record.RunID, ParentID: record.ParentID, Key: record.Key, Title: record.Title,
-			Status: string(record.To), FromStatuses: statuses(from), Dedupe: record.Dedupe,
+			Service: serviceTag(record.Service), Status: string(record.To), FromStatuses: statuses(from), Dedupe: record.Dedupe,
 			AttemptID: attemptID, AttemptStatus: string(attemptStatus), ExecutorID: s.executorID,
 			Entries: encoded,
 		})
@@ -420,6 +432,14 @@ func (s *Service) RecordStep(ctx context.Context, record StepRecord, redactor *r
 	}
 	s.notifyRun(record.RunID)
 	return StepState{ID: row.StepID, Status: record.To, Latest: latestLine(lines)}, nil
+}
+
+// serviceTag is a step's service column: NULL for environment-wide work.
+func serviceTag(service string) *string {
+	if service == "" {
+		return nil
+	}
+	return &service
 }
 
 // recordSources are the statuses a step reaches to from in one record: the

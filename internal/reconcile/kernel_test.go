@@ -336,10 +336,14 @@ func TestReconcileAppliesAndActivatesDeployment(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "succeeded", tree.Run.Status)
 	keys := map[string]string{}
+	services := map[string]string{}
 	var collect func(steps []*journal.TreeStep)
 	collect = func(steps []*journal.TreeStep) {
 		for _, step := range steps {
 			keys[step.Step.Key] = step.Step.Status
+			if step.Step.Service != nil {
+				services[step.Step.Key] = *step.Step.Service
+			}
 			collect(step.Children)
 		}
 	}
@@ -348,6 +352,8 @@ func TestReconcileAppliesAndActivatesDeployment(t *testing.T) {
 	require.Equal(t, "succeeded", keys["apply:web"])
 	require.Equal(t, "succeeded", keys["verify"])
 	require.Equal(t, "succeeded", keys["activate"])
+	// The application's work carries its service; the environment's none.
+	require.Equal(t, map[string]string{"apply:web": "applications.web"}, services)
 }
 
 // A pass that changes nothing writes no journal rows, and deleting every

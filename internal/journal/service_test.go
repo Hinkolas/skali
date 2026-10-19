@@ -341,6 +341,40 @@ func TestRecordStepAfterConcurrentInsert(t *testing.T) {
 	require.Len(t, events, 1)
 }
 
+// A step records the service whose work it is when it is created; later
+// writes under the same key keep it, and environment-wide steps have none.
+func TestStepService(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	ctx := context.Background()
+	run := f.startRun(t)
+
+	_, err := f.svc.RecordStep(ctx, StepRecord{RunID: run.ID, Key: "apply:web", Title: "Apply web",
+		Service: "applications.web", To: StepWaiting, Entries: []LogEntry{{Level: "info", Message: "waiting"}}}, nil)
+	require.NoError(t, err)
+	_, err = f.svc.RecordStep(ctx, StepRecord{RunID: run.ID, Key: "apply:web", Title: "Apply web",
+		Service: "applications.other", To: StepSucceeded, Entries: []LogEntry{{Level: "info", Message: "applied"}}}, nil)
+	require.NoError(t, err)
+	parent, err := f.svc.EnsureServiceStep(ctx, run.ID, nil, "artifacts.web", "web", "applications.web")
+	require.NoError(t, err)
+	again, err := f.svc.EnsureStep(ctx, run.ID, nil, "artifacts.web", "web")
+	require.NoError(t, err)
+	require.Equal(t, parent.Service, again.Service)
+	_, err = f.svc.RecordStep(ctx, StepRecord{RunID: run.ID, Key: "verify", Title: "Verify health",
+		To: StepSucceeded, Entries: []LogEntry{{Level: "info", Message: "healthy"}}}, nil)
+	require.NoError(t, err)
+
+	tree, err := f.svc.RunTree(ctx, run.ID)
+	require.NoError(t, err)
+	services := map[string]*string{}
+	for _, node := range tree.Steps {
+		services[node.Step.Key] = node.Step.Service
+	}
+	require.Equal(t, "applications.web", *services["apply:web"])
+	require.Equal(t, "applications.web", *services["artifacts.web"])
+	require.Nil(t, services["verify"])
+}
+
 func TestFinishRunForcesTerminality(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)

@@ -215,9 +215,9 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 				}
 				stepKey, title := "claim:"+dotted, "Provision "+dotted
 				if reason := claimWaiting[dotted]; reason != "" {
-					attachment.waitStep(ctx, stepKey, title, reason)
+					attachment.waitServiceStep(ctx, dotted, stepKey, title, reason)
 				} else if attachment.adopted() {
-					attachment.completeStep(ctx, stepKey, title, journal.StepSucceeded,
+					attachment.completeServiceStep(ctx, dotted, stepKey, title, journal.StepSucceeded,
 						[]string{noun + " provisioned; connection outputs published"})
 				}
 				// A bucket's edge objects (its route) apply beside the claim
@@ -229,23 +229,23 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 				if objs, ok := desired.services[dotted]; ok && len(objs.rest) > 0 {
 					serviceChanged, err := k.executeOps(ctx, applyAll(objs.rest))
 					if err != nil {
-						k.journalOpFailure(ctx, attachment, "apply:"+dotted, "Apply "+dotted, serviceChanged, err)
+						k.journalServiceOpFailure(ctx, attachment, dotted, "apply:"+dotted, "Apply "+dotted, serviceChanged, err)
 						return 0, err
 					}
 					if len(serviceChanged) > 0 {
 						attachment.ensure(ctx)
-						attachment.completeStep(ctx, "apply:"+dotted, "Apply "+dotted,
+						attachment.completeServiceStep(ctx, dotted, "apply:"+dotted, "Apply "+dotted,
 							journal.StepSucceeded, serviceChanged)
 					}
 				}
 				continue
 			}
 			if reason, waits := waiting[dotted]; waits {
-				attachment.waitStep(ctx, "apply:"+service, "Apply "+service, reason)
+				attachment.waitServiceStep(ctx, dotted, "apply:"+service, "Apply "+service, reason)
 				continue
 			}
 			if blockedOn != "" {
-				attachment.waitStep(ctx, "apply:"+service, "Apply "+service, "waiting for "+blockedOn)
+				attachment.waitServiceStep(ctx, dotted, "apply:"+service, "Apply "+service, "waiting for "+blockedOn)
 				continue
 			}
 			objs := desired.services[service]
@@ -296,12 +296,12 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 				plan.held() && plan.pendingReplicas != nil)
 			serviceChanged, err := k.executeOps(ctx, ops)
 			if err != nil {
-				k.journalOpFailure(ctx, attachment, "apply:"+service, "Apply "+service, serviceChanged, err)
+				k.journalServiceOpFailure(ctx, attachment, dotted, "apply:"+service, "Apply "+service, serviceChanged, err)
 				return 0, err
 			}
 			if len(serviceChanged) > 0 {
 				attachment.ensure(ctx)
-				attachment.completeStep(ctx, "apply:"+service, "Apply "+service,
+				attachment.completeServiceStep(ctx, dotted, "apply:"+service, "Apply "+service,
 					journal.StepSucceeded, serviceChanged)
 			}
 		}
@@ -459,7 +459,7 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 			// environment has nothing to fall back to and keeps its
 			// target, where level-triggered reconciliation continues and a
 			// late recovery still activates.
-			attachment.completeStepFields(ctx, "verify", "Verify health", journal.StepFailed,
+			attachment.completeStepFields(ctx, "", "verify", "Verify health", journal.StepFailed,
 				[]string{strings.Join(healthSummary(statuses), "\n")}, healthFields(statuses))
 			attachment.finish(ctx, journal.RunFailed, rolloutFailure(tls, statuses))
 			rows, err := k.deps.Deploy.FallbackTargetLocked(ctx, store.FallbackEnvironmentTargetParams{
@@ -481,7 +481,7 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 			// leaving the queue until the audit.
 			return soonest(soonest(healthCheck, retireRequeue), tls.requeue), nil
 		}
-		attachment.waitStepFields(ctx, "verify", "Verify health",
+		attachment.waitStepFields(ctx, "", "verify", "Verify health",
 			strings.Join(healthSummary(statuses), "\n"), healthFields(statuses))
 	}
 	return soonest(soonest(healthCheck, retireRequeue), tls.requeue), nil
@@ -616,12 +616,18 @@ func (k *Kernel) activate(ctx context.Context, attachment *runAttachment, target
 	return nil
 }
 
-// journalOpFailure records a failed cluster operation. An adopted
-// deployment run stays running (the rollout deadline governs its fate); a
-// created reconcile run fails immediately.
+// journalOpFailure records a failed environment-wide cluster operation.
+// An adopted deployment run stays running (the rollout deadline governs its
+// fate); a created reconcile run fails immediately.
 func (k *Kernel) journalOpFailure(ctx context.Context, attachment *runAttachment, key, title string, done []string, cause error) {
+	k.journalServiceOpFailure(ctx, attachment, "", key, title, done, cause)
+}
+
+// journalServiceOpFailure is journalOpFailure for an operation of one
+// service, named by its dotted name.
+func (k *Kernel) journalServiceOpFailure(ctx context.Context, attachment *runAttachment, service, key, title string, done []string, cause error) {
 	attachment.ensure(ctx)
-	attachment.completeStep(ctx, key, title, journal.StepFailed,
+	attachment.completeServiceStep(ctx, service, key, title, journal.StepFailed,
 		append(done, "operation failed: "+cause.Error()))
 	if attachment.created {
 		attachment.finish(ctx, journal.RunFailed, title+" failed: "+cause.Error())

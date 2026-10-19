@@ -49,6 +49,8 @@ export interface Step {
 	id: string;
 	key: string;
 	title: string;
+	/** The service whose work the step is, by dotted name (applications.web); absent on environment-wide steps. */
+	service?: string;
 	status: StepStatus;
 	progress_current?: number;
 	progress_total?: number;

@@ -178,16 +178,25 @@ func (a *runAttachment) ensure(ctx context.Context) {
 	a.steps = map[string]journal.StepState{}
 }
 
-// completeStep journals one already-performed piece of work as a step with
-// a single finished attempt. A terminal step of the same key (an earlier
-// pass in this run already did this) skips silently.
+// completeStep journals one already-performed piece of environment-wide
+// work as a step with a single finished attempt. A terminal step of the
+// same key (an earlier pass in this run already did this) skips silently.
 func (a *runAttachment) completeStep(ctx context.Context, key, title string, status journal.StepStatus, logs []string) {
-	a.completeStepFields(ctx, key, title, status, logs, nil)
+	a.completeStepFields(ctx, "", key, title, status, logs, nil)
+}
+
+// completeServiceStep is completeStep for the work of one service, which
+// the step records by its dotted name (applications.web), so a client can
+// show a run's progress per service.
+func (a *runAttachment) completeServiceStep(ctx context.Context, service, key, title string, status journal.StepStatus, logs []string) {
+	a.completeStepFields(ctx, service, key, title, status, logs, nil)
 }
 
 // completeStepFields is completeStep with structured fields attached to
-// every log line, for clients that render the outcome from data.
-func (a *runAttachment) completeStepFields(ctx context.Context, key, title string, status journal.StepStatus, logs []string, fields map[string]any) {
+// every log line, for clients that render the outcome from data. service
+// names the service whose work the step is; empty, it is
+// environment-wide.
+func (a *runAttachment) completeStepFields(ctx context.Context, service, key, title string, status journal.StepStatus, logs []string, fields map[string]any) {
 	if a.run == nil {
 		return
 	}
@@ -202,7 +211,7 @@ func (a *runAttachment) completeStepFields(ctx context.Context, key, title strin
 	for _, line := range logs {
 		entries = append(entries, journal.LogEntry{Level: level, Message: line, Fields: fields})
 	}
-	a.record(ctx, "complete step", journal.StepRecord{Key: key, Title: title, To: status, Entries: entries})
+	a.record(ctx, "complete step", journal.StepRecord{Key: key, Title: title, Service: service, To: status, Entries: entries})
 }
 
 // record writes one step record of the attached run and keeps the view
@@ -228,12 +237,19 @@ func (a *runAttachment) record(ctx context.Context, what string, record journal.
 // narrates its actual progress. Only an in-flight run carries waiting
 // steps; idle drift passes stay silent.
 func (a *runAttachment) waitStep(ctx context.Context, key, title, reason string) {
-	a.waitStepFields(ctx, key, title, reason, nil)
+	a.waitStepFields(ctx, "", key, title, reason, nil)
+}
+
+// waitServiceStep is waitStep for the work of one service, named by its
+// dotted name (see completeServiceStep).
+func (a *runAttachment) waitServiceStep(ctx context.Context, service, key, title, reason string) {
+	a.waitStepFields(ctx, service, key, title, reason, nil)
 }
 
 // waitStepFields is waitStep with structured fields on the journaled
 // reason; the reason text still decides whether anything new is written.
-func (a *runAttachment) waitStepFields(ctx context.Context, key, title, reason string, fields map[string]any) {
+// service names the service whose work the step is, or none.
+func (a *runAttachment) waitStepFields(ctx context.Context, service, key, title, reason string, fields map[string]any) {
 	if a.run == nil {
 		return
 	}
@@ -248,7 +264,7 @@ func (a *runAttachment) waitStepFields(ctx context.Context, key, title, reason s
 			return // running or terminal: no repeat journaling
 		}
 	}
-	a.record(ctx, "journal waiting step", journal.StepRecord{Key: key, Title: title, To: journal.StepWaiting,
+	a.record(ctx, "journal waiting step", journal.StepRecord{Key: key, Title: title, Service: service, To: journal.StepWaiting,
 		Entries: []journal.LogEntry{{Level: "info", Message: reason, Fields: fields}}, Dedupe: true})
 }
 

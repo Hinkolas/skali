@@ -530,6 +530,7 @@ type Step struct {
 	CreatedAt       time.Time
 	StartedAt       *time.Time
 	FinishedAt      *time.Time
+	Service         *string
 }
 
 type TwoFactor struct {

@@ -4920,6 +4920,13 @@ components:
           description: Deterministic step identity within the run.
         title:
           type: string
+        service:
+          type: string
+          description: >-
+            The service whose work the step is, by its dotted name
+            (applications.web, databases.main, buckets.assets). Absent on
+            environment-wide steps (validate, render, prune, verify,
+            activate) and on steps journaled before servers recorded it.
         status:
           type: string
           enum: [pending, waiting, running, succeeded, failed, skipped, cancelled]

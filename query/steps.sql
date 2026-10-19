@@ -1,5 +1,6 @@
 -- Steps are addressed by their deterministic (run_id, key); creation is
 -- idempotent so a restarted controller reattaches instead of duplicating.
+-- A step's service is set when it is created and never changes.
 
 -- EnsureStep creates the step unless its (run_id, key) exists and returns
 -- the step either way, in one round trip. The select cannot see this
@@ -14,8 +15,9 @@ WITH open_run AS (
     WHERE runs.id = sqlc.arg(run_id)::uuid AND runs.status IN ('pending', 'running')
     FOR KEY SHARE
 ), inserted AS (
-    INSERT INTO steps (id, run_id, parent_id, key, title)
-    SELECT sqlc.arg(id)::uuid, open_run.id, sqlc.narg(parent_id)::uuid, sqlc.arg(key)::text, sqlc.arg(title)::text
+    INSERT INTO steps (id, run_id, parent_id, key, title, service)
+    SELECT sqlc.arg(id)::uuid, open_run.id, sqlc.narg(parent_id)::uuid, sqlc.arg(key)::text, sqlc.arg(title)::text,
+           sqlc.narg(service)::text
     FROM open_run
     ON CONFLICT (run_id, key) DO NOTHING
     RETURNING *
@@ -76,9 +78,9 @@ WITH open_run AS (
         LIMIT 1
     ) IS DISTINCT FROM ((sqlc.arg(entries)::jsonb -> -1) ->> 'message') AS lines
 ), inserted AS (
-    INSERT INTO steps (id, run_id, parent_id, key, title, status, started_at, finished_at)
+    INSERT INTO steps (id, run_id, parent_id, key, title, service, status, started_at, finished_at)
     SELECT sqlc.arg(id)::uuid, sqlc.arg(run_id)::uuid, sqlc.narg(parent_id)::uuid,
-           sqlc.arg(key)::text, sqlc.arg(title)::text, sqlc.arg(status)::text,
+           sqlc.arg(key)::text, sqlc.arg(title)::text, sqlc.narg(service)::text, sqlc.arg(status)::text,
            CASE WHEN sqlc.arg(status)::text IN ('running', 'succeeded', 'failed') THEN now() END,
            CASE WHEN sqlc.arg(status)::text IN ('succeeded', 'failed', 'skipped', 'cancelled') THEN now() END
     WHERE NOT EXISTS (SELECT 1 FROM existing) AND EXISTS (SELECT 1 FROM open_run)
