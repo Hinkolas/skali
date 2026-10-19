@@ -8,12 +8,14 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"slices"
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/google/go-containerregistry/pkg/authn"
@@ -1135,6 +1137,12 @@ func executeActions(ctx context.Context, out io.Writer, api *client.Client,
 				}, &teeSink{inner: sink, task: task})
 				sink.Flush()
 				stopHeartbeat()
+				if err != nil && endsWithin(ctx, buildInterruptGrace) {
+					// Interrupted, not failed: whoever ended the context
+					// closes the window.
+					task.Cancel()
+					return ctx.Err()
+				}
 				if err != nil {
 					task.Fail()
 					_ = api.SetStepStatus(ctx, buildStep.ID, "failed")
@@ -1164,6 +1172,10 @@ func executeActions(ctx context.Context, out io.Writer, api *client.Client,
 				result, err := build.Import(ctx, action.Upstream, action.PushRef,
 					build.ImportOptions{TargetAuth: registryAuth}, &teeSink{inner: sink, task: task})
 				sink.Flush()
+				if err != nil && ctx.Err() != nil {
+					task.Cancel()
+					return ctx.Err()
+				}
 				if err != nil {
 					task.Fail()
 					_ = api.SetStepStatus(ctx, importStep.ID, "failed")
@@ -1181,6 +1193,25 @@ func executeActions(ctx context.Context, out io.Writer, api *client.Client,
 		}
 	}
 	return nil
+}
+
+// buildInterruptGrace is how long a failed build waits for an interrupt
+// before it counts as a failure. Ctrl-C reaches docker and this process at
+// once, and a docker that dies of it can return before the signal ends ctx;
+// failing the deployment then would record the interrupt as a broken
+// build. A variable so tests can widen it.
+var buildInterruptGrace = 250 * time.Millisecond
+
+// endsWithin reports whether ctx ends within grace.
+func endsWithin(ctx context.Context, grace time.Duration) bool {
+	timer := time.NewTimer(grace)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return true
+	case <-timer.C:
+		return false
+	}
 }
 
 // artifactStep journals one application's step under "artifacts" around
@@ -1229,6 +1260,213 @@ func failDeployment(ctx context.Context, api *client.Client, opened *client.Open
 		return fmt.Errorf("%w (additionally, failing the deployment: %v)", cause, err)
 	}
 	return cause
+}
+
+// windowSignals end the artifact window: Ctrl-C, the terminal going away,
+// and a polite kill all leave the local builds and pushes unfinished.
+var windowSignals = []os.Signal{os.Interrupt, syscall.SIGTERM, syscall.SIGHUP}
+
+// windowCancelTimeout bounds the cancel request of an interrupted window:
+// the user asked to stop, so a server that does not answer must not hold
+// the terminal. The stale-build sweep remains the backstop.
+const windowCancelTimeout = 15 * time.Second
+
+// windowWindDown is how long an interrupted window waits for its local
+// work to stop before it reports and the process exits: a docker child
+// that keeps the build output open must not hold the terminal. A variable
+// so tests can shorten it.
+var windowWindDown = 3 * time.Second
+
+// artifactWindow is the part of a deployment that needs this process: from
+// the open request through the builds, pushes, and verifications to the
+// hand-over of the run to the server. The run cannot go on without it, so
+// there is nothing to detach from: a window signal ends the window's
+// context and cancels the deployment, which otherwise would hold the
+// environment until the server's stale-build sweep fails it. A window the
+// caller does not own (the dev session keeps its signals) passes its
+// context through and catches nothing.
+type artifactWindow struct {
+	parent  context.Context
+	ctx     context.Context
+	cancel  context.CancelFunc
+	signals chan os.Signal // nil when not owned
+	quit    chan struct{}
+	exited  chan struct{}
+	caught  bool
+	once    sync.Once
+}
+
+func watchArtifactWindow(ctx context.Context, own bool) *artifactWindow {
+	w := &artifactWindow{parent: ctx}
+	w.ctx, w.cancel = context.WithCancel(ctx)
+	if !own {
+		return w
+	}
+	w.signals = make(chan os.Signal, 1)
+	w.quit = make(chan struct{})
+	w.exited = make(chan struct{})
+	signal.Notify(w.signals, windowSignals...)
+	go func() {
+		defer close(w.exited)
+		select {
+		case <-w.signals:
+			w.caught = true
+			w.cancel()
+		case <-w.quit:
+		}
+	}()
+	return w
+}
+
+// release lets the window's signals go and reports whether one arrived
+// while they were held. Delivery is asynchronous, so the context alone
+// can miss a signal that just landed; once signal.Stop returns nothing is
+// on its way to the channel and the watcher has exited, so the answer is
+// final.
+func (w *artifactWindow) release() bool {
+	w.once.Do(func() {
+		if w.signals != nil {
+			signal.Stop(w.signals)
+			close(w.quit)
+			<-w.exited
+			select {
+			case <-w.signals:
+				w.caught = true
+			default:
+			}
+		}
+		w.cancel()
+	})
+	return w.caught
+}
+
+// errOpenInterrupted ends a command interrupted while its open request
+// opened nothing.
+var errOpenInterrupted = errors.New("interrupted")
+
+// openArtifactWindow sends the open request with the window signals
+// already held: the server may open the window before its answer arrives,
+// so a signal meanwhile must not end the process, and the request runs to
+// that answer, which names the run to cancel. An answer that opens nothing
+// lets the signals go again, so Ctrl-C still ends a reauthentication
+// prompt between attempts; a signal caught meanwhile ends the command.
+func openArtifactWindow(ctx context.Context, own bool,
+	open func() (*client.OpenedDeployment, error)) (*client.OpenedDeployment, *artifactWindow, error) {
+	window := watchArtifactWindow(ctx, own)
+	opened, err := open()
+	if err == nil && !opened.UpToDate {
+		return opened, window, nil
+	}
+	if window.release() {
+		return nil, nil, errOpenInterrupted
+	}
+	return opened, nil, err
+}
+
+// run runs work, the rest of the window, and cancels the deployment when
+// a signal ends it. The cancel request goes out at once, beside the work
+// winding down, so the run's fate never waits on a docker slow to stop;
+// the work gets windowWindDown to settle its display before the outcome is
+// printed. Signals stay caught until then, so a second Ctrl-C cannot end
+// the process before the request is sent.
+func (w *artifactWindow) run(out io.Writer, api *client.Client, runID, remoteHint string,
+	work func(ctx context.Context) error) error {
+	if w.signals != nil {
+		// Held beyond release, which must let the window's own channel go
+		// to know for certain whether a signal arrived.
+		hold := make(chan os.Signal, 1)
+		signal.Notify(hold, windowSignals...)
+		defer signal.Stop(hold)
+	}
+	done := make(chan error, 1)
+	go func() {
+		err := w.ctx.Err()
+		if err == nil {
+			err = work(w.ctx)
+		}
+		done <- err
+	}()
+	var err error
+	finished := false
+	select {
+	case err = <-done:
+		finished = true
+	case <-w.ctx.Done():
+	}
+	if !w.release() {
+		// Done, or the caller's context ended, which is the caller's to
+		// close; its work stops with it.
+		if !finished {
+			err = <-done
+		}
+		return err
+	}
+	cancelled := make(chan windowCancel, 1)
+	go func() { cancelled <- requestWindowCancel(w.parent, api, runID) }()
+	if !finished {
+		select {
+		case <-done:
+		case <-time.After(windowWindDown):
+		}
+	}
+	style := clirender.StyleFor(out)
+	fmt.Fprintf(out, "\n%s\n", style.Yellow("interrupted: cancelling run "+runID))
+	return reportWindowCancel(out, <-cancelled, runID, remoteHint)
+}
+
+// windowCancel is the answer to an interrupted window's cancel request.
+// Concluded marks an error no retry could change: the run ended first, or
+// its rollout activated meanwhile.
+type windowCancel struct {
+	outcome   *client.CancelOutcome
+	err       error
+	concluded bool
+}
+
+// requestWindowCancel cancels the run of an interrupted window. Usually
+// the window was still open; a signal during the hand-over may find the
+// run promoted, which the cancel undoes like any other. The request runs
+// on a bounded context of its own, the signal having ended the flow's.
+func requestWindowCancel(ctx context.Context, api *client.Client, runID string) windowCancel {
+	cancelCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), windowCancelTimeout)
+	defer cancel()
+	outcome, err := api.CancelRun(cancelCtx, runID)
+	if !isRunAlreadyFinished(err) {
+		return windowCancel{outcome: outcome, err: err}
+	}
+	// A conflict is a run that ended first, or a hand-over that promoted
+	// the deployment between the server's read and its cancel. Only the
+	// run's state tells them apart, and a run still going takes one more
+	// request, which stops the promoted rollout.
+	tree, getErr := api.GetRun(cancelCtx, runID)
+	if getErr != nil {
+		return windowCancel{err: fmt.Errorf("%w (reading the run: %v)", err, getErr)}
+	}
+	if runSettled(tree) {
+		return windowCancel{err: err, concluded: true}
+	}
+	outcome, err = api.CancelRun(cancelCtx, runID)
+	return windowCancel{outcome: outcome, err: err, concluded: isRunAlreadyFinished(err)}
+}
+
+// reportWindowCancel prints what the cancel did to the environment and
+// returns the command's closing error. A cancel that may not have landed
+// names the run and the command to retry it.
+func reportWindowCancel(out io.Writer, result windowCancel, runID, remoteHint string) error {
+	style := clirender.StyleFor(out)
+	switch {
+	case result.err != nil && result.concluded:
+		return fmt.Errorf("run %s: %w", runID, result.err)
+	case result.err != nil:
+		return fmt.Errorf("cancel run %s: %w; retry with %s", runID, result.err, runCancelHint(remoteHint, runID))
+	case result.outcome.Continues:
+		printFirstDeploymentContinues(out, style)
+	case result.outcome.Fallback:
+		fmt.Fprintln(out, style.Dim("The environment returns to its active revision."))
+	default:
+		fmt.Fprintln(out, style.Dim("The environment is unchanged: staged values discarded, target and active revision untouched."))
+	}
+	return fmt.Errorf("run %s was cancelled", runID)
 }
 
 func startHeartbeat(ctx context.Context, api *client.Client, buildID string) (stop func()) {
@@ -1644,9 +1882,15 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (
 		return "", err
 	}
 
+	// The dev session owns the signals and closes an interrupted window on
+	// its own way out.
+	ownWindow := opts.Attach != attachSessionEnds
 	var opened *client.OpenedDeployment
+	var window *artifactWindow
 	err = withReauth(ctx, out, in, api, func() (err error) {
-		opened, err = api.OpenDeployment(ctx, environmentID, request)
+		opened, window, err = openArtifactWindow(ctx, ownWindow, func() (*client.OpenedDeployment, error) {
+			return api.OpenDeployment(ctx, environmentID, request)
+		})
 		return err
 	})
 	if err != nil {
@@ -1672,13 +1916,21 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (
 			Username: registryUsername, Password: target.sessionToken,
 		})
 	}
-	if err := executeActions(ctx, out, api, opened, project, contexts, registryAuth, opts.Rebuild); err != nil {
-		fmt.Fprintf(out, "\n%srun %s %s: %v\n", style.Cross(),
-			opened.Deployment.RunID, style.Red("failed"), err)
-		fmt.Fprintln(out, "\n"+style.Dim("The environment is unchanged: staged values discarded, target and active revision untouched."))
-		return "", errors.New("deployment failed")
-	}
-	if _, err := api.CompleteDeployment(ctx, opened.Deployment.ID); err != nil {
+	err = window.run(out, api, opened.Deployment.RunID, opts.Remote, func(ctx context.Context) error {
+		if err := executeActions(ctx, out, api, opened, project, contexts, registryAuth, opts.Rebuild); err != nil {
+			if ctx.Err() != nil {
+				// Interrupted, not failed: the window's owner reports it.
+				return err
+			}
+			fmt.Fprintf(out, "\n%srun %s %s: %v\n", style.Cross(),
+				opened.Deployment.RunID, style.Red("failed"), err)
+			fmt.Fprintln(out, "\n"+style.Dim("The environment is unchanged: staged values discarded, target and active revision untouched."))
+			return errors.New("deployment failed")
+		}
+		_, err := api.CompleteDeployment(ctx, opened.Deployment.ID)
+		return err
+	})
+	if err != nil {
 		return "", err
 	}
 	// The run is the server's from here: the staged values promote with

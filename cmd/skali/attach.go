@@ -30,6 +30,21 @@ func runAttachHint(remote, runID string) string {
 	return "skali run attach --remote " + remote + " " + runID
 }
 
+// runCancelHint is runAttachHint for cancelling the run instead.
+func runCancelHint(remote, runID string) string {
+	if remote == "" {
+		return "skali run cancel " + runID
+	}
+	return "skali run cancel --remote " + remote + " " + runID
+}
+
+// printFirstDeploymentContinues explains a cancelled first deployment,
+// whose revision stays the target with no earlier one to return to.
+func printFirstDeploymentContinues(out io.Writer, style *clirender.Style) {
+	fmt.Fprintln(out, style.Yellow("this was the environment's first deployment, so there is no earlier "+
+		"revision to return to: its revision keeps rolling out until the next deployment"))
+}
+
 // attachMode decides what Ctrl-C means while attached to a run.
 type attachMode int
 
@@ -269,8 +284,7 @@ func attachRunMode(ctx context.Context, out io.Writer, api *client.Client, runID
 			}
 			renderer.Finish(tree)
 			if continues && tree.Run.Status == "cancelled" {
-				fmt.Fprintln(out, style.Yellow("this was the environment's first deployment, so there is no earlier "+
-					"revision to return to: its revision keeps rolling out until the next deployment"))
+				printFirstDeploymentContinues(out, style)
 			}
 			return attachOutcome{Status: tree.Run.Status, Failure: tree.Run.Failure}, nil
 		case reply := <-cancelReplies:
