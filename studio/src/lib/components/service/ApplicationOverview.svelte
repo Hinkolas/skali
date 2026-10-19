@@ -127,10 +127,7 @@
 	<!-- eslint-disable svelte/no-navigation-without-resolve -- path built with resolve(), env appended by $lib/urls -->
 	<a
 		href={withEnv(
-			resolve('/(app)/projects/[project]/services/[service]/deployments', {
-				project: projectName,
-				service: service.key
-			}),
+			resolve('/(app)/projects/[project]/deployments', { project: projectName }),
 			envName
 		)}
 		class="text-text-muted hover:text-text-primary flex flex-none items-center gap-1 text-md whitespace-nowrap transition-colors"

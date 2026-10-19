@@ -1,10 +1,18 @@
-import { apiFetch } from '$lib/api/client';
-import type { Run } from '$lib/types/runs';
+// Deployments moved up to the project: a deployment rolls out the whole
+// environment, so every service showed the same list here. Old links land
+// on the project page in the same environment.
+
+import { redirect } from '@sveltejs/kit';
+import { resolve } from '$app/paths';
+import { withEnv } from '$lib/urls';
 import type { PageLoad } from './$types';
 
-export const load: PageLoad = async ({ parent, fetch }) => {
-	const { env } = await parent();
-	if (!env) return { runs: null };
-	const res = await apiFetch(fetch, `/v1/environments/${env.id}/runs`);
-	return { runs: res.ok ? ((await res.json()) as { runs: Run[] }).runs : null };
+export const load: PageLoad = ({ params, url }) => {
+	redirect(
+		308,
+		withEnv(
+			resolve('/(app)/projects/[project]/deployments', { project: params.project }),
+			url.searchParams.get('env')
+		)
+	);
 };

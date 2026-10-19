@@ -104,6 +104,41 @@ export function runUnsettled(status: RunStatus): boolean {
 }
 
 /**
+ * The run an environment is working on now: the running one (an
+ * environment runs one at a time), else the newest one still queued. Runs
+ * come newest first, as the API lists them.
+ */
+export function activeRun(runs: readonly Run[]): Run | null {
+	return (
+		runs.find((r) => r.status === 'running') ?? runs.find((r) => r.status === 'pending') ?? null
+	);
+}
+
+export interface FollowedRun {
+	envId: string;
+	runId: string;
+}
+
+/**
+ * The run a live view follows: the selected environment's active run, else
+ * the run it already followed there, so an outcome stays on screen after
+ * the run ends. A run of another environment is never kept. Returns
+ * `followed` itself when nothing changed.
+ */
+export function followRun(
+	followed: FollowedRun | null,
+	envId: string | null,
+	activeId: string | null
+): FollowedRun | null {
+	if (envId && activeId) {
+		return followed?.envId === envId && followed.runId === activeId
+			? followed
+			: { envId, runId: activeId };
+	}
+	return followed?.envId === envId ? followed : null;
+}
+
+/**
  * Whether cancelling the run undoes anything. A stop or a delete is a
  * persisted decision the reconciler executes whatever happens to its run,
  * so a cancel would only end the journal while the work goes on.

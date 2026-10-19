@@ -62,6 +62,7 @@ export const ORG_NAV: { section: string; items: NavItemDef[] }[] = [
 
 export const PROJECT_TABS: NavItemDef[] = [
 	{ label: 'Overview', slug: '', icon: LayoutDashboard },
+	{ label: 'Deployments', slug: 'deployments', icon: Rocket },
 	{ label: 'Service graph', slug: 'graph', icon: Workflow, planned: true },
 	{ label: 'Activity', slug: 'activity', icon: Activity, planned: true },
 	{ label: 'Logs', slug: 'logs', icon: ScrollText, planned: true },
@@ -72,7 +73,6 @@ export const PROJECT_TABS: NavItemDef[] = [
 export const SERVICE_TABS: Record<ServiceType, NavItemDef[]> = {
 	application: [
 		{ label: 'Overview', slug: '', icon: LayoutDashboard },
-		{ label: 'Deployments', slug: 'deployments', icon: Rocket },
 		{ label: 'Metrics', slug: 'metrics', icon: Gauge },
 		{ label: 'Logs', slug: 'logs', icon: ScrollText, planned: true },
 		{ label: 'Environment', slug: 'environment', icon: KeyRound, planned: true },

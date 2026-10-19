@@ -2,11 +2,11 @@
 	import Rocket from '@lucide/svelte/icons/rocket';
 	import { api, ApiError } from '$lib/api/client';
 	import type { Run, RunKind } from '$lib/types/runs';
-	import { runCancellable, runKindLabel, type RunsList } from '$lib/types/runs';
-	import { openStream } from '$lib/sse';
+	import { runCancellable, runKindLabel } from '$lib/types/runs';
 	import { describeActor, formatDuration, relativeTime } from '$lib/format';
 	import { clock } from '$lib/stores/clock.svelte';
 	import { dialog } from '$lib/stores/dialog.svelte';
+	import { envRuns } from '$lib/stores/envruns.svelte';
 	import { sidepanel } from '$lib/stores/sidepanel.svelte';
 	import { toast } from '$lib/stores/toast.svelte';
 	import { users } from '$lib/stores/users.svelte';
@@ -18,9 +18,9 @@
 	import RunDetailPanel from './RunDetailPanel.svelte';
 
 	// The environment's run feed: seeded by the caller's load, kept live by
-	// the runs-list SSE stream while mounted. `kinds` narrows the feed to
-	// some run kinds (a database's backups), `limit` keeps only the newest
-	// rows (the overview's digest); the Deployments tab shows the journal.
+	// the project's run store (one runs-list stream per open project).
+	// `kinds` narrows the feed to some run kinds (a database's backups),
+	// `limit` keeps only the newest rows (the overview's digest).
 	let {
 		envId,
 		seed,
@@ -40,27 +40,15 @@
 	// Actor ids resolve to names once the directory is here; one fetch per page life.
 	users.load();
 
-	let live = $state<Run[] | null>(null);
 	const runs = $derived(
-		(live ?? seed ?? []).filter((r) => !kinds || kinds.includes(r.kind)).slice(0, limit)
+		(envRuns.of(envId) ?? seed ?? [])
+			.filter((r) => !kinds || kinds.includes(r.kind))
+			.slice(0, limit)
 	);
 
-	$effect(() => {
-		if (!envId) return;
-		const handle = openStream<RunsList>({
-			path: `/v1/environments/${envId}/runs/stream`,
-			events: 'runs',
-			onEvent: (data) => {
-				live = data.runs;
-			}
-		});
-		return () => {
-			handle.close();
-			live = null;
-		};
-	});
-
-	const grid = 'grid-cols-[1fr_1.4fr_1.2fr_1fr_1fr_0.6fr]';
+	// The run column holds the kind and the id chip side by side; narrower, the
+	// chip ran into the actor.
+	const grid = 'grid-cols-[1.6fr_1.2fr_1fr_0.9fr_1fr_0.6fr]';
 
 	const statusClass: Record<Run['status'], { dot: string; text: string }> = {
 		pending: { dot: 'bg-text-ghost', text: 'text-text-muted' },
