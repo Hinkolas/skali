@@ -516,6 +516,9 @@ func TestClassifyRegistryRequests(t *testing.T) {
 		{http.MethodPost, "/v2/skali/blobs/uploads/blobs/uploads/", requestBlobUpload, ""},
 		{http.MethodHead, "/v2/skali/blobs/uploads/manifests/latest", requestManifestCheck, "latest"},
 		{http.MethodHead, "/v2/skali/blobs/uploads/123", requestOther, ""},
+		{http.MethodPut, "/v2/skali/manifests/web/blobs/uploads/9?digest=" + digest, requestBlobCommit, digest},
+		{http.MethodPut, "/v2/skali/manifests/web/manifests/v1", requestManifest, "v1"},
+		{http.MethodHead, "/v2/skali/manifests/web/blobs/" + digest, requestBlobCheck, digest},
 	} {
 		req, err := http.NewRequest(test.method, "https://registry.test"+test.target, nil)
 		require.NoError(t, err)

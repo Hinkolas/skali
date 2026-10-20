@@ -1151,7 +1151,15 @@ const uploadIdleNotice = 5 * time.Second
 // had are reported beside it, never as transferred.
 func uploadProgress(status build.UploadStatus) clirender.TaskProgress {
 	var progress clirender.TaskProgress
+	// The detail line truncates on narrow terminals, so what tells a stall
+	// from a slow push comes first.
 	var details []string
+	if status.Idle >= uploadIdleNotice {
+		details = append(details, build.IdleNote(status))
+	}
+	if status.Retrying {
+		details = append(details, "retrying after: "+status.LastError)
+	}
 	switch status.Phase {
 	case build.UploadPreparing:
 		progress.Status = "preparing the image"
@@ -1185,12 +1193,6 @@ func uploadProgress(status build.UploadStatus) clirender.TaskProgress {
 	}
 	if status.ReusedBlobs > 0 {
 		details = append(details, utils.FormatBytes(status.Reused)+" already in the registry")
-	}
-	if status.Retrying {
-		details = append(details, "retrying after: "+status.LastError)
-	}
-	if status.Idle >= uploadIdleNotice {
-		details = append(details, build.IdleNote(status))
 	}
 	progress.Detail = strings.Join(details, " · ")
 	return progress

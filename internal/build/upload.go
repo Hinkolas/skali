@@ -636,8 +636,8 @@ func classify(req *http.Request) (kind requestKind, digest string) {
 				return requestBlobCheck, reference
 			}
 		}
-		if index := strings.LastIndex(path, "/manifests/"); index >= 0 {
-			return requestManifestCheck, path[index+len("/manifests/"):]
+		if reference, ok := manifestReference(path); ok {
+			return requestManifestCheck, reference
 		}
 	case http.MethodPost:
 		if strings.HasSuffix(strings.TrimSuffix(path, "/"), "/blobs/uploads") {
@@ -649,14 +649,25 @@ func classify(req *http.Request) (kind requestKind, digest string) {
 	case http.MethodPatch:
 		return requestBlobData, ""
 	case http.MethodPut:
-		if index := strings.LastIndex(path, "/manifests/"); index >= 0 {
-			return requestManifest, path[index+len("/manifests/"):]
+		if reference, ok := manifestReference(path); ok {
+			return requestManifest, reference
 		}
 		if digest := req.URL.Query().Get("digest"); digest != "" {
 			return requestBlobCommit, digest
 		}
 	}
 	return requestOther, ""
+}
+
+// manifestReference extracts the reference of a manifest endpoint path;
+// "manifests" inside a repository name does not count.
+func manifestReference(path string) (string, bool) {
+	index := strings.LastIndex(path, "/manifests/")
+	if index < 0 {
+		return "", false
+	}
+	reference := path[index+len("/manifests/"):]
+	return reference, reference != "" && !strings.Contains(reference, "/")
 }
 
 // sessionKey identifies an upload session by its location without the

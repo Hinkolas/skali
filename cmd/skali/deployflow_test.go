@@ -1351,8 +1351,8 @@ func TestUploadProgressDisplay(t *testing.T) {
 	stalled.Retrying, stalled.LastError = true, "PATCH /v2/web/blobs/uploads/1: 502 Bad Gateway"
 	progress := uploadProgress(stalled)
 	require.Equal(t, " 25%  5.0MiB / 20.0MiB", progress.Status, "no rate or ETA while stalled")
-	require.Equal(t, "10.0MiB already in the registry · retrying after: PATCH /v2/web/blobs/uploads/1: "+
-		"502 Bad Gateway · no data sent for 12s", progress.Detail)
+	require.Equal(t, "no data sent for 12s · retrying after: PATCH /v2/web/blobs/uploads/1: "+
+		"502 Bad Gateway · 10.0MiB already in the registry", progress.Detail, "the stall leads, ahead of truncation")
 
 	unsized := build.UploadStatus{Phase: build.UploadSending, Sent: 3 * mib}
 	require.Equal(t, clirender.TaskProgress{Status: "3.0MiB sent"}, uploadProgress(unsized))
@@ -1360,7 +1360,7 @@ func TestUploadProgressDisplay(t *testing.T) {
 	cached := build.UploadStatus{Phase: build.UploadFinalizing, Blobs: 4, Total: 30 * mib,
 		ReusedBlobs: 4, Reused: 30 * mib, Idle: 6 * time.Second}
 	require.Equal(t, clirender.TaskProgress{Fraction: 1, HasFraction: true, Status: "nothing to send",
-		Detail: "writing the manifest · 30.0MiB already in the registry · waiting on the registry for 6s"},
+		Detail: "waiting on the registry for 6s · writing the manifest · 30.0MiB already in the registry"},
 		uploadProgress(cached))
 }
 
