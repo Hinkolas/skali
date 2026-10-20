@@ -52,15 +52,27 @@ type Result struct {
 	Provenance json.RawMessage
 }
 
-// ProgressSink receives the engine's line-wise build progress; callers
-// forward it into the journal.
+// ProgressSink receives the engine's line-wise build and push progress;
+// callers forward it into the journal. Sinks that also implement
+// UploadObserver follow pushes structurally.
 type ProgressSink interface {
 	Line(level, message string)
 }
 
-// Engine executes one build and pushes the result.
+// Engine executes one build. The local result waits in the returned Built
+// for its push, a separate step; callers Close it either way.
 type Engine interface {
-	Build(ctx context.Context, req BuildRequest, sink ProgressSink) (Result, error)
+	Build(ctx context.Context, req BuildRequest, sink ProgressSink) (Built, error)
+}
+
+// Built is a finished local build awaiting its push to the managed
+// registry.
+type Built interface {
+	// Push uploads the build to its PushRef and reports the pushed digest
+	// once the registry accepted the manifest.
+	Push(ctx context.Context, sink ProgressSink) (Result, error)
+	// Close releases the local export.
+	Close() error
 }
 
 // DiscardSink drops progress; useful for probes and tests.

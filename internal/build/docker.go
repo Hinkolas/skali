@@ -21,8 +21,8 @@ import (
 // Docker builds through BuildKit via the docker buildx CLI: the local
 // builder. The result is exported locally (an OCI layout when the
 // builder supports that exporter, else through the daemon image store) and
-// pushed in-process with Auth, so docker itself never talks to the managed
-// registry and never needs a credential for it.
+// its push runs in-process with Auth, so docker itself never talks to the
+// managed registry and never needs a credential for it.
 type Docker struct {
 	// Binary overrides the docker executable; empty uses "docker".
 	Binary string
@@ -43,30 +43,52 @@ func (d *Docker) binary() string {
 }
 
 // Build implements Engine.
-func (d *Docker) Build(ctx context.Context, req BuildRequest, sink ProgressSink) (Result, error) {
-	mode := "oci-layout"
+func (d *Docker) Build(ctx context.Context, req BuildRequest, sink ProgressSink) (Built, error) {
+	if d.forceDaemonExport {
+		return d.buildViaDaemon(ctx, req, sink)
+	}
+	built, err := d.buildViaLayout(ctx, req, sink)
+	if errors.Is(err, errOCIExporterUnsupported) {
+		sink.Line("info", "builder does not support the OCI exporter; exporting through the docker image store instead "+
+			"(enabling docker's containerd image store makes this faster)")
+		return d.buildViaDaemon(ctx, req, sink)
+	}
+	return built, err
+}
+
+// Export modes of a docker build, recorded in its provenance.
+const (
+	exportLayout = "oci-layout"
+	exportDaemon = "daemon-save"
+)
+
+// dockerBuilt is a local docker build export awaiting its push: an OCI
+// layout directory or a docker-save tarball inside a temporary directory.
+type dockerBuilt struct {
+	dir    string
+	path   string
+	export string
+	req    BuildRequest
+	auth   authn.Authenticator
+}
+
+// Push implements Built.
+func (b *dockerBuilt) Push(ctx context.Context, sink ProgressSink) (Result, error) {
 	var digest string
 	var err error
-	if d.forceDaemonExport {
-		mode = "daemon-save"
-		digest, err = d.buildViaDaemon(ctx, req, sink)
+	if b.export == exportLayout {
+		digest, err = pushLayout(ctx, b.path, b.req.PushRef, b.auth, sink)
 	} else {
-		digest, err = d.buildViaLayout(ctx, req, sink)
-		if errors.Is(err, errOCIExporterUnsupported) {
-			sink.Line("info", "builder does not support the OCI exporter; exporting through the docker image store instead "+
-				"(enabling docker's containerd image store makes this faster)")
-			mode = "daemon-save"
-			digest, err = d.buildViaDaemon(ctx, req, sink)
-		}
+		digest, err = pushDockerSave(ctx, b.path, b.req.PushRef, b.auth, sink)
 	}
 	if err != nil {
 		return Result{}, err
 	}
 	provenance, err := json.Marshal(map[string]string{
 		"engine":    "docker-buildx",
-		"reference": req.PushRef,
-		"platform":  req.Platform,
-		"export":    mode,
+		"reference": b.req.PushRef,
+		"platform":  b.req.Platform,
+		"export":    b.export,
 	})
 	if err != nil {
 		return Result{}, fmt.Errorf("build: encode provenance: %w", err)
@@ -74,52 +96,56 @@ func (d *Docker) Build(ctx context.Context, req BuildRequest, sink ProgressSink)
 	return Result{Digest: digest, Provenance: provenance}, nil
 }
 
+// Close implements Built.
+func (b *dockerBuilt) Close() error { return os.RemoveAll(b.dir) }
+
 // errOCIExporterUnsupported marks a build that failed only because the
 // selected builder cannot produce an OCI layout: the default docker driver
 // on the classic image store. The caller retries through the daemon store.
 var errOCIExporterUnsupported = errors.New("build: builder does not support the OCI exporter")
 
-// buildViaLayout exports the build as an OCI layout directory and pushes it.
-// BuildKit hands over its already-compressed blobs with attestation
-// manifests disabled, so the layout's single artifact digest is the plain
-// image manifest digest and unchanged blobs upload without recompression.
-func (d *Docker) buildViaLayout(ctx context.Context, req BuildRequest, sink ProgressSink) (string, error) {
+// buildViaLayout exports the build as an OCI layout directory. BuildKit
+// hands over its already-compressed blobs with attestation manifests
+// disabled, so the layout's single artifact digest is the plain image
+// manifest digest and unchanged blobs upload without recompression.
+func (d *Docker) buildViaLayout(ctx context.Context, req BuildRequest, sink ProgressSink) (Built, error) {
 	dir, err := os.MkdirTemp("", "skali-build-oci-*")
 	if err != nil {
-		return "", fmt.Errorf("build: create export dir: %w", err)
+		return nil, fmt.Errorf("build: create export dir: %w", err)
 	}
-	defer os.RemoveAll(dir)
 	dest := filepath.Join(dir, "layout")
 	probe := &ociUnsupportedSink{inner: sink}
 	if err := d.runBuildx(ctx, req, []string{"--output", "type=oci,tar=false,dest=" + dest}, probe); err != nil {
+		_ = os.RemoveAll(dir)
 		if probe.matched {
-			return "", errOCIExporterUnsupported
+			return nil, errOCIExporterUnsupported
 		}
-		return "", err
+		return nil, err
 	}
-	return pushLayout(ctx, dest, req.PushRef, d.Auth, sink)
+	return &dockerBuilt{dir: dir, path: dest, export: exportLayout, req: req, auth: d.Auth}, nil
 }
 
-// buildViaDaemon loads the build into the daemon image store, exports it
-// with docker save, and pushes the tarball. This works with every buildx
-// driver at the cost of a full image round trip through the daemon.
-func (d *Docker) buildViaDaemon(ctx context.Context, req BuildRequest, sink ProgressSink) (string, error) {
+// buildViaDaemon loads the build into the daemon image store and exports it
+// with docker save. This works with every buildx driver at the cost of a
+// full image round trip through the daemon.
+func (d *Docker) buildViaDaemon(ctx context.Context, req BuildRequest, sink ProgressSink) (Built, error) {
 	if err := d.runBuildx(ctx, req, []string{"--load"}, sink); err != nil {
-		return "", err
+		return nil, err
 	}
 	dir, err := os.MkdirTemp("", "skali-build-save-*")
 	if err != nil {
-		return "", fmt.Errorf("build: create export dir: %w", err)
+		return nil, fmt.Errorf("build: create export dir: %w", err)
 	}
-	defer os.RemoveAll(dir)
 	tarPath := filepath.Join(dir, "image.tar")
+	sink.Line("info", "exporting the image from the docker image store")
 	if out, err := exec.CommandContext(ctx, d.binary(), "save", "--output", tarPath, req.PushRef).CombinedOutput(); err != nil {
-		return "", fmt.Errorf("build: docker save %s: %w\n%s", req.PushRef, err, strings.TrimSpace(string(out)))
+		_ = os.RemoveAll(dir)
+		return nil, fmt.Errorf("build: docker save %s: %w\n%s", req.PushRef, err, strings.TrimSpace(string(out)))
 	}
 	// The loaded tag is an implementation detail of the export; drop it
 	// again so deploys do not accumulate images in the user's image store.
 	_ = exec.CommandContext(ctx, d.binary(), "image", "rm", req.PushRef).Run()
-	return pushDockerSave(ctx, tarPath, req.PushRef, d.Auth, sink)
+	return &dockerBuilt{dir: dir, path: tarPath, export: exportDaemon, req: req, auth: d.Auth}, nil
 }
 
 // runBuildx executes one buildx build with the given output flags, streaming

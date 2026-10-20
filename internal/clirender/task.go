@@ -1,8 +1,9 @@
 // Task rendering: sequential, titled units of work outside a run tree
-// (platform bootstrap, local builds). On a styled terminal the active task
-// animates a spinner with a transient log tail underneath and settles into
-// one glyph line; elsewhere only the settled line is printed, so scripts
-// and CI logs keep one plain line per task.
+// (platform bootstrap, local builds, image uploads). On a styled terminal
+// the active task animates a spinner with a transient log tail or a
+// progress bar underneath and settles into one glyph line; elsewhere only
+// the settled line is printed, so scripts and CI logs keep one plain line
+// per task, unless the task narrates its already rate-limited progress.
 package clirender
 
 import (
@@ -18,7 +19,15 @@ type Tasks struct {
 	Out   io.Writer
 	Style *Style
 
-	mu sync.Mutex
+	mu    sync.Mutex
+	width int // overrides the terminal width; tests only
+}
+
+func (t *Tasks) columns() int {
+	if t.width > 0 {
+		return t.width
+	}
+	return TerminalWidth(t.Out)
 }
 
 func NewTasks(out io.Writer) *Tasks {
@@ -34,14 +43,32 @@ type Task struct {
 	title   string
 	started time.Time
 
-	note     string   // last output line, shown under the spinner
-	tail     []string // recent output lines, replayed on failure
+	note     string        // last output line, shown under the spinner
+	progress *TaskProgress // replaces the note when set
+	tail     []string      // recent output lines, replayed on failure
+	narrated bool          // plain output prints notes as they arrive
 	frame    int
 	live     int // lines currently on screen
 	finished bool
 	stop     chan struct{}
 	stopped  chan struct{}
 }
+
+// TaskProgress is a task's live progress display: a bar when HasFraction,
+// the Status beside it, and an optional Detail line below.
+type TaskProgress struct {
+	Fraction    float64
+	HasFraction bool
+	Status      string
+	Detail      string
+}
+
+// progressBarWidth is the bar's width in terminal cells; it shows only
+// when progressMinStatus cells remain for the status beside it.
+const (
+	progressBarWidth  = 24
+	progressMinStatus = 20
+)
 
 // Start begins a task. On a styled terminal it appears immediately with a
 // spinner; otherwise nothing is printed until the task settles.
@@ -86,18 +113,40 @@ func (task *Task) render() string {
 	var block strings.Builder
 	block.WriteString(task.erase())
 	style := task.tasks.Style
-	width := TerminalWidth(task.tasks.Out)
+	width := task.tasks.columns()
 	line := "  " + style.Cyan(style.spinner(task.frame)) + " " + Truncate(task.title, width-6)
 	if elapsed := task.elapsed(); elapsed != "" {
 		line += "  " + style.Dim(elapsed)
 	}
 	block.WriteString(line + "\n")
 	task.live = 1
-	if task.note != "" {
+	switch {
+	case task.progress != nil:
+		progress := task.progress
+		line := "    "
+		status := Truncate(progress.Status, width-6)
+		// A narrow terminal drops the bar rather than wrap the line.
+		if progress.HasFraction && width >= progressBarWidth+progressMinStatus+7 {
+			line += progressBar(style, progress.Fraction) + " "
+			status = Truncate(progress.Status, width-progressBarWidth-7)
+		}
+		block.WriteString(line + status + "\n")
+		task.live++
+		if progress.Detail != "" {
+			block.WriteString("    " + style.Dim(Truncate(progress.Detail, width-6)) + "\n")
+			task.live++
+		}
+	case task.note != "":
 		block.WriteString("    " + style.Dim(Truncate(task.note, width-6)) + "\n")
 		task.live = 2
 	}
 	return block.String()
+}
+
+// progressBar draws fraction (clamped to 0..1) as a fixed-width bar.
+func progressBar(style *Style, fraction float64) string {
+	filled := int(min(max(fraction, 0), 1) * progressBarWidth)
+	return style.Cyan(strings.Repeat("━", filled)) + style.Muted(strings.Repeat("━", progressBarWidth-filled))
 }
 
 // erase returns the sequence that clears the live block.
@@ -114,6 +163,10 @@ func (task *Task) erase() string {
 // spinner, shown from the next frame on, and enters the failure replay
 // buffer. It never writes to the terminal itself, so the work reporting
 // progress never waits on the display.
+//
+// A narrated task on plain output is the exception: there each note is
+// printed as it arrives, so it must come rate-limited and from work that
+// can afford to wait on the writer.
 func (task *Task) Note(line string) {
 	line = strings.TrimRight(line, "\r\n")
 	if line == "" {
@@ -125,6 +178,34 @@ func (task *Task) Note(line string) {
 	task.tail = append(task.tail, line)
 	if len(task.tail) > tailLines {
 		task.tail = task.tail[len(task.tail)-tailLines:]
+	}
+	if task.narrated && !task.finished {
+		fmt.Fprintln(task.tasks.Out, "        "+line)
+	}
+}
+
+// Progress replaces the transient note under the spinner with a progress
+// display, shown from the next frame on. Like Note it never writes to the
+// terminal itself; plain output has no live display (see Narrate).
+func (task *Task) Progress(progress TaskProgress) {
+	task.tasks.mu.Lock()
+	defer task.tasks.mu.Unlock()
+	task.progress = &progress
+}
+
+// Narrate makes the task print its notes on plain output as they arrive,
+// below a header line, so a long transfer leaves a readable trail in
+// scripts and CI logs. Styled output is unaffected.
+func (task *Task) Narrate() {
+	task.tasks.mu.Lock()
+	defer task.tasks.mu.Unlock()
+	if task.narrated || task.finished || task.tasks.Style.on() {
+		return
+	}
+	task.narrated = true
+	fmt.Fprintf(task.tasks.Out, "  %-4s  %s\n", glyphs["running"], task.title)
+	for _, entry := range task.tail {
+		fmt.Fprintln(task.tasks.Out, "        "+entry)
 	}
 }
 
@@ -195,7 +276,8 @@ func (task *Task) finish(status, detail string, replayTail bool) {
 		}
 	}
 	fmt.Fprintln(task.tasks.Out, line)
-	if replayTail {
+	// A narrated task already printed its output.
+	if replayTail && !task.narrated {
 		for _, entry := range task.tail {
 			fmt.Fprintln(task.tasks.Out, "        "+style.Dim(entry))
 		}

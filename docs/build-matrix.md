@@ -15,7 +15,7 @@ build schema and engine support today.
 | Target platform | `platforms` (application level) | Derived per application: the declared platforms intersect with the platforms observed on the cluster's application nodes; a cluster platform preference picks a single arch, otherwise all candidates build as one multi-platform image. Falls back to `linux/<host arch>` when nothing is known. Recorded on the build, part of the input hash, and rendered as node arch affinity on the workload. `--platform` overrides. |
 | Ignore rules | `.dockerignore` in the context root | dockerignore pattern syntax, including `!` exceptions. Patterns are rooted: use `**/*.log` to reach subdirectories. |
 | Layer caching | (automatic) | The engine uses the local BuildKit cache; an unchanged input hash skips the build entirely and reuses the verified artifact. |
-| Push and digest capture | (automatic) | `--push` with `--metadata-file`; attestations are disabled (`--provenance=false --sbom=false`) so the pushed digest is the plain manifest digest, verified server-side before the artifact enters a revision. |
+| Push and digest capture | (automatic) | The build exports an OCI layout (through the docker image store and `docker save` when the builder lacks the OCI exporter), and the CLI pushes it in-process as a separate upload step that shows bytes sent against what the registry still lacks, the transfer rate, blobs already present, and stalls or retries. Attestations are disabled (`--provenance=false --sbom=false`) so the pushed digest is the plain manifest digest, verified server-side before the artifact enters a revision. |
 
 ## Enforced safety rules
 

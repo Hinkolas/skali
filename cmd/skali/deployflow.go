@@ -990,6 +990,11 @@ func confirmPlan(ctx context.Context, out io.Writer, opts *deployOptions,
 // stepLogBatch is how many engine lines one journal append carries.
 const stepLogBatch = 25
 
+// stepLogLinger is how long lines wait for a batch to fill before they
+// ship anyway, so sparse output (upload progress) reaches the journal
+// while the step runs.
+var stepLogLinger = 2 * time.Second
+
 // stepLogSink batches engine progress into the journal's client surface.
 // The appends run on the sink's own goroutine, so the build engine's
 // output streams, and the live task display they feed, never wait on the
@@ -1048,9 +1053,17 @@ func (s *stepLogSink) signal() {
 
 func (s *stepLogSink) ship() {
 	defer close(s.shipped)
-	for range s.wake {
+	linger := time.NewTicker(stepLogLinger)
+	defer linger.Stop()
+	for {
+		partial := false
+		select {
+		case <-s.wake:
+		case <-linger.C:
+			partial = true
+		}
 		for {
-			batch, done := s.next()
+			batch, done := s.next(partial)
 			if done {
 				return
 			}
@@ -1062,12 +1075,13 @@ func (s *stepLogSink) ship() {
 	}
 }
 
-// next takes the next batch to send: a full one, or after Flush whatever
-// remains. done reports that the sink is flushed and empty.
-func (s *stepLogSink) next() (batch []client.LogLine, done bool) {
+// next takes the next batch to send: a full one, or after Flush or when
+// partial batches may go, whatever remains. done reports that the sink is
+// flushed and empty.
+func (s *stepLogSink) next(partial bool) (batch []client.LogLine, done bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.buffer) < stepLogBatch && !s.flushed {
+	if len(s.buffer) < stepLogBatch && !s.flushed && !partial {
 		return nil, false
 	}
 	count := min(len(s.buffer), stepLogBatch)
@@ -1088,16 +1102,112 @@ func (t *teeSink) Line(level, message string) {
 	t.task.Note(message)
 }
 
+// uploadSink journals a registry push and follows it in its live task:
+// snapshots drive the progress bar, and the push's rate-limited lines are
+// narrated on plain output.
+type uploadSink struct {
+	*teeSink
+
+	mu   sync.Mutex
+	last build.UploadStatus
+}
+
+func newUploadSink(sink *stepLogSink, task *clirender.Task) *uploadSink {
+	task.Narrate()
+	return &uploadSink{teeSink: &teeSink{inner: sink, task: task}}
+}
+
+func (s *uploadSink) UploadProgress(status build.UploadStatus) {
+	s.task.Progress(uploadProgress(status))
+	s.mu.Lock()
+	s.last = status
+	s.mu.Unlock()
+}
+
+// summary is the settled task's detail: the digest and what moved.
+func (s *uploadSink) summary(digest string) string {
+	s.mu.Lock()
+	status := s.last
+	s.mu.Unlock()
+	parts := []string{utils.ShortChecksum(digest)}
+	switch {
+	case status.Sent > 0:
+		parts = append(parts, "sent "+utils.FormatBytes(status.Sent))
+		if status.Reused > 0 {
+			parts = append(parts, utils.FormatBytes(status.Reused)+" already in the registry")
+		}
+	case status.ReusedBlobs > 0:
+		parts = append(parts, "already in the registry")
+	}
+	return strings.Join(parts, ", ")
+}
+
+// uploadIdleNotice is how long a push may go without progress before the
+// live display says so.
+const uploadIdleNotice = 5 * time.Second
+
+// uploadProgress renders a push snapshot for the live task display. The
+// bar covers only the bytes that need sending: blobs the registry already
+// had are reported beside it, never as transferred.
+func uploadProgress(status build.UploadStatus) clirender.TaskProgress {
+	var progress clirender.TaskProgress
+	// The detail line truncates on narrow terminals, so what tells a stall
+	// from a slow push comes first.
+	var details []string
+	if status.Idle >= uploadIdleNotice {
+		details = append(details, build.IdleNote(status))
+	}
+	if status.Retrying {
+		details = append(details, "retrying after: "+status.LastError)
+	}
+	switch status.Phase {
+	case build.UploadPreparing:
+		progress.Status = "preparing the image"
+	case build.UploadChecking:
+		progress.Status = "checking which blobs the registry already has"
+	default:
+		progress.Fraction, progress.HasFraction = status.Fraction()
+		var parts []string
+		needed, known := status.Needed()
+		switch {
+		case known && needed == 0:
+			parts = append(parts, "nothing to send")
+		case known:
+			parts = append(parts, fmt.Sprintf("%3d%%", int(progress.Fraction*100)),
+				utils.FormatBytes(status.Sent)+" / "+utils.FormatBytes(needed))
+		default:
+			parts = append(parts, utils.FormatBytes(status.Sent)+" sent")
+		}
+		// A stalled push shows how long nothing moved instead of a
+		// decaying rate.
+		if status.Phase == build.UploadSending && status.Rate > 0 && status.Idle < uploadIdleNotice {
+			parts = append(parts, build.FormatRate(status.Rate))
+		}
+		if eta, ok := status.ETA(); ok {
+			parts = append(parts, "ETA "+eta.String())
+		}
+		progress.Status = strings.Join(parts, "  ")
+		if status.Phase == build.UploadFinalizing {
+			details = append(details, "writing the manifest")
+		}
+	}
+	if status.ReusedBlobs > 0 {
+		details = append(details, utils.FormatBytes(status.Reused)+" already in the registry")
+	}
+	progress.Detail = strings.Join(details, " · ")
+	return progress
+}
+
 // registryUsername is the Basic username presented to the registry token
 // endpoint. It is cosmetic: the endpoint authenticates the password (a
 // session token) and derives the subject from the session, ignoring the
 // username entirely.
 const registryUsername = "skali-session"
 
-// executeActions performs the client side of the artifact window: builds
-// and imports with journaled steps, heartbeats, and server verification.
-// registryAuth authenticates every managed-registry push in-process; nil
-// pushes anonymously (the local registry never challenges).
+// executeActions performs the client side of the artifact window: builds,
+// their uploads, and imports with journaled steps, heartbeats, and server
+// verification. registryAuth authenticates every managed-registry push
+// in-process; nil pushes anonymously (the local registry never challenges).
 func executeActions(ctx context.Context, out io.Writer, api *client.Client,
 	opened *client.OpenedDeployment, project *localProject, contexts map[string]*build.Context,
 	registryAuth authn.Authenticator, rebuild bool) error {
@@ -1113,46 +1223,19 @@ func executeActions(ctx context.Context, out io.Writer, api *client.Client,
 			continue
 		case "build":
 			err := artifactStep(ctx, api, runID, action, func() error {
-				application := project.Result.Definition.Applications[action.Application]
-				spec := application.Source.Build
-				buildStep, err := api.EnsureStep(ctx, runID, action.StepKey+".build",
-					"Build locally ("+action.Platform+")", action.StepKey)
-				if err != nil {
-					return err
-				}
-				if err := api.SetStepStatus(ctx, buildStep.ID, "running"); err != nil {
-					return err
-				}
 				stopHeartbeat := startHeartbeat(ctx, api, action.BuildID)
-				task := tasks.Start(fmt.Sprintf("Build %s (%s)", action.Application, action.Platform))
-				sink := newStepLogSink(ctx, api, buildStep.ID)
-				result, err := engine.Build(ctx, build.BuildRequest{
-					ContextDir: contexts[action.Application].Dir,
-					Dockerfile: filepath.Join(project.Root, spec.Dockerfile),
-					Target:     spec.Target,
-					Arguments:  spec.Arguments,
-					Platform:   action.Platform,
-					PushRef:    action.PushRef,
-					Rebuild:    rebuild,
-				}, &teeSink{inner: sink, task: task})
-				sink.Flush()
-				stopHeartbeat()
-				if err != nil && endsWithin(ctx, buildInterruptGrace) {
-					// Interrupted, not failed: whoever ended the context
-					// closes the window.
-					task.Cancel()
-					return ctx.Err()
-				}
+				built, err := buildAction(ctx, api, tasks, engine, opened, project, contexts, action, rebuild)
 				if err != nil {
-					task.Fail()
-					_ = api.SetStepStatus(ctx, buildStep.ID, "failed")
-					return failDeployment(ctx, api, opened, fmt.Errorf("build for %s failed: %w", action.Application, err))
-				}
-				task.Done(utils.ShortChecksum(result.Digest))
-				if err := api.SetStepStatus(ctx, buildStep.ID, "succeeded"); err != nil {
+					stopHeartbeat()
 					return err
 				}
-				return verifyAction(ctx, api, opened, action, result.Digest)
+				digest, err := uploadAction(ctx, api, tasks, opened, action, built)
+				_ = built.Close()
+				stopHeartbeat()
+				if err != nil {
+					return err
+				}
+				return verifyAction(ctx, api, opened, action, digest)
 			})
 			if err != nil {
 				return err
@@ -1169,8 +1252,9 @@ func executeActions(ctx context.Context, out io.Writer, api *client.Client,
 				}
 				task := tasks.Start("Import " + action.Upstream)
 				sink := newStepLogSink(ctx, api, importStep.ID)
+				upload := newUploadSink(sink, task)
 				result, err := build.Import(ctx, action.Upstream, action.PushRef,
-					build.ImportOptions{TargetAuth: registryAuth}, &teeSink{inner: sink, task: task})
+					build.ImportOptions{TargetAuth: registryAuth}, upload)
 				sink.Flush()
 				if err != nil && ctx.Err() != nil {
 					task.Cancel()
@@ -1181,7 +1265,7 @@ func executeActions(ctx context.Context, out io.Writer, api *client.Client,
 					_ = api.SetStepStatus(ctx, importStep.ID, "failed")
 					return failDeployment(ctx, api, opened, fmt.Errorf("import for %s failed: %w", action.Application, err))
 				}
-				task.Done(utils.ShortChecksum(result.Digest))
+				task.Done(upload.summary(result.Digest))
 				if err := api.SetStepStatus(ctx, importStep.ID, "succeeded"); err != nil {
 					return err
 				}
@@ -1193,6 +1277,87 @@ func executeActions(ctx context.Context, out io.Writer, api *client.Client,
 		}
 	}
 	return nil
+}
+
+// buildAction journals the local build of one action and returns its
+// export, which the caller uploads and closes.
+func buildAction(ctx context.Context, api *client.Client, tasks *clirender.Tasks, engine build.Engine,
+	opened *client.OpenedDeployment, project *localProject, contexts map[string]*build.Context,
+	action client.ArtifactAction, rebuild bool) (build.Built, error) {
+	application := project.Result.Definition.Applications[action.Application]
+	spec := application.Source.Build
+	step, err := api.EnsureStep(ctx, opened.Deployment.RunID, action.StepKey+".build",
+		"Build locally ("+action.Platform+")", action.StepKey)
+	if err != nil {
+		return nil, err
+	}
+	if err := api.SetStepStatus(ctx, step.ID, "running"); err != nil {
+		return nil, err
+	}
+	task := tasks.Start(fmt.Sprintf("Build %s (%s)", action.Application, action.Platform))
+	sink := newStepLogSink(ctx, api, step.ID)
+	built, err := engine.Build(ctx, build.BuildRequest{
+		ContextDir: contexts[action.Application].Dir,
+		Dockerfile: filepath.Join(project.Root, spec.Dockerfile),
+		Target:     spec.Target,
+		Arguments:  spec.Arguments,
+		Platform:   action.Platform,
+		PushRef:    action.PushRef,
+		Rebuild:    rebuild,
+	}, &teeSink{inner: sink, task: task})
+	sink.Flush()
+	if err != nil && endsWithin(ctx, buildInterruptGrace) {
+		// Interrupted, not failed: whoever ended the context closes the
+		// window.
+		task.Cancel()
+		return nil, ctx.Err()
+	}
+	if err != nil {
+		task.Fail()
+		_ = api.SetStepStatus(ctx, step.ID, "failed")
+		return nil, failDeployment(ctx, api, opened, fmt.Errorf("build for %s failed: %w", action.Application, err))
+	}
+	task.Done("")
+	if err := api.SetStepStatus(ctx, step.ID, "succeeded"); err != nil {
+		_ = built.Close()
+		return nil, err
+	}
+	return built, nil
+}
+
+// uploadAction journals the push of a local build to the managed registry
+// as its own step and returns the pushed digest. The step succeeds only
+// once the registry accepted the manifest.
+func uploadAction(ctx context.Context, api *client.Client, tasks *clirender.Tasks,
+	opened *client.OpenedDeployment, action client.ArtifactAction, built build.Built) (string, error) {
+	registry := build.RegistryOf(action.PushRef)
+	step, err := api.EnsureStep(ctx, opened.Deployment.RunID, action.StepKey+".upload",
+		"Upload to "+registry, action.StepKey)
+	if err != nil {
+		return "", err
+	}
+	if err := api.SetStepStatus(ctx, step.ID, "running"); err != nil {
+		return "", err
+	}
+	task := tasks.Start("Upload " + action.Application + " to " + registry)
+	sink := newStepLogSink(ctx, api, step.ID)
+	upload := newUploadSink(sink, task)
+	result, err := built.Push(ctx, upload)
+	sink.Flush()
+	if err != nil && ctx.Err() != nil {
+		task.Cancel()
+		return "", ctx.Err()
+	}
+	if err != nil {
+		task.Fail()
+		_ = api.SetStepStatus(ctx, step.ID, "failed")
+		return "", failDeployment(ctx, api, opened, fmt.Errorf("upload for %s failed: %w", action.Application, err))
+	}
+	task.Done(upload.summary(result.Digest))
+	if err := api.SetStepStatus(ctx, step.ID, "succeeded"); err != nil {
+		return "", err
+	}
+	return result.Digest, nil
 }
 
 // buildInterruptGrace is how long a failed build waits for an interrupt
