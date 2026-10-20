@@ -22,9 +22,11 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/Hinkolas/skali/internal/build"
 	"github.com/Hinkolas/skali/internal/checkout"
 	"github.com/Hinkolas/skali/internal/cliconfig"
 	"github.com/Hinkolas/skali/internal/client"
+	"github.com/Hinkolas/skali/internal/clirender"
 	"github.com/Hinkolas/skali/internal/compiler"
 	"github.com/Hinkolas/skali/internal/values"
 )
@@ -1329,4 +1331,44 @@ func TestArtifactStepFollowsItsChildren(t *testing.T) {
 	err = artifactStep(context.Background(), api, "r1", action, func() error { return cause })
 	require.ErrorIs(t, err, cause)
 	require.Equal(t, []string{"running", "failed"}, statuses)
+}
+
+// The live upload display: the bar covers only what needs sending, with
+// reused bytes, stalls, and retries beside it.
+func TestUploadProgressDisplay(t *testing.T) {
+	const mib = 1 << 20
+	require.Equal(t, clirender.TaskProgress{Status: "preparing the image"},
+		uploadProgress(build.UploadStatus{Phase: build.UploadPreparing}))
+
+	sending := build.UploadStatus{Phase: build.UploadSending, Blobs: 4, Total: 30 * mib,
+		ReusedBlobs: 2, Reused: 10 * mib, Sent: 5 * mib, Rate: mib, Transferring: true}
+	require.Equal(t, clirender.TaskProgress{Fraction: 0.25, HasFraction: true,
+		Status: " 25%  5.0MiB / 20.0MiB  1.0MiB/s  ETA 15s",
+		Detail: "10.0MiB already in the registry"}, uploadProgress(sending))
+
+	stalled := sending
+	stalled.Idle = 12 * time.Second
+	stalled.Retrying, stalled.LastError = true, "PATCH /v2/web/blobs/uploads/1: 502 Bad Gateway"
+	progress := uploadProgress(stalled)
+	require.Equal(t, " 25%  5.0MiB / 20.0MiB", progress.Status, "no rate or ETA while stalled")
+	require.Equal(t, "10.0MiB already in the registry · retrying after: PATCH /v2/web/blobs/uploads/1: "+
+		"502 Bad Gateway · no data sent for 12s", progress.Detail)
+
+	unsized := build.UploadStatus{Phase: build.UploadSending, Sent: 3 * mib}
+	require.Equal(t, clirender.TaskProgress{Status: "3.0MiB sent"}, uploadProgress(unsized))
+
+	cached := build.UploadStatus{Phase: build.UploadFinalizing, Blobs: 4, Total: 30 * mib,
+		ReusedBlobs: 4, Reused: 30 * mib, Idle: 6 * time.Second}
+	require.Equal(t, clirender.TaskProgress{Fraction: 1, HasFraction: true, Status: "nothing to send",
+		Detail: "writing the manifest · 30.0MiB already in the registry · waiting on the registry for 6s"},
+		uploadProgress(cached))
+}
+
+func TestUploadSinkSummary(t *testing.T) {
+	digest := "sha256:4b8b0b4d722c" + strings.Repeat("0", 52)
+	sink := &uploadSink{}
+	sink.last = build.UploadStatus{Done: true, Sent: 2 << 20, ReusedBlobs: 1, Reused: 1 << 20}
+	require.Equal(t, "4b8b0b4d722c, sent 2.0MiB, 1.0MiB already in the registry", sink.summary(digest))
+	sink.last = build.UploadStatus{Done: true, ReusedBlobs: 3, Reused: 3 << 20}
+	require.Equal(t, "4b8b0b4d722c, already in the registry", sink.summary(digest))
 }

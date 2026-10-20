@@ -52,35 +52,42 @@ func Import(ctx context.Context, upstream, targetRef string, opts ImportOptions,
 		remote.WithContext(ctx),
 		remote.WithAuthFromKeychain(authn.DefaultKeychain),
 	}
-	dstOpts := []remote.Option{remote.WithContext(ctx)}
-	if opts.TargetAuth != nil {
-		dstOpts = append(dstOpts, remote.WithAuth(opts.TargetAuth))
-	} else {
-		dstOpts = append(dstOpts, remote.WithAuthFromKeychain(authn.DefaultKeychain))
-	}
 
 	sink.Line("info", "resolving "+srcRef.String())
 	descriptor, err := remote.Get(srcRef, srcOpts...)
 	if err != nil {
 		return ImportResult{}, fmt.Errorf("build: resolve %s: %w", upstream, err)
 	}
-	sink.Line("info", "importing "+descriptor.Digest.String())
-	if descriptor.MediaType.IsIndex() {
-		index, err := descriptor.ImageIndex()
-		if err != nil {
-			return ImportResult{}, fmt.Errorf("build: read index %s: %w", upstream, err)
+	// The copy streams each blob from upstream into the managed registry,
+	// so following the push follows the whole transfer.
+	up := beginUpload(sink, targetRef)
+	dstOpts := pushRemoteOptions(ctx, opts.TargetAuth, up)
+	err = func() error {
+		if descriptor.MediaType.IsIndex() {
+			index, err := descriptor.ImageIndex()
+			if err != nil {
+				return fmt.Errorf("build: read index %s: %w", upstream, err)
+			}
+			inventory, err := inventoryIndex(index)
+			up.plan(descriptor.Digest.String(), inventory, err)
+			if err := remote.WriteIndex(dstRef, index, dstOpts...); err != nil {
+				return fmt.Errorf("build: push index to %s: %w", targetRef, err)
+			}
+			return nil
 		}
-		if err := remote.WriteIndex(dstRef, index, dstOpts...); err != nil {
-			return ImportResult{}, fmt.Errorf("build: push index to %s: %w", targetRef, err)
-		}
-	} else {
 		image, err := descriptor.Image()
 		if err != nil {
-			return ImportResult{}, fmt.Errorf("build: read image %s: %w", upstream, err)
+			return fmt.Errorf("build: read image %s: %w", upstream, err)
 		}
+		inventory, err := inventoryImage(image)
+		up.plan(descriptor.Digest.String(), inventory, err)
 		if err := remote.Write(dstRef, image, dstOpts...); err != nil {
-			return ImportResult{}, fmt.Errorf("build: push image to %s: %w", targetRef, err)
+			return fmt.Errorf("build: push image to %s: %w", targetRef, err)
 		}
+		return nil
+	}()
+	if err := up.end(ctx, err); err != nil {
+		return ImportResult{}, err
 	}
 	return ImportResult{Digest: descriptor.Digest.String()}, nil
 }

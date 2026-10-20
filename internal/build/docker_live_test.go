@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -61,9 +62,26 @@ func startRegistry(t *testing.T) string {
 	return addr
 }
 
-type collectSink struct{ lines []string }
+type collectSink struct {
+	mu    sync.Mutex
+	lines []string
+}
 
-func (s *collectSink) Line(_, message string) { s.lines = append(s.lines, message) }
+func (s *collectSink) Line(_, message string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lines = append(s.lines, message)
+}
+
+// buildAndPush runs both steps of a build like a deploy does.
+func buildAndPush(ctx context.Context, engine Engine, req BuildRequest, sink ProgressSink) (Result, error) {
+	built, err := engine.Build(ctx, req, sink)
+	if err != nil {
+		return Result{}, err
+	}
+	defer built.Close()
+	return built.Push(ctx, sink)
+}
 
 func scratchContext(t *testing.T) (string, string) {
 	t.Helper()
@@ -90,7 +108,7 @@ func TestDockerBuildPushAndVerify(t *testing.T) {
 			contextDir, dockerfile := scratchContext(t)
 			sink := &collectSink{}
 			engine := &Docker{forceDaemonExport: mode.force}
-			result, err := engine.Build(ctx, BuildRequest{
+			result, err := buildAndPush(ctx, engine, BuildRequest{
 				ContextDir: contextDir,
 				Dockerfile: dockerfile,
 				PushRef:    addr + "/skali/demo/web:" + mode.name,
@@ -99,6 +117,8 @@ func TestDockerBuildPushAndVerify(t *testing.T) {
 			require.Regexp(t, regexp.MustCompile(`^sha256:[0-9a-f]{64}$`), result.Digest)
 			require.NotEmpty(t, sink.lines, "progress must stream")
 			require.Contains(t, string(result.Provenance), `"export":"`+mode.name+`"`)
+			require.Contains(t, strings.Join(sink.lines, "\n"),
+				"pushed "+addr+"/skali/demo/web:"+mode.name+" ("+result.Digest+")", "the push reports its outcome")
 
 			// The registry itself confirms the digest; a wrong digest is
 			// refused.
@@ -127,7 +147,7 @@ func TestDockerBuildSecretNotPersisted(t *testing.T) {
 
 	sink := &collectSink{}
 	engine := &Docker{}
-	result, err := engine.Build(ctx, BuildRequest{
+	result, err := buildAndPush(ctx, engine, BuildRequest{
 		ContextDir: dir,
 		Dockerfile: dir + "/Dockerfile",
 		Arguments:  map[string]string{"PLAIN_VERSION": "1.2.3"},
@@ -162,7 +182,7 @@ func TestImportPreservesDigest(t *testing.T) {
 	contextDir, dockerfile := scratchContext(t)
 
 	engine := &Docker{}
-	seeded, err := engine.Build(ctx, BuildRequest{
+	seeded, err := buildAndPush(ctx, engine, BuildRequest{
 		ContextDir: contextDir,
 		Dockerfile: dockerfile,
 		PushRef:    addr + "/upstream/app:v1",
