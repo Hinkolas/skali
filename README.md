@@ -141,6 +141,11 @@ and `reset` do what they say. Add a `dev:` block to an application and
 behind the cluster's routes and with its real database and bucket
 credentials.
 
+Developing on a remote machine? `skali dev proxy` opens that machine's
+platform in your laptop's browser at the same `*.localhost` origins, without
+a cluster or Docker on the laptop. See
+[remote development](docs/remote-development.md).
+
 ### 3. Set up a server
 
 You need a Debian or Ubuntu server (amd64 or arm64) with ports 80 and 443
@@ -309,6 +314,7 @@ the release your project's cluster runs.
 | [Databases](docs/databases.md) | Managed PostgreSQL: versions, extensions, isolation, availability |
 | [Buckets](docs/buckets.md) | S3 buckets: quotas, hostnames, browser uploads, topology |
 | [Storage](docs/storage.md) | Persistent volumes and storage drivers |
+| [Remote development](docs/remote-development.md) | Open a remote machine's `skali dev` platform in your laptop's browser |
 | [Permissions](docs/permissions.md) | Users, roles, environments, and protection |
 | [Build matrix](docs/build-matrix.md) | Supported Dockerfile and BuildKit features |
 | [Enrollment](docs/enrollment.md) | Joining nodes and recovering interrupted joins |

@@ -151,6 +151,8 @@ spec:
               value: "true"
             - name: SKALI_EDGE_PROBE
               value: "false"
+            - name: SKALI_DEV_CA_CERT
+              value: "-----BEGIN CERTIFICATE-----\nfake-ca\n-----END CERTIFICATE-----\n"
             - name: SKALI_COOKIE_SECURE
               value: "true"
           readinessProbe:
