@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
 )
 
@@ -176,4 +177,22 @@ func TestTaskProgressRendersBar(t *testing.T) {
 
 	task.Done("")
 	require.NotContains(t, out.String(), "run ", "narration is plain-output only")
+}
+
+// A narrow terminal drops the bar instead of wrapping the line, which
+// would leave stale rows behind on the next frame.
+func TestTaskProgressFitsNarrowTerminals(t *testing.T) {
+	t.Parallel()
+	var out sink
+	tasks := &Tasks{Out: &out, Style: &Style{Enabled: true}, width: 30}
+	task := tasks.Start("Upload web to registry.example.com")
+	task.Progress(TaskProgress{Fraction: 0.5, HasFraction: true, Status: " 50%  5.0MiB / 10.0MiB  1.0MiB/s  ETA 5s"})
+	tasks.mu.Lock()
+	block := task.render()
+	tasks.mu.Unlock()
+	require.NotContains(t, block, "━")
+	for _, line := range strings.Split(strings.TrimRight(ansi.Strip(block), "\n"), "\n") {
+		require.LessOrEqual(t, ansi.StringWidth(line), 30, "line %q", line)
+	}
+	task.Done("")
 }

@@ -511,6 +511,11 @@ func TestClassifyRegistryRequests(t *testing.T) {
 		{http.MethodPut, "/v2/a/b/manifests/latest", requestManifest, "latest"},
 		{http.MethodHead, "/v2/a/b/manifests/latest", requestManifestCheck, "latest"},
 		{http.MethodGet, "/v2/", requestOther, ""},
+		// Repository names may contain the endpoint words themselves.
+		{http.MethodHead, "/v2/skali/blobs/uploads/blobs/" + digest, requestBlobCheck, digest},
+		{http.MethodPost, "/v2/skali/blobs/uploads/blobs/uploads/", requestBlobUpload, ""},
+		{http.MethodHead, "/v2/skali/blobs/uploads/manifests/latest", requestManifestCheck, "latest"},
+		{http.MethodHead, "/v2/skali/blobs/uploads/123", requestOther, ""},
 	} {
 		req, err := http.NewRequest(test.method, "https://registry.test"+test.target, nil)
 		require.NoError(t, err)
@@ -613,4 +618,66 @@ func TestTrackerFinalizesOnTheArtifactManifest(t *testing.T) {
 	require.Equal(t, UploadChecking, tracker.snapshot(time.Now()).Phase, "a platform manifest is not the end")
 	tracker.begin(requestManifest, "v1", nil)
 	require.Equal(t, UploadFinalizing, tracker.snapshot(time.Now()).Phase)
+}
+
+// A token refresh replays a refused commit; the data the registry already
+// accepted still counts once the replay succeeds.
+func TestTrackerKeepsDataAcrossCommitChallenge(t *testing.T) {
+	t.Parallel()
+	blob := "sha256:" + strings.Repeat("f", 64)
+	tracker := newUploadTracker(time.Now())
+	tracker.plan("", &blobInventory{sizes: map[string]int64{blob: 500}})
+	challenged := false
+	client := &http.Client{Transport: &trackingTransport{tracker: tracker, inner: fakeRegistry(func(req *http.Request) *http.Response {
+		if req.Method == http.MethodPatch {
+			return response(http.StatusAccepted, "Location", "/v2/app/blobs/uploads/session?state=2")
+		}
+		if !challenged {
+			challenged = true
+			return response(http.StatusUnauthorized, "WWW-Authenticate", `Bearer realm="https://auth.test/token"`)
+		}
+		return response(http.StatusCreated)
+	})}}
+	for _, step := range []struct{ method, target, body string }{
+		{http.MethodPatch, "/v2/app/blobs/uploads/session?state=1", strings.Repeat("x", 500)},
+		{http.MethodPut, "/v2/app/blobs/uploads/session?state=2&digest=" + blob, ""},
+		{http.MethodPut, "/v2/app/blobs/uploads/session?state=2&digest=" + blob, ""},
+	} {
+		req, err := http.NewRequest(step.method, "http://registry.test"+step.target, strings.NewReader(step.body))
+		require.NoError(t, err)
+		res, err := client.Do(req)
+		require.NoError(t, err)
+		res.Body.Close()
+	}
+	status := tracker.snapshot(time.Now())
+	require.Equal(t, int64(500), status.Sent)
+	require.Equal(t, 1, status.SentBlobs)
+	require.Zero(t, status.Failures, "an authentication challenge is not a failure")
+}
+
+// Replacing a tag's single image with an index that contains it: the tag
+// check finds the old image, the pusher skips it, and its blobs count as
+// already present rather than vanishing from the progress.
+func TestPushIndexOverTagHoldingItsImage(t *testing.T) {
+	t.Parallel()
+	host := testRegistry(t, nil)
+	old, err := random.Image(32<<10, 2)
+	require.NoError(t, err)
+	added, err := random.Image(32<<10, 2)
+	require.NoError(t, err)
+	target := host + "/skali/demo/web:latest"
+	_, err = pushLayout(context.Background(), layoutOf(t, old), target, nil, DiscardSink{})
+	require.NoError(t, err)
+
+	index := mutate.AppendManifests(empty.Index,
+		mutate.IndexAddendum{Add: old, Descriptor: v1.Descriptor{Platform: &v1.Platform{OS: "linux", Architecture: "amd64"}}},
+		mutate.IndexAddendum{Add: added, Descriptor: v1.Descriptor{Platform: &v1.Platform{OS: "linux", Architecture: "arm64"}}})
+	sink := &observingSink{}
+	_, err = pushLayout(context.Background(), layoutOf(t, index), target, nil, sink)
+	require.NoError(t, err)
+	status := sink.final(t)
+	require.Equal(t, 6, status.Blobs)
+	require.Equal(t, 3, status.ReusedBlobs, "the old image's blobs were in place")
+	require.Equal(t, 3, status.SentBlobs)
+	require.Equal(t, status.Total, status.Sent+status.Reused)
 }

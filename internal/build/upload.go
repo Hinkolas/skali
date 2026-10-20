@@ -629,8 +629,12 @@ func classify(req *http.Request) (kind requestKind, digest string) {
 	path := req.URL.Path
 	switch req.Method {
 	case http.MethodHead:
-		if index := strings.LastIndex(path, "/blobs/"); index >= 0 && !strings.Contains(path, "/blobs/uploads") {
-			return requestBlobCheck, path[index+len("/blobs/"):]
+		// Repository names may themselves contain "blobs" or "uploads", so
+		// only the final segments decide.
+		if index := strings.LastIndex(path, "/blobs/"); index >= 0 {
+			if reference := path[index+len("/blobs/"):]; strings.Contains(reference, ":") && !strings.Contains(reference, "/") {
+				return requestBlobCheck, reference
+			}
 		}
 		if index := strings.LastIndex(path, "/manifests/"); index >= 0 {
 			return requestManifestCheck, path[index+len("/manifests/"):]
@@ -786,19 +790,15 @@ func (t *uploadTracker) finish(req *http.Request, kind requestKind, digest strin
 	case requestManifestCheck:
 		// The pusher skips a manifest the registry already has, and with it
 		// every blob below; the reference is a tag or the digest itself.
+		// A tag check that finds another of the push's manifests (an image
+		// now wrapped in an index) also makes the pusher skip that one.
 		if err == nil && res.StatusCode == http.StatusOK && t.inventory != nil {
-			wanted := digest
-			if !strings.HasPrefix(wanted, "sha256:") {
-				wanted = t.top // a tag check compares against the pushed artifact
-			}
 			present := res.Header.Get("Docker-Content-Digest")
 			if present == "" {
 				present = digest
 			}
-			if present == wanted {
-				for _, blob := range t.inventory.manifests[present] {
-					t.reuse(blob, -1)
-				}
+			for _, blob := range t.inventory.manifests[present] {
+				t.reuse(blob, -1)
 			}
 		}
 	case requestBlobData:
@@ -817,12 +817,24 @@ func (t *uploadTracker) finish(req *http.Request, kind requestKind, digest strin
 	case requestBlobCommit:
 		key := sessionKey(req.URL)
 		staged := t.staged[key]
-		delete(t.staged, key)
-		t.stagedBytes -= staged
-		if ok && !t.settled[digest] {
-			t.settled[digest] = true
-			t.sentBlobs++
-			t.committed += staged + accepted
+		switch {
+		case err == nil && res.StatusCode == http.StatusUnauthorized:
+			// The bearer transport refreshes its token and replays the
+			// commit on the same session: the data stays accepted.
+		case err == nil && res.StatusCode >= 300 && res.StatusCode < 400 && res.Header.Get("Location") != "":
+			// The client follows the redirect with a new request.
+			if next, err := req.URL.Parse(res.Header.Get("Location")); err == nil {
+				delete(t.staged, key)
+				t.staged[sessionKey(next)] += staged
+			}
+		default:
+			delete(t.staged, key)
+			t.stagedBytes -= staged
+			if ok && !t.settled[digest] {
+				t.settled[digest] = true
+				t.sentBlobs++
+				t.committed += staged + accepted
+			}
 		}
 	}
 	if t.failed(req, kind, res, err) {

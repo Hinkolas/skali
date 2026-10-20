@@ -19,7 +19,15 @@ type Tasks struct {
 	Out   io.Writer
 	Style *Style
 
-	mu sync.Mutex
+	mu    sync.Mutex
+	width int // overrides the terminal width; tests only
+}
+
+func (t *Tasks) columns() int {
+	if t.width > 0 {
+		return t.width
+	}
+	return TerminalWidth(t.Out)
 }
 
 func NewTasks(out io.Writer) *Tasks {
@@ -55,8 +63,12 @@ type TaskProgress struct {
 	Detail      string
 }
 
-// progressBarWidth is the bar's width in terminal cells.
-const progressBarWidth = 24
+// progressBarWidth is the bar's width in terminal cells; it shows only
+// when progressMinStatus cells remain for the status beside it.
+const (
+	progressBarWidth  = 24
+	progressMinStatus = 20
+)
 
 // Start begins a task. On a styled terminal it appears immediately with a
 // spinner; otherwise nothing is printed until the task settles.
@@ -101,7 +113,7 @@ func (task *Task) render() string {
 	var block strings.Builder
 	block.WriteString(task.erase())
 	style := task.tasks.Style
-	width := TerminalWidth(task.tasks.Out)
+	width := task.tasks.columns()
 	line := "  " + style.Cyan(style.spinner(task.frame)) + " " + Truncate(task.title, width-6)
 	if elapsed := task.elapsed(); elapsed != "" {
 		line += "  " + style.Dim(elapsed)
@@ -113,7 +125,8 @@ func (task *Task) render() string {
 		progress := task.progress
 		line := "    "
 		status := Truncate(progress.Status, width-6)
-		if progress.HasFraction {
+		// A narrow terminal drops the bar rather than wrap the line.
+		if progress.HasFraction && width >= progressBarWidth+progressMinStatus+7 {
 			line += progressBar(style, progress.Fraction) + " "
 			status = Truncate(progress.Status, width-progressBarWidth-7)
 		}
