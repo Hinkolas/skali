@@ -10,34 +10,52 @@ import (
 
 	"github.com/Hinkolas/skali/internal/cliprompt"
 	"github.com/Hinkolas/skali/internal/clirender"
+	"github.com/Hinkolas/skali/internal/devremote"
 	"github.com/Hinkolas/skali/internal/localdev"
 	"github.com/Hinkolas/skali/internal/truststore"
 )
 
 func newDevTrustCommand() *cobra.Command {
 	var checkOnly bool
+	var caFlag string
 	command := &cobra.Command{
-		Use:   "trust",
-		Short: "Trust the local platform's development CA in this machine's browsers",
+		Use:   "trust [host]",
+		Short: "Trust a skali dev platform's development CA in this machine's browsers",
 		Long: "The local platform serves every route over https from a development CA\n" +
 			"generated for this installation. skali itself trusts it; browsers need it\n" +
 			"in the OS trust store. skali dev offers this once after creating the\n" +
 			"platform; this command installs it (again) or, with --check, only reports\n" +
 			"where it is trusted. Installing is an addition of one certificate and safe\n" +
-			"to repeat; macOS asks for the login password, Linux for sudo.",
-		Args: cobra.NoArgs,
+			"to repeat; macOS asks for the login password, Linux for sudo.\n\n" +
+			"With a host, it trusts the CA of a skali dev platform on another machine\n" +
+			"instead, fetched from the edge reachable at that host (port 443). --ca is the\n" +
+			"fingerprint skali dev status prints on that machine, and the CA is accepted\n" +
+			"only when it matches. Use this when something else already forwards the\n" +
+			"remote edge to this machine, such as ssh -L for ports 443 and 80, with\n" +
+			"localhost as the host; skali dev proxy trusts the CA by itself.",
+		Args:              cobra.MaximumNArgs(1),
+		ValidArgsFunction: completeProxyHost,
 		RunE: func(command *cobra.Command, args []string) error {
+			if len(args) == 1 {
+				return runRemoteTrust(command.Context(), command.OutOrStdout(), args[0], caFlag, checkOnly)
+			}
+			if caFlag != "" {
+				return errors.New("--ca names the CA of a platform on another machine; pass that machine's host too: skali dev trust <host> --ca sha256:…")
+			}
 			return runDevTrust(command.Context(), command.OutOrStdout(), checkOnly)
 		},
 	}
 	command.Flags().BoolVar(&checkOnly, "check", false, "report the trust state without installing anything")
+	command.Flags().StringVar(&caFlag, "ca", "",
+		"with a host: the fingerprint of that platform's development CA, as skali dev status prints it there (sha256:…)")
 	return command
 }
 
 func runDevTrust(ctx context.Context, out io.Writer, checkOnly bool) error {
 	ca, err := localdev.LoadCA()
 	if errors.Is(err, localdev.ErrNotInstalled) {
-		return errors.New("the local platform is not installed; run skali dev first")
+		return errors.New("the local platform is not installed; run skali dev first, " +
+			"or pass a host to trust a platform on another machine: skali dev trust <host> --ca sha256:…")
 	}
 	if err != nil {
 		return err
@@ -53,7 +71,7 @@ func runDevTrust(ctx context.Context, out io.Writer, checkOnly bool) error {
 		return err
 	}
 	style := clirender.StyleFor(out)
-	printTrustStatus(out, style, status, ca)
+	printTrustStatus(out, style, status, ca.CertPath, ca.CommonName, devremote.FingerprintFromHex(ca.Fingerprint))
 	if !status.Trusted() {
 		if checkOnly {
 			return errors.New("the development CA is not trusted; run skali dev trust")
@@ -67,8 +85,9 @@ func trustCertificate(ca *localdev.CA) truststore.Certificate {
 	return truststore.Certificate{Path: ca.CertPath, PEM: ca.CertPEM, Name: ca.CommonName}
 }
 
-// printTrustStatus lists every store with its verdict, then the CA file.
-func printTrustStatus(out io.Writer, style *clirender.Style, status truststore.Status, ca *localdev.CA) {
+// printTrustStatus lists every store with its verdict, then the CA file,
+// subject, and fingerprint.
+func printTrustStatus(out io.Writer, style *clirender.Style, status truststore.Status, certPath, commonName, fingerprint string) {
 	width := 0
 	for _, store := range status.Stores {
 		width = max(width, len(store.Name))
@@ -89,8 +108,9 @@ func printTrustStatus(out io.Writer, style *clirender.Style, status truststore.S
 		}
 		fmt.Fprintln(out, line)
 	}
-	fmt.Fprintf(out, "%s %s\n", style.Dim("CA certificate:"), ca.CertPath)
-	fmt.Fprintf(out, "%s %s\n", style.Dim("subject:       "), ca.CommonName)
+	fmt.Fprintf(out, "%s %s\n", style.Dim("CA certificate:"), certPath)
+	fmt.Fprintf(out, "%s %s\n", style.Dim("subject:       "), commonName)
+	fmt.Fprintf(out, "%s %s\n", style.Dim("fingerprint:   "), fingerprint)
 }
 
 // maybeTrustCA runs after a successful skali dev login: when the
@@ -126,7 +146,7 @@ func maybeTrustCA(ctx context.Context, out io.Writer, state *localdev.State) {
 		if err != nil {
 			fmt.Fprintf(out, "  %s\n", style.Yellow("warning: "+err.Error()))
 		} else {
-			printTrustStatus(out, style, status, ca)
+			printTrustStatus(out, style, status, ca.CertPath, ca.CommonName, devremote.FingerprintFromHex(ca.Fingerprint))
 		}
 	}
 	fmt.Fprintf(out, "  %s\n", style.Yellow("warning: browsers on this machine do not trust the development CA yet; "+

@@ -221,3 +221,42 @@ func TestCertManagerImagesMatchManifest(t *testing.T) {
 	}
 	require.NotContains(t, manifest, "imagePullPolicy: Always")
 }
+
+// The local skalid carries the development CA's certificate, exactly and
+// never its key, for skali dev proxy and skali dev trust on another
+// machine; production installations have no development CA to serve.
+func TestSkalidDevCACertEnv(t *testing.T) {
+	t.Parallel()
+	skalidEnv := func(objects *Objects) map[string]any {
+		for _, object := range objects.Skalid {
+			if object.GetKind() != "Deployment" || object.GetName() != "skalid" {
+				continue
+			}
+			containers, _, _ := unstructured.NestedSlice(object.Object, "spec", "template", "spec", "containers")
+			require.Len(t, containers, 1)
+			env := map[string]any{}
+			for _, raw := range containers[0].(map[string]any)["env"].([]any) {
+				variable := raw.(map[string]any)
+				env[variable["name"].(string)] = variable["value"]
+			}
+			return env
+		}
+		t.Fatal("no skalid Deployment rendered")
+		return nil
+	}
+
+	profile := localProfile()
+	objects, err := Render(profile)
+	require.NoError(t, err)
+	env := skalidEnv(objects)
+	require.Equal(t, profile.Local.CACertPEM, env["SKALI_DEV_CA_CERT"])
+	for name, value := range env {
+		if text, ok := value.(string); ok {
+			require.NotContains(t, text, profile.Local.CAKeyPEM, name)
+		}
+	}
+
+	objects, err = Render(productionProfile())
+	require.NoError(t, err)
+	require.NotContains(t, skalidEnv(objects), "SKALI_DEV_CA_CERT")
+}
