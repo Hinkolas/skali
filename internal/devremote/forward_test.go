@@ -193,3 +193,47 @@ func TestForwarderStopClosesConnections(t *testing.T) {
 	_, err = net.DialTimeout("tcp", address, time.Second)
 	require.Error(t, err, "the listener is closed")
 }
+
+func TestForwarderReportsEmptyClientStreamOnlyInDebugLog(t *testing.T) {
+	t.Parallel()
+	upstream := echoUpstream(t)
+	logs, debug := &logLines{}, &logLines{}
+	address, _ := serveForwarder(t, &Forwarder{Target: upstream.Addr().String(), Logf: logs.logf, Debugf: debug.logf})
+	require.Equal(t, "echo:", exchange(t, address, ""))
+	require.Eventually(t, func() bool { return len(debug.snapshot()) == 1 }, time.Second, time.Millisecond)
+	require.Contains(t, debug.snapshot()[0], "(client -> target) ended after 0 bytes: EOF")
+	require.Contains(t, debug.snapshot()[0], upstream.Addr().String())
+	require.Empty(t, logs.snapshot(), "an empty stream is not an unreachable target")
+}
+
+type brokenReadConn struct{ net.Conn }
+
+func (brokenReadConn) Read([]byte) (int, error) { return 0, io.ErrUnexpectedEOF }
+
+func TestForwarderReportsCopyFailureUnlessStopping(t *testing.T) {
+	t.Parallel()
+	for _, stopping := range []bool{false, true} {
+		t.Run(fmt.Sprint(stopping), func(t *testing.T) {
+			client, browser := net.Pipe()
+			defer browser.Close()
+			upstream, target := net.Pipe()
+			defer target.Close()
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if stopping {
+				cancel()
+			}
+			debug := &logLines{}
+			f := Forwarder{
+				Target: "remote:443", Debugf: debug.logf,
+				Dial: func(context.Context, string, string) (net.Conn, error) { return upstream, nil },
+			}
+			f.relay(ctx, brokenReadConn{client})
+			if stopping {
+				require.Empty(t, debug.snapshot(), "stopping is not a relay failure")
+			} else {
+				require.Contains(t, strings.Join(debug.snapshot(), "\n"), "remote:443 (client -> target) ended after 0 bytes: unexpected EOF")
+			}
+		})
+	}
+}

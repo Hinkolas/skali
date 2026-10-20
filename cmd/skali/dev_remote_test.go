@@ -132,6 +132,11 @@ func remoteDevEnv(t *testing.T, edge *remoteEdge) (httpsPort, httpPort int) {
 // browser's own TLS and Host, and the local platform refuses to start
 // while the proxy holds the ports.
 func TestDevProxyRelaysToTheRemoteEdge(t *testing.T) {
+	testDevProxyRelaysToTheRemoteEdge(t)
+}
+
+func testDevProxyRelaysToTheRemoteEdge(t *testing.T) {
+	t.Helper()
 	edge := startRemoteEdge(t)
 	httpsPort, httpPort := remoteDevEnv(t, edge)
 
@@ -142,34 +147,23 @@ func TestDevProxyRelaysToTheRemoteEdge(t *testing.T) {
 	command.SetArgs([]string{"127.0.0.1", "--ca", strings.ToUpper(edge.fingerprint)})
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- command.ExecuteContext(ctx) }()
+	go func() {
+		defer close(done)
+		done <- command.ExecuteContext(ctx)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("proxy did not stop")
+		}
+	})
 	require.Eventually(t, func() bool { return strings.Contains(output.String(), "Forwarding *.localhost") },
 		10*time.Second, 20*time.Millisecond, "the proxy never came up:\n%s", output.String())
 	require.Contains(t, output.String(), "skali local dev CA (remote, test)")
 
-	roots := x509.NewCertPool()
-	roots.AddCert(edge.ca)
-	client := &http.Client{
-		Timeout: 5 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{RootCAs: roots, ServerName: "app.localhost"},
-			DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-				_, port, _ := net.SplitHostPort(address)
-				return (&net.Dialer{}).DialContext(ctx, network, net.JoinHostPort("127.0.0.1", port))
-			},
-		},
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-	}
-	response, err := client.Get(fmt.Sprintf("https://app.localhost:%d/page", httpsPort))
-	require.NoError(t, err)
-	body, _ := io.ReadAll(response.Body)
-	response.Body.Close()
-	require.Equal(t, fmt.Sprintf("remote edge: app.localhost:%d/page over app.localhost", httpsPort), string(body))
-
-	response, err = client.Get(fmt.Sprintf("http://app.localhost:%d/page", httpPort))
-	require.NoError(t, err)
-	response.Body.Close()
-	require.Equal(t, http.StatusPermanentRedirect, response.StatusCode)
+	assertProxyReachesRemoteEdge(t, edge, httpsPort, httpPort)
 
 	// A second proxy and the local platform both refuse while it runs.
 	second := newDevProxyCommand()
@@ -198,6 +192,34 @@ func TestDevProxyRelaysToTheRemoteEdge(t *testing.T) {
 	pinned, err := devremote.PinnedCAPath(edge.fingerprint)
 	require.NoError(t, err)
 	require.FileExists(t, pinned)
+}
+
+func assertProxyReachesRemoteEdge(t *testing.T, edge *remoteEdge, httpsPort, httpPort int) {
+	t.Helper()
+	roots := x509.NewCertPool()
+	roots.AddCert(edge.ca)
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{RootCAs: roots, ServerName: "app.localhost"},
+			DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+				_, port, _ := net.SplitHostPort(address)
+				return (&net.Dialer{}).DialContext(ctx, network, net.JoinHostPort("127.0.0.1", port))
+			},
+		},
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	defer client.CloseIdleConnections()
+	response, err := client.Get(fmt.Sprintf("https://app.localhost:%d/page", httpsPort))
+	require.NoError(t, err)
+	body, _ := io.ReadAll(response.Body)
+	response.Body.Close()
+	require.Equal(t, fmt.Sprintf("remote edge: app.localhost:%d/page over app.localhost", httpsPort), string(body))
+
+	response, err = client.Get(fmt.Sprintf("http://app.localhost:%d/page", httpPort))
+	require.NoError(t, err)
+	response.Body.Close()
+	require.Equal(t, http.StatusPermanentRedirect, response.StatusCode)
 }
 
 // A wrong fingerprint stops the proxy before it serves anything, and the

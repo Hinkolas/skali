@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/netip"
 	"os"
@@ -34,7 +35,7 @@ type handoffReply struct {
 
 // acceptWait bounds the wait for the helper's connection once it exited:
 // it connected before it exited, so the connection is queued by then or
-// never comes. readWait bounds reading its message.
+// never comes. readWait bounds the socket transfer and its acknowledgement.
 const (
 	acceptWait = time.Second
 	readWait   = 5 * time.Second
@@ -42,6 +43,8 @@ const (
 
 // maxHelperAddresses caps what the helper binds: a session has two routes.
 const maxHelperAddresses = 4
+
+const handoffAck = 1
 
 // ListenThrough binds every route in a listen helper that run starts and
 // returns its sockets as listeners, all or nothing. run gets the helper's
@@ -60,31 +63,55 @@ func ListenThrough(ctx context.Context, routes []Route, run func(ctx context.Con
 		return nil, err
 	}
 	defer server.Close()
+	stop := context.AfterFunc(ctx, func() { server.Close() })
+	defer stop()
 
 	args := []string{ListenHelperArg, socketPath}
 	for _, route := range routes {
 		args = append(args, route.Listen)
 	}
+	type result struct {
+		listeners []net.Listener
+		err       error
+		connected bool
+	}
+	received := make(chan result, 1)
+	// Receive while the helper still owns its sockets. On macOS, leaving
+	// them only in a queued SCM_RIGHTS message after the helper exits can
+	// produce listeners whose accepted connections are already shut down.
+	// The helper keeps its copies open until we acknowledge receipt.
+	go func() {
+		conn, err := server.AcceptUnix()
+		if err != nil {
+			received <- result{err: err}
+			return
+		}
+		defer conn.Close()
+		stop := context.AfterFunc(ctx, func() { conn.Close() })
+		defer stop()
+		listeners, err := receiveListeners(conn, routes)
+		received <- result{listeners: listeners, err: err, connected: true}
+	}()
 	runErr := run(ctx, args)
+	_ = server.SetDeadline(time.Now().Add(acceptWait))
+	got := <-received
 	if ctx.Err() != nil {
+		for _, listener := range got.listeners {
+			listener.Close()
+		}
 		return nil, ctx.Err()
 	}
-	// The helper connects and writes before it exits, so its message is
-	// queued by now, or it never sent one.
-	_ = server.SetDeadline(time.Now().Add(acceptWait))
-	conn, err := server.AcceptUnix()
-	if err != nil {
+	if !got.connected {
 		if runErr == nil {
 			runErr = errNoHandoff
 		}
 		return nil, &HandoffError{Err: runErr}
 	}
-	defer conn.Close()
-	return receiveListeners(conn, routes)
+	return got.listeners, got.err
 }
 
 func receiveListeners(conn *net.UnixConn, routes []Route) ([]net.Listener, error) {
-	_ = conn.SetReadDeadline(time.Now().Add(readWait))
+	_ = conn.SetDeadline(time.Now().Add(readWait))
 	payload := make([]byte, 4096)
 	rights := make([]byte, syscall.CmsgSpace(maxHelperAddresses*4))
 	n, rightsLen, _, _, err := conn.ReadMsgUnix(payload, rights)
@@ -107,7 +134,17 @@ func receiveListeners(conn *net.UnixConn, routes []Route) ([]net.Listener, error
 	if reply.Error != "" {
 		return nil, replyError(reply, routes)
 	}
-	return FileListeners(routes, files)
+	listeners, err := FileListeners(routes, files)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := conn.Write([]byte{handoffAck}); err != nil {
+		for _, listener := range listeners {
+			listener.Close()
+		}
+		return nil, &HandoffError{Err: fmt.Errorf("acknowledge the listen helper's sockets: %w", err)}
+	}
+	return listeners, nil
 }
 
 // receivedFiles opens the descriptors a message carried, close-on-exec:
@@ -147,7 +184,8 @@ func replyError(reply handoffReply, routes []Route) error {
 
 // ListenHelper is the helper's side: bind every address, then connect to
 // socketPath and pass the sockets, or the first address that failed. It
-// runs as root, so it takes nothing but IP addresses with ports, never the
+// retains the sockets until the receiver acknowledges taking ownership.
+// It runs as root, so it takes nothing but IP addresses with ports, never the
 // wildcard, and touches no file but the socket.
 func ListenHelper(socketPath string, addresses []string) error {
 	if len(addresses) == 0 || len(addresses) > maxHelperAddresses {
@@ -197,8 +235,19 @@ func ListenHelper(socketPath string, addresses []string) error {
 		return err
 	}
 	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(readWait))
 	_, _, err = conn.WriteMsgUnix(payload, rights, nil)
-	return err
+	if err != nil || reply.Error != "" {
+		return err
+	}
+	var ack [1]byte
+	if _, err := io.ReadFull(conn, ack[:]); err != nil {
+		return fmt.Errorf("wait for the listener handoff acknowledgement: %w", err)
+	}
+	if ack[0] != handoffAck {
+		return errors.New("invalid listener handoff acknowledgement")
+	}
+	return nil
 }
 
 // listenFile binds address and returns the listening socket as a file.

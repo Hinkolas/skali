@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -68,6 +69,9 @@ func startDetached(ctx context.Context, logPath string, args []string, listeners
 		}
 	}()
 
+	if verboseTranscript {
+		args = append(slices.Clone(args), "--verbose")
+	}
 	command := exec.Command(executable, args...)
 	command.Dir = "/"
 	command.Stdin = devNull
