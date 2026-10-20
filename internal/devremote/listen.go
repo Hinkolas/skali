@@ -150,10 +150,10 @@ func (e *HandoffError) Unwrap() error { return e.Err }
 var errNoHandoff = errors.New("the listen helper exited without handing over the ports")
 
 // Serve forwards every route on its listener until ctx ends.
-func Serve(ctx context.Context, routes []Route, listeners []net.Listener, logf func(format string, args ...any)) {
+func Serve(ctx context.Context, routes []Route, listeners []net.Listener, logf, debugf func(format string, args ...any)) {
 	var forwarders sync.WaitGroup
 	for index, route := range routes {
-		forwarder := &Forwarder{Target: route.Target, Logf: logf}
+		forwarder := &Forwarder{Target: route.Target, Logf: logf, Debugf: debugf}
 		forwarders.Go(func() { _ = forwarder.Serve(ctx, listeners[index]) })
 	}
 	forwarders.Wait()

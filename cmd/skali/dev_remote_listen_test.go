@@ -5,12 +5,17 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -187,4 +192,66 @@ func TestRunListenHelperNeedsASocketAndAddresses(t *testing.T) {
 	require.Equal(t, 2, runListenHelper(nil))
 	require.Equal(t, 2, runListenHelper([]string{t.TempDir() + "/s"}))
 	require.Equal(t, 1, runListenHelper([]string{t.TempDir() + "/s", "0.0.0.0:443"}))
+}
+
+// Exercise the full binary on high ports, without sudo or Docker. The
+// foreground case forces the macOS helper path; the detached case hands
+// those same sockets through the launcher to its background process.
+func TestDevProxyHelperHandoff(t *testing.T) {
+	binary := filepath.Join(t.TempDir(), "skali")
+	build := exec.CommandContext(t.Context(), "go", "build", "-o", binary, "./cmd/skali")
+	build.Dir = "../.."
+	output, err := build.CombinedOutput()
+	require.NoError(t, err, "%s", output)
+	runHelper := func(ctx context.Context, args []string) error {
+		command := exec.CommandContext(ctx, binary, args...)
+		output, err := command.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("listen helper: %w: %s", err, output)
+		}
+		return nil
+	}
+	t.Run("foreground", func(t *testing.T) {
+		onMacOS(t, func(args []string) error { return runHelper(t.Context(), args) })
+		testDevProxyRelaysToTheRemoteEdge(t)
+	})
+	t.Run("detached", func(t *testing.T) {
+		edge := startRemoteEdge(t)
+		httpsPort, httpPort := remoteDevEnv(t, edge)
+		routes := devremote.ProxyRoutes("127.0.0.1")
+		listeners, err := devremote.ListenThrough(t.Context(), routes, runHelper)
+		require.NoError(t, err)
+		defer closeListeners(listeners)
+		files, err := listenerFiles(listeners)
+		require.NoError(t, err)
+		defer func() {
+			for _, file := range files {
+				file.Close()
+			}
+		}()
+		command := exec.CommandContext(t.Context(), binary, "dev", "proxy", "127.0.0.1", "--ca", edge.fingerprint, "-d", "--verbose")
+		command.ExtraFiles = files
+		command.Env = append(os.Environ(), envListenFDs+"=3,4")
+		session, err := devremote.ProxySession()
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, stopDevSession(io.Discard, session)) })
+		output, err := command.CombinedOutput()
+		require.NoError(t, err, "%s", output)
+		require.Contains(t, string(output), "Proxy running in the background")
+		closeListeners(listeners)
+		for _, file := range files {
+			file.Close()
+		}
+		assertProxyReachesRemoteEdge(t, edge, httpsPort, httpPort)
+
+		// --verbose must survive detaching, and an empty client stream
+		// must be visible in the background session's log.
+		conn, err := net.DialTimeout("tcp", routes[1].Listen, time.Second)
+		require.NoError(t, err)
+		conn.Close()
+		require.Eventually(t, func() bool {
+			log, err := os.ReadFile(session.LogPath())
+			return err == nil && strings.Contains(string(log), "(client -> target) ended after 0 bytes: EOF")
+		}, 5*time.Second, 10*time.Millisecond)
+	})
 }

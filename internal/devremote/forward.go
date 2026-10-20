@@ -25,6 +25,9 @@ type Forwarder struct {
 	// Logf reports reachability changes: the first failed dial, a reminder
 	// while the target stays unreachable, and its return. Nil is silent.
 	Logf func(format string, args ...any)
+	// Debugf reports copy failures and streams that end without carrying
+	// any bytes. It is enabled by the CLI's --verbose flag. Nil is silent.
+	Debugf func(format string, args ...any)
 
 	mu       sync.Mutex
 	down     bool
@@ -85,26 +88,38 @@ func (f *Forwarder) relay(ctx context.Context, client net.Conn) {
 	})
 	defer stop()
 	var both sync.WaitGroup
-	both.Go(func() { pipe(upstream, client) })
-	both.Go(func() { pipe(client, upstream) })
+	copyStream := func(dst, src net.Conn, direction string) {
+		n, err := pipe(dst, src)
+		if f.Debugf != nil && ctx.Err() == nil && (err != nil || n == 0) {
+			if err == nil {
+				err = io.EOF
+			}
+			f.Debugf("relay %s to %s (%s) ended after %d bytes: %v", client.RemoteAddr(), f.Target, direction, n, err)
+		}
+	}
+	both.Go(func() { copyStream(upstream, client, "client -> target") })
+	both.Go(func() { copyStream(client, upstream, "target -> client") })
 	both.Wait()
 }
 
 // pipe copies src to dst until src's stream ends, then half-closes dst so
 // the far side sees the end while the other direction keeps flowing, the
 // way a direct connection behaves. A broken direction tears down both.
-func pipe(dst, src net.Conn) {
-	if _, err := io.Copy(dst, src); err != nil {
+func pipe(dst, src net.Conn) (int64, error) {
+	n, err := io.Copy(dst, src)
+	if err != nil {
 		dst.Close()
 		src.Close()
-		return
+		return n, err
 	}
 	if closer, ok := dst.(interface{ CloseWrite() error }); ok {
-		if closer.CloseWrite() == nil {
-			return
+		if err := closer.CloseWrite(); err != nil {
+			dst.Close()
+			return n, err
 		}
+		return n, nil
 	}
-	dst.Close()
+	return n, dst.Close()
 }
 
 func (f *Forwarder) failed(err error) {

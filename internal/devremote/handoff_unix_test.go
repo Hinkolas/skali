@@ -7,9 +7,12 @@ import (
 	"errors"
 	"net"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -55,6 +58,125 @@ func TestListenThroughHandsOverTheListeners(t *testing.T) {
 		conn.Close()
 		require.NoError(t, <-accepted, "the handed-over socket accepts connections")
 	}
+}
+
+func TestListenHelperProcess(t *testing.T) {
+	if os.Getenv("SKALI_TEST_LISTEN_HELPER") != "1" {
+		return
+	}
+	for index, arg := range os.Args {
+		if arg == ListenHelperArg {
+			require.NoError(t, ListenHelper(os.Args[index+1], os.Args[index+2:]))
+			return
+		}
+	}
+	t.Fatal("missing listen helper arguments")
+}
+
+// Accept alone can succeed even when the handed-over socket immediately
+// closes every connection. Exercise traffic in both directions after the
+// helper has exited, on both routes and on repeated connections.
+func TestListenThroughRelaysTraffic(t *testing.T) {
+	for _, subprocess := range []bool{false, true} {
+		name := "in-process"
+		if subprocess {
+			name = "subprocess"
+		}
+		t.Run(name, func(t *testing.T) {
+			upstream := echoUpstream(t)
+			routes := []Route{
+				{Scheme: "https", Listen: freeLoopbackAddress(t), Target: upstream.Addr().String()},
+				{Scheme: "http", Listen: freeLoopbackAddress(t), Target: upstream.Addr().String()},
+			}
+			run := runHelperInProcess(t)
+			if subprocess {
+				run = func(ctx context.Context, args []string) error {
+					command := exec.CommandContext(ctx, os.Args[0], append([]string{"-test.run=^TestListenHelperProcess$", "--"}, args...)...)
+					command.Env = append(os.Environ(), "SKALI_TEST_LISTEN_HELPER=1")
+					return command.Run()
+				}
+			}
+			listeners, err := ListenThrough(t.Context(), routes, run)
+			require.NoError(t, err)
+			ctx, cancel := context.WithCancel(t.Context())
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				Serve(ctx, routes, listeners, t.Logf, t.Logf)
+			}()
+			t.Cleanup(func() {
+				cancel()
+				select {
+				case <-done:
+				case <-time.After(5 * time.Second):
+					t.Error("relay did not stop")
+				}
+			})
+			for range 3 {
+				for _, route := range routes {
+					require.Equal(t, "echo:"+route.Scheme, exchange(t, route.Listen, route.Scheme))
+				}
+			}
+		})
+	}
+}
+
+func TestListenHelperWaitsForAcknowledgement(t *testing.T) {
+	// Keep the Unix socket path below macOS's limit, including the test name.
+	dir, err := os.MkdirTemp("", "handoff-")
+	require.NoError(t, err)
+	defer os.RemoveAll(dir)
+	path := filepath.Join(dir, "s")
+	server, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
+	require.NoError(t, err)
+	defer server.Close()
+	require.NoError(t, server.SetDeadline(time.Now().Add(5*time.Second)))
+	address := freeLoopbackAddress(t)
+	done := make(chan error, 1)
+	go func() { done <- ListenHelper(path, []string{address}) }()
+	conn, err := server.AcceptUnix()
+	require.NoError(t, err)
+	defer conn.Close()
+	select {
+	case err := <-done:
+		t.Fatalf("helper exited before the receiver took the sockets: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	listeners, err := receiveListeners(conn, []Route{{Listen: address}})
+	require.NoError(t, err)
+	defer listeners[0].Close()
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("helper did not exit after acknowledgement")
+	}
+}
+
+func TestListenThroughCancellationReleasesReceivedSockets(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	address := freeLoopbackAddress(t)
+	_, err := ListenThrough(ctx, []Route{{Listen: address}}, func(_ context.Context, args []string) error {
+		err := ListenHelper(args[1], args[2:])
+		cancel()
+		return err
+	})
+	require.ErrorIs(t, err, context.Canceled)
+	listener, err := net.Listen("tcp", address)
+	require.NoError(t, err, "the cancelled handoff must release its received sockets")
+	listener.Close()
+}
+
+func TestListenThroughRejectsWrongRouteWithoutWaitingForAcknowledgement(t *testing.T) {
+	address, wrong := freeLoopbackAddress(t), freeLoopbackAddress(t)
+	_, err := ListenThrough(t.Context(), []Route{{Listen: address}}, func(_ context.Context, args []string) error {
+		return ListenHelper(args[1], []string{wrong})
+	})
+	require.ErrorContains(t, err, "it listens on "+wrong)
+	listener, err := net.Listen("tcp", wrong)
+	require.NoError(t, err, "a rejected handoff must release its sockets")
+	listener.Close()
 }
 
 // An address the helper cannot bind comes back as Listen reports it, so

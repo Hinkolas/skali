@@ -542,7 +542,11 @@ func serveSession(ctx context.Context, out io.Writer, routes []devremote.Route, 
 	logf := func(format string, args ...any) {
 		fmt.Fprintf(out, "%s %s\n", time.Now().Format("15:04:05"), fmt.Sprintf(format, args...))
 	}
-	devremote.Serve(ctx, routes, listeners, logf)
+	var debugf func(string, ...any)
+	if verboseTranscript {
+		debugf = logf
+	}
+	devremote.Serve(ctx, routes, listeners, logf, debugf)
 }
 
 // stopDevSession ends a session running in the background and waits until

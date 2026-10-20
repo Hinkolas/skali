@@ -28,7 +28,8 @@ import (
 )
 
 // verboseTranscript is the --verbose switch: live step tails show the
-// server's full detail instead of the compact status rows.
+// server's full detail instead of the compact status rows, and dev
+// sessions report relay diagnostics.
 var verboseTranscript bool
 
 // newRootCommand assembles the whole CLI surface.
@@ -46,7 +47,7 @@ func newRootCommand() *cobra.Command {
 	root.PersistentPreRun = recordCompletionLine
 
 	root.PersistentFlags().BoolVar(&verboseTranscript, "verbose", false,
-		"show every recorded detail under live steps (TLS issuance fields, health snapshots) instead of the compact status rows")
+		"show every recorded detail under live steps (TLS issuance fields, health snapshots) and dev proxy relay diagnostics")
 
 	root.AddCommand(newRemoteCommand(), newValidateCommand(), newManifestCommand(), newCompileCommand(),
 		newPlanCommand(), newDeployCommand(), newRollbackCommand(),
