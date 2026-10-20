@@ -77,6 +77,10 @@ type Deps struct {
 	// Capabilities is the installation's declared capability set for the
 	// deployment gate.
 	Capabilities []string
+	// DevCACert is the local platform's development CA certificate (PEM),
+	// served publicly for skali dev proxy and skali dev trust on another
+	// machine; empty leaves the route unregistered.
+	DevCACert string
 	// ManagedCluster mirrors the installation mode: managed clusters reject
 	// local-application intercepts and the local resolution audience, both
 	// of which exist only on the local dev platform.
@@ -196,6 +200,16 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 	ac.root(r, "GET", edge.ProbePath, func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"instance_id": d.InstanceID})
 	})
+
+	// The development CA certificate of a local platform. Another machine
+	// fetches it through its own transport before it trusts anything here,
+	// and accepts it only when it matches the fingerprint the developer
+	// copied, so the route needs no session; the material is public. Like
+	// /healthz it is version-free: the CLI on the other machine may run a
+	// different release than this platform.
+	if d.DevCACert != "" {
+		ac.root(r, "GET", DevCAPath, devCAHandler(d.DevCACert))
+	}
 
 	// The registry token realm: the registry-domain ingress routes /token
 	// here. Registered only when a signing key is configured (production);

@@ -191,6 +191,15 @@ type API struct {
 	// unreachable. Without the probe, rollouts gate on issuance alone.
 	EdgeProbe bool `env:"SKALI_EDGE_PROBE,default=true"`
 
+	// DevCACert is the PEM certificate of the local platform's development
+	// CA, the issuer of every route certificate there. skalid serves it
+	// without authentication so skali dev proxy and skali dev trust on
+	// another machine can fetch it and check it against the fingerprint the
+	// developer copied from this one. It is public material: the key stays
+	// in cert-manager's issuer secret. Empty, as on every production
+	// installation, leaves the route unregistered.
+	DevCACert string `env:"SKALI_DEV_CA_CERT,default="`
+
 	// Capabilities lists what this installation can run, separated by
 	// semicolons; deployments whose revisions require more are rejected
 	// with a clear error instead of stalling. Today installations serve

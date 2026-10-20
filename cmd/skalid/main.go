@@ -495,6 +495,7 @@ func runServe() error {
 			RuntimeLogs:        runtimeLogs,
 			Exec:               execSvc,
 			Capabilities:       cfg.Capabilities,
+			DevCACert:          cfg.DevCACert,
 			ManagedCluster:     cfg.ManagedCluster,
 			StorageClass:       cfg.StorageClass,
 			Databases:          dbstore.New(st),

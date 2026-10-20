@@ -67,6 +67,11 @@ can remove them. Invalid YAML diagnostics identify the configuration file to edi
   so seeds and migrations just work.
 - `skali dev exec [app]` opens a shell inside the running container
   instead; `skali run` manages journal runs, not project commands.
+- When `skali dev` runs on a remote machine and the browser on a laptop,
+  `skali dev proxy <host> --ca sha256:…` on the laptop opens the remote
+  platform at the same `https://*.localhost` origins. `skali dev expose
+  <address>` on the remote machine opens its edge to the proxy, and `skali dev
+  status` there prints the exact proxy command with the CA fingerprint.
 
 ## Backups
 

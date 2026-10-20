@@ -14,6 +14,7 @@ import (
 	_ "embed"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -1115,6 +1116,12 @@ func skalidYAML(profile Profile) string {
 	} else {
 		capabilitiesEnv += "\n            - name: SKALI_CERT_MANAGER\n              value: \"true\"" +
 			"\n            - name: SKALI_EDGE_PROBE\n              value: \"false\""
+		if local := profile.Local; local != nil {
+			// The development CA's certificate, never its key: skalid
+			// serves it to skali dev proxy and skali dev trust on another
+			// machine, which check it against a copied fingerprint.
+			capabilitiesEnv += "\n            - name: SKALI_DEV_CA_CERT\n              value: " + yamlQuoted(local.CACertPEM)
+		}
 	}
 	// The edge identity route answers on every hostname, on purpose: the
 	// kernel probes a tenant domain with that domain's own Host header to
@@ -1375,4 +1382,12 @@ func ownershipYAML() string {
 		documents = append(documents, string(data))
 	}
 	return strings.Join(documents, "---\n")
+}
+
+// yamlQuoted renders value as a double-quoted YAML scalar. JSON string
+// syntax is a subset of YAML's double-quoted style, so multi-line material
+// like a PEM certificate stays on one line of the rendered manifest.
+func yamlQuoted(value string) string {
+	encoded, _ := json.Marshal(value)
+	return string(encoded)
 }

@@ -96,6 +96,14 @@ func newE2EHarnessFor(t *testing.T, example, host string) *e2eHarness {
 	require.NoError(t, exec.Command("cp", "-R",
 		filepath.Join(repoRoot, "examples", example), projectDir).Run())
 	require.NoError(t, os.RemoveAll(filepath.Join(projectDir, ".skali")))
+	// The .env written below must be the lone env file: git-ignored ones a
+	// developer left in the example (.env.local, .env.prod) would make bare
+	// dev ask which to use, and without a terminal it takes stored values.
+	envFiles, err := filepath.Glob(filepath.Join(projectDir, ".env*"))
+	require.NoError(t, err)
+	for _, envFile := range envFiles {
+		require.NoError(t, os.Remove(envFile))
+	}
 	require.NoError(t, os.WriteFile(filepath.Join(projectDir, ".env"),
 		[]byte("APP_DOMAIN="+host+"\n"), 0o644))
 

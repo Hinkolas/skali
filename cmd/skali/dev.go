@@ -400,7 +400,8 @@ func newDevCommand() *cobra.Command {
 	reset.Flags().BoolVar(&resetYes, "yes", false, "skip the confirmation")
 
 	command.AddCommand(up, status, logs, newDevExecCommand(), newDevRunCommand(),
-		newDevValuesCommand(), newDevTrustCommand(), down, ls, stop, start, reset)
+		newDevValuesCommand(), newDevTrustCommand(), newDevProxyCommand(), newDevExposeCommand(),
+		down, ls, stop, start, reset)
 	return command
 }
 
@@ -864,6 +865,9 @@ func runDevLs(command *cobra.Command, args []string) error {
 // ensureLocalPlatform brings the platform up and logs the CLI into it,
 // storing the local remote.
 func ensureLocalPlatform(command *cobra.Command, skalidImage string, forceConverge bool) (*localdev.State, error) {
+	if err := refuseWhileProxying(); err != nil {
+		return nil, err
+	}
 	locked, unlock, err := localdev.LockContext(command.Context())
 	if err != nil {
 		return nil, err
@@ -1097,12 +1101,25 @@ func runDevStatus(command *cobra.Command, args []string) error {
 	ctx := command.Context()
 	out := command.OutOrStdout()
 	style := clirender.StyleFor(out)
-	clusterStatus, err := localdev.Status(ctx)
-	if err != nil {
-		return err
+	projectOnly, _ := command.Flags().GetBool("project-only")
+	if !projectOnly {
+		printRemoteDevSessions(out, style)
 	}
 	state, err := localdev.LoadState()
 	if err != nil && !errors.Is(err, localdev.ErrNotInstalled) {
+		return err
+	}
+	clusterStatus, err := localdev.Status(ctx)
+	if err != nil {
+		// Asking k3d needs Docker. A machine without an installation,
+		// such as a laptop that only runs skali dev proxy, has nothing to
+		// report and should not need Docker running to say so.
+		if state == nil {
+			if !projectOnly {
+				fmt.Fprintln(out, "platform   not installed")
+			}
+			return nil
+		}
 		return err
 	}
 	k3sImage, installedRelease, releaseLabel := "unknown k3s", "", "no installation record"
@@ -1127,11 +1144,13 @@ func runDevStatus(command *cobra.Command, args []string) error {
 			return nil
 		}
 	}
-	projectOnly, _ := command.Flags().GetBool("project-only")
 	if !projectOnly {
 		fmt.Fprintf(out, "platform   %s (cluster %s, %s, %s)\n",
 			stateColor(style, string(clusterStatus)), localdev.ClusterName(),
 			releaseLabel, k3sImage)
+		if state != nil {
+			printRemoteCommand(out)
+		}
 	}
 	if clusterStatus != localdev.ClusterRunning || state == nil {
 		return nil

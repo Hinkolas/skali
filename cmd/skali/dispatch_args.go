@@ -36,12 +36,18 @@ var noDispatchCommands = map[string]bool{
 	"help":       true,
 }
 
-// Local lifecycle and skill installation never depend on a remote.
+// Local lifecycle, trust, remote development access, and skill
+// installation never depend on a remote.
 var noDispatchPaths = map[string]bool{
-	"dev stop":      true,
-	"dev reset":     true,
-	"dev status":    true,
-	"skill install": true,
+	"dev stop":        true,
+	"dev reset":       true,
+	"dev status":      true,
+	"dev trust":       true,
+	"dev proxy":       true,
+	"dev proxy stop":  true,
+	"dev expose":      true,
+	"dev expose stop": true,
+	"skill install":   true,
 }
 
 // Older prereleases did not implement the worker/context contract.
