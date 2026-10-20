@@ -264,7 +264,6 @@ EOF
       log 'Until then, invoke skali directly: "$HOME/.local/bin/skali"'
       ;;
   esac
-  log ""
 }
 
 if [ "$os" = "darwin" ]; then
@@ -276,7 +275,6 @@ if [ "$os" = "darwin" ]; then
   log "installed ${dest}/${BINARY}"
   completions
   path_hint
-  log "next: run skali cluster to set up Skali on this Mac"
 else
   # Cluster installation must run privileged on Linux, and sudo's
   # secure_path includes /usr/local/bin, so a system path costs nothing
@@ -290,5 +288,12 @@ else
   fi
   log "installed ${dest}/${BINARY}"
   completions
-  log "next: run sudo skali cluster to set up Skali on this host"
 fi
+
+# Most installs only develop and deploy; whoever runs the servers knows to
+# reach for `skali cluster`, so it is not suggested here.
+log ""
+log "get started:"
+log "  skali dev                        run the project in this directory locally"
+log "  skali remote add <name> <host>   connect to an existing skali installation"
+log "  skali --help                     list all commands"
