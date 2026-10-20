@@ -122,10 +122,33 @@ drops or the laptop sleeps. `autossh` reconnects it.
 ## In the background
 
 `skali dev proxy -d` and `skali dev expose -d` keep running after the
-terminal closes. `skali dev proxy stop` and `skali dev expose stop` end them,
+terminal closes. They open their ports before they go to the background, so a
+password prompt on macOS appears in the terminal. `skali dev proxy stop` and `skali dev expose stop` end them,
 `skali dev status` shows them, and their output goes to `proxy.log` and
 `expose.log` in `~/.local/state/skali/remote-dev/`. They do not start again
 after a reboot by themselves.
+
+## Ports on macOS
+
+macOS lets only administrators listen on ports below 1024 of a specific
+address. When `skali dev proxy` or `skali dev expose` starts, it opens its two
+ports through `sudo`, which asks for your login password:
+
+```
+macOS lets only administrators listen on 127.0.0.1:443 and 127.0.0.1:80. sudo opens them for skali dev proxy, which keeps running as you; it may ask for your login password.
+Password:
+```
+
+Only a small helper runs as root. It opens the ports on exactly those
+addresses, hands them to the proxy, and exits. The proxy keeps running as you,
+so the CA goes into your login keychain, its state stays in your home
+directory, and `skali dev proxy stop` and `skali dev status` work without
+`sudo`. Do not run the proxy itself with `sudo`.
+
+Your account must be an administrator of the Mac. With `-d`, the password is
+asked once in the terminal and the background process takes over the open
+ports. Without a terminal, such as in a script, `sudo` cannot ask, and the
+proxy stops with an error that says so.
 
 ## When the remote platform is reset
 
@@ -146,4 +169,7 @@ to remove it.
   machine. The laptop holds no credentials for it.
 - On Linux, listening on ports below 1024 needs privileges. Allow it with
   `sudo sysctl -w net.ipv4.ip_unprivileged_port_start=80`, and a file in
-  `/etc/sysctl.d` keeps it. macOS needs nothing.
+  `/etc/sysctl.d` keeps it.
+- On macOS, only administrators can listen on ports below 1024 of a specific
+  address, such as the proxy's `127.0.0.1:443` and `127.0.0.1:80` or the
+  address `skali dev expose` listens on. See [Ports on macOS](#ports-on-macos).

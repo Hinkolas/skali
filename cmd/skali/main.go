@@ -21,6 +21,7 @@ import (
 	"github.com/Hinkolas/skali/internal/cliconfig"
 	"github.com/Hinkolas/skali/internal/client"
 	"github.com/Hinkolas/skali/internal/clirender"
+	"github.com/Hinkolas/skali/internal/devremote"
 	"github.com/Hinkolas/skali/internal/installer"
 	"github.com/Hinkolas/skali/internal/localdev"
 	versionpkg "github.com/Hinkolas/skali/internal/version"
@@ -109,6 +110,12 @@ func remoteVersionLines(cfg *cliconfig.Config, home, cacheDir string) []string {
 }
 
 func main() {
+	// The listen helper runs as root through sudo (see
+	// dev_remote_listen.go): it must not reach dispatch, which may run
+	// another release, or anything else that reads the user's files.
+	if len(os.Args) > 1 && os.Args[1] == devremote.ListenHelperArg {
+		os.Exit(runListenHelper(os.Args[2:]))
+	}
 	// Another release may own this command: see dispatch.go.
 	if handled, code := dispatch(os.Args[1:]); handled {
 		os.Exit(code)

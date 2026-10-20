@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,11 +14,18 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/Hinkolas/skali/internal/devremote"
 )
 
 // envReadyFD names the descriptor a background session reports on once it
 // serves; set only for the child startDetached spawns.
 const envReadyFD = "SKALI_DEV_READY_FD"
+
+// envListenFDs names the descriptors of the listening sockets a background
+// session serves on, in route order; set only for the child startDetached
+// spawns.
+const envListenFDs = "SKALI_DEV_LISTEN_FDS"
 
 // detachedStartTimeout bounds how long a background session may take to
 // come up: it fetches the remote CA again before it serves.
@@ -25,9 +33,11 @@ const detachedStartTimeout = time.Minute
 
 // startDetached runs this binary with args as a background process in a
 // session of its own, so closing the terminal does not end it, with its
-// output in logPath. It returns once the process reports that it serves;
-// a process that exits first fails with the end of its log.
-func startDetached(ctx context.Context, logPath string, args []string) (int, error) {
+// output in logPath. The process serves on listeners, which this one
+// bound: it has no terminal to ask for a password, and the ports cannot
+// be taken in between. It returns once the process reports that it
+// serves; a process that exits first fails with the end of its log.
+func startDetached(ctx context.Context, logPath string, args []string, listeners []net.Listener) (int, error) {
 	executable, err := os.Executable()
 	if err != nil {
 		return 0, err
@@ -47,14 +57,32 @@ func startDetached(ctx context.Context, logPath string, args []string) (int, err
 		return 0, err
 	}
 	defer readyRead.Close()
+	sockets, err := listenerFiles(listeners)
+	if err != nil {
+		readyWrite.Close()
+		return 0, err
+	}
+	defer func() {
+		for _, socket := range sockets {
+			socket.Close()
+		}
+	}()
 
 	command := exec.Command(executable, args...)
 	command.Dir = "/"
 	command.Stdin = devNull
 	command.Stdout = logFile
 	command.Stderr = logFile
-	command.ExtraFiles = []*os.File{readyWrite} // descriptor 3 in the child
+	// The ready pipe is descriptor 3 in the child, the sockets follow it.
+	command.ExtraFiles = append([]*os.File{readyWrite}, sockets...)
 	command.Env = append(os.Environ(), envReadyFD+"=3")
+	if len(sockets) > 0 {
+		descriptors := make([]string, len(sockets))
+		for index := range sockets {
+			descriptors[index] = strconv.Itoa(4 + index)
+		}
+		command.Env = append(command.Env, envListenFDs+"="+strings.Join(descriptors, ","))
+	}
 	command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	err = command.Start()
 	readyWrite.Close()
@@ -91,6 +119,55 @@ func startDetached(ctx context.Context, logPath string, args []string) (int, err
 		_ = command.Process.Kill()
 		return 0, ctx.Err()
 	}
+}
+
+// listenerFiles duplicates listeners' sockets for a child to inherit.
+func listenerFiles(listeners []net.Listener) ([]*os.File, error) {
+	files := make([]*os.File, 0, len(listeners))
+	for _, listener := range listeners {
+		tcp, ok := listener.(*net.TCPListener)
+		var file *os.File
+		var err error
+		if ok {
+			file, err = tcp.File()
+		} else {
+			err = fmt.Errorf("cannot hand %s to a background process", listener.Addr())
+		}
+		if err != nil {
+			for _, opened := range files {
+				opened.Close()
+			}
+			return nil, err
+		}
+		files = append(files, file)
+	}
+	return files, nil
+}
+
+// inheritedListeners takes the listening sockets startDetached handed a
+// background session; inherited is false for any other process, which
+// binds its routes itself.
+func inheritedListeners(routes []devremote.Route) (listeners []net.Listener, inherited bool, err error) {
+	value, ok := os.LookupEnv(envListenFDs)
+	if !ok {
+		return nil, false, nil
+	}
+	_ = os.Unsetenv(envListenFDs)
+	var files []*os.File
+	defer func() {
+		for _, file := range files {
+			file.Close()
+		}
+	}()
+	for _, field := range strings.Split(value, ",") {
+		descriptor, err := strconv.Atoi(field)
+		if err != nil || descriptor < 3 {
+			return nil, true, fmt.Errorf("%s=%q does not name inherited sockets", envListenFDs, value)
+		}
+		files = append(files, os.NewFile(uintptr(descriptor), "listener"))
+	}
+	listeners, err = devremote.FileListeners(routes, files)
+	return listeners, true, err
 }
 
 // signalDetachedReady tells the parent of a background session that it

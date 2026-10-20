@@ -259,6 +259,9 @@ func TestDevTrustHostForm(t *testing.T) {
 
 func TestExplainProxyBind(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	previous := remoteListenOS
+	t.Cleanup(func() { remoteListenOS = previous })
+	remoteListenOS = "linux"
 	route := devremote.Route{Scheme: "https", Listen: "127.0.0.1:443"}
 	inUse := &devremote.BindError{Route: route, Err: &net.OpError{Op: "listen", Err: syscall.EADDRINUSE}}
 	require.ErrorContains(t, explainProxyBind(inUse), "port 443 is in use on this machine")
