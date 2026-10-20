@@ -204,12 +204,21 @@ func TestInstallScript(t *testing.T) {
 				if tc.shell == "/bin/zsh" {
 					// Execute the printed commands, then check that a new shell
 					// can find the installed binary from the saved startup file.
+					// Only the PATH setup block holds commands to run; the
+					// suggestions after it are indented the same way.
 					var commands []string
+					inSetup := false
 					for _, line := range strings.Split(string(output), "\n") {
-						if strings.HasPrefix(line, "  ") {
+						switch {
+						case strings.HasPrefix(line, "PATH setup required:"):
+							inSetup = true
+						case line == "get started:":
+							inSetup = false
+						case inSetup && strings.HasPrefix(line, "  "):
 							commands = append(commands, strings.TrimPrefix(line, "  "))
 						}
 					}
+					require.NotEmpty(t, commands, string(output))
 					activate := exec.CommandContext(ctx, "sh", "-ec", strings.Join(commands, "\n"))
 					activate.Env = cmd.Env
 					activationOutput, err := activate.CombinedOutput()
