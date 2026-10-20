@@ -48,7 +48,10 @@ func newDevProxyCommand() *cobra.Command {
 			"fingerprint skali dev status prints on the other machine, then installs it\n" +
 			"like skali dev trust. Host and fingerprint are remembered: a bare skali dev\n" +
 			"proxy reuses them. -d runs the proxy in the background; skali dev proxy\n" +
-			"stop ends it.",
+			"stop ends it.\n\n" +
+			"macOS lets only administrators listen on ports 443 and 80 of loopback:\n" +
+			"sudo asks for your password and opens them, and the proxy keeps running\n" +
+			"as you.",
 		Args:              cobra.MaximumNArgs(1),
 		ValidArgsFunction: completeProxyHost,
 		RunE: func(command *cobra.Command, args []string) error {
@@ -77,7 +80,8 @@ func newDevExposeCommand() *cobra.Command {
 			"only your own machines reach; the wildcard address is refused. The address\n" +
 			"is remembered: a bare skali dev expose reuses it. -d runs it in the\n" +
 			"background; skali dev expose stop ends it. Tailscale users can run\n" +
-			"tailscale serve instead.",
+			"tailscale serve instead. On macOS, sudo asks for your password to open\n" +
+			"the ports, and expose keeps running as you.",
 		Args:              cobra.MaximumNArgs(1),
 		ValidArgsFunction: completeExposeAddress,
 		RunE: func(command *cobra.Command, args []string) error {
@@ -221,7 +225,7 @@ func runDevProxy(command *cobra.Command, args []string, caFlag string, detach bo
 		return sessionAcquireError(session, err)
 	}
 	defer release()
-	listeners, err := devremote.Listen(routes)
+	listeners, err := listenRoutes(ctx, routes, "skali dev proxy")
 	if err != nil {
 		return explainProxyBind(err)
 	}
@@ -289,15 +293,16 @@ func proxyTarget(session devremote.Session, args []string, caFlag string) (host,
 	return host, fingerprint, nil
 }
 
-// startDetachedProxy runs the checks a person can act on in the
-// foreground (the ports, the remote CA, the trust prompt) and then hands
-// over to a background process, which repeats the first two and serves.
+// startDetachedProxy does what a person may have to act on in the
+// foreground (binding the ports, which can ask for a password on macOS,
+// the remote CA, the trust prompt) and then hands the ports over to a
+// background process, which fetches the CA again and serves.
 func startDetachedProxy(ctx context.Context, out io.Writer, session devremote.Session, host, fingerprint string, routes []devremote.Route) error {
-	listeners, err := devremote.Listen(routes)
+	listeners, err := listenRoutes(ctx, routes, "skali dev proxy")
 	if err != nil {
 		return explainProxyBind(err)
 	}
-	closeListeners(listeners)
+	defer closeListeners(listeners)
 	ca, path, err := pinRemoteCA(ctx, host, fingerprint)
 	if err != nil {
 		return err
@@ -305,7 +310,7 @@ func startDetachedProxy(ctx context.Context, out io.Writer, session devremote.Se
 	// The background process records host and fingerprint once it holds
 	// the session; writing them here could clobber a running owner.
 	trusted := trustRemoteCA(ctx, out, ca, path, host)
-	pid, err := startDetached(ctx, session.LogPath(), []string{"dev", "proxy", host, "--ca", fingerprint})
+	pid, err := startDetached(ctx, session.LogPath(), []string{"dev", "proxy", host, "--ca", fingerprint}, listeners)
 	if err != nil {
 		return err
 	}
@@ -385,12 +390,12 @@ func runDevExpose(command *cobra.Command, args []string, detach bool) error {
 	}
 	routes := devremote.ExposeRoutes(addr)
 	if detach {
-		listeners, err := devremote.Listen(routes)
+		listeners, err := listenRoutes(ctx, routes, "skali dev expose")
 		if err != nil {
 			return explainExposeBind(err, addr)
 		}
-		closeListeners(listeners)
-		pid, err := startDetached(ctx, session.LogPath(), []string{"dev", "expose", addr.String()})
+		defer closeListeners(listeners)
+		pid, err := startDetached(ctx, session.LogPath(), []string{"dev", "expose", addr.String()}, listeners)
 		if err != nil {
 			return err
 		}
@@ -402,7 +407,7 @@ func runDevExpose(command *cobra.Command, args []string, detach bool) error {
 		return sessionAcquireError(session, err)
 	}
 	defer release()
-	listeners, err := devremote.Listen(routes)
+	listeners, err := listenRoutes(ctx, routes, "skali dev expose")
 	if err != nil {
 		return explainExposeBind(err, addr)
 	}
@@ -495,11 +500,6 @@ func explainExposeBind(err error, addr netip.Addr) error {
 // port that brackets would set apart.
 func proxyCommandLine(host, fingerprint string) string {
 	return "skali dev proxy " + host + " --ca " + fingerprint
-}
-
-func privilegedPortError(port, command string) error {
-	return fmt.Errorf("listening on port %s needs privileges on this system; allow unprivileged web ports with "+
-		"sudo sysctl -w net.ipv4.ip_unprivileged_port_start=80 (a file in /etc/sysctl.d keeps it) and run %s again", port, command)
 }
 
 func refuseRunningSession(session devremote.Session) error {
