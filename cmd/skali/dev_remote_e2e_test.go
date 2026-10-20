@@ -87,7 +87,8 @@ func TestDevRemoteAccess(t *testing.T) {
 	// The pinned CA is the platform's own, and verifies the route served
 	// through proxy, expose, and the edge, under the route's own name.
 	stateHome := envValue(laptop, "XDG_STATE_HOME")
-	pinned, err := os.ReadFile(filepath.Join(stateHome, "skali", "remote-dev", "ca.crt"))
+	pinned, err := os.ReadFile(filepath.Join(stateHome, "skali", "remote-dev",
+		"ca-"+strings.TrimPrefix(fingerprint, "sha256:")+".crt"))
 	require.NoError(t, err)
 	local, err := os.ReadFile(filepath.Join(h.stateDir(), "skali", "dev", e2eCluster, "ca.crt"))
 	require.NoError(t, err)

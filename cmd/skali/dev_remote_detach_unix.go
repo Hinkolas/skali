@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -31,7 +32,7 @@ func startDetached(ctx context.Context, logPath string, args []string) (int, err
 	if err != nil {
 		return 0, err
 	}
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	logFile, err := openSessionLog(logPath)
 	if err != nil {
 		return 0, err
 	}
@@ -124,4 +125,13 @@ func detachedFailure(logPath string) error {
 		lines = lines[len(lines)-12:]
 	}
 	return errors.New("the background process exited before it started serving:\n" + strings.Join(lines, "\n"))
+}
+
+// openSessionLog truncates a background session's log, creating the state
+// directory on a machine that has none yet.
+func openSessionLog(path string) (*os.File, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, err
+	}
+	return os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 }
