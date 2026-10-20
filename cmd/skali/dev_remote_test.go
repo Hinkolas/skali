@@ -16,6 +16,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strconv"
 	"strings"
 	"syscall"
@@ -42,6 +43,13 @@ type remoteEdge struct {
 
 func startRemoteEdge(t *testing.T) *remoteEdge {
 	t.Helper()
+	return startGatedRemoteEdge(t, nil)
+}
+
+// startGatedRemoteEdge holds every CA request until gate closes, to catch
+// the proxy in the middle of its startup.
+func startGatedRemoteEdge(t *testing.T, gate <-chan struct{}) *remoteEdge {
+	t.Helper()
 	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 	caTemplate := &x509.Certificate{
@@ -67,6 +75,9 @@ func startRemoteEdge(t *testing.T) *remoteEdge {
 		fingerprint: devremote.Fingerprint(caDER)}
 	secure := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Host == "skali.localhost" && r.URL.Path == "/api/dev/ca.crt" {
+			if gate != nil {
+				<-gate
+			}
 			_, _ = w.Write(edge.caPEM)
 			return
 		}
@@ -184,7 +195,7 @@ func TestDevProxyRelaysToTheRemoteEdge(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "127.0.0.1", host, "a bare skali dev proxy reuses the host")
 	require.Equal(t, edge.fingerprint, fingerprint, "and the fingerprint, normalized")
-	pinned, err := devremote.PinnedCAPath()
+	pinned, err := devremote.PinnedCAPath(edge.fingerprint)
 	require.NoError(t, err)
 	require.FileExists(t, pinned)
 }
@@ -204,8 +215,10 @@ func TestDevProxyRefusesAnotherCA(t *testing.T) {
 
 	session, err := devremote.ProxySession()
 	require.NoError(t, err)
-	_, err = session.Load()
-	require.Error(t, err, "nothing is remembered from a refused run")
+	record, err := session.Load()
+	require.NoError(t, err)
+	require.Empty(t, record.Host, "nothing is remembered from a refused run")
+	require.Empty(t, record.Fingerprint)
 }
 
 func TestProxyTargetNeedsHostAndFingerprintOnce(t *testing.T) {
@@ -288,7 +301,8 @@ func TestDevExposeRequiresALocalPlatform(t *testing.T) {
 func TestProxyCommandLine(t *testing.T) {
 	t.Parallel()
 	require.Equal(t, "skali dev proxy 192.168.69.100 --ca sha256:ab", proxyCommandLine("192.168.69.100", "sha256:ab"))
-	require.Equal(t, "skali dev proxy [fd7a::1] --ca sha256:ab", proxyCommandLine("fd7a::1", "sha256:ab"))
+	require.Equal(t, "skali dev proxy fd7a::1 --ca sha256:ab", proxyCommandLine("fd7a::1", "sha256:ab"),
+		"zsh would glob a bracketed address")
 }
 
 func TestStopWithoutASession(t *testing.T) {
@@ -333,4 +347,40 @@ func TestDevProxyRefusesToForwardToItself(t *testing.T) {
 	t.Setenv("SKALI_DEV_REMOTE_HTTPS_PORT", "18443")
 	t.Setenv("SKALI_DEV_REMOTE_HTTP_PORT", "18080")
 	require.False(t, forwardsToItself("127.0.0.1"), "an SSH forward on other ports is a valid target")
+}
+
+// While a starting proxy still fetches the CA, the session already names
+// this process, not the one a previous run recorded: stop would otherwise
+// signal whatever process now has that old id.
+func TestDevProxyPublishesItsOwnerBeforeTheCAFetch(t *testing.T) {
+	gate := make(chan struct{})
+	edge := startGatedRemoteEdge(t, gate)
+	remoteDevEnv(t, edge)
+	session, err := devremote.ProxySession()
+	require.NoError(t, err)
+	require.NoError(t, session.Save(devremote.Record{Host: "127.0.0.1", Fingerprint: edge.fingerprint, PID: 999999}))
+
+	command := newDevProxyCommand()
+	output := &syncBuffer{}
+	command.SetOut(output)
+	command.SetErr(output)
+	command.SetArgs([]string{"127.0.0.1"})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- command.ExecuteContext(ctx) }()
+
+	require.Eventually(t, func() bool {
+		_, running, err := session.Running()
+		return err == nil && running
+	}, 5*time.Second, 10*time.Millisecond)
+	record, running, err := session.Running()
+	require.NoError(t, err)
+	require.True(t, running)
+	require.Equal(t, os.Getpid(), record.PID, "the stale id of the previous run is gone")
+
+	close(gate)
+	require.Eventually(t, func() bool { return strings.Contains(output.String(), "Forwarding *.localhost") },
+		10*time.Second, 20*time.Millisecond, "the proxy never came up:\n%s", output.String())
+	cancel()
+	require.NoError(t, <-done)
 }

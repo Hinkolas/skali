@@ -137,10 +137,10 @@ func fetchCA(ctx context.Context, address, fingerprint string, dial dialFunc) (*
 	}, nil
 }
 
-// Pin writes the CA to PinnedCAPath for the trust stores to import and
-// returns that path.
+// Pin writes the CA to its PinnedCAPath for the trust stores to import
+// and returns that path.
 func (ca *RemoteCA) Pin() (string, error) {
-	path, err := PinnedCAPath()
+	path, err := PinnedCAPath(ca.Fingerprint)
 	if err != nil {
 		return "", err
 	}

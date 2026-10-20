@@ -1,6 +1,7 @@
 package devremote
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -45,8 +46,13 @@ func (s Session) Name() string { return s.name }
 // output; each start truncates it.
 func (s Session) LogPath() string { return filepath.Join(s.dir, s.name+".log") }
 
-func (s Session) lockPath() string   { return filepath.Join(s.dir, s.name+".lock") }
-func (s Session) recordPath() string { return filepath.Join(s.dir, s.name+".json") }
+func (s Session) lockPath() string       { return filepath.Join(s.dir, s.name+".lock") }
+func (s Session) recordPath() string     { return filepath.Join(s.dir, s.name+".json") }
+func (s Session) recordLockPath() string { return filepath.Join(s.dir, s.name+".record.lock") }
+
+// recordLockWait bounds the wait for the record lock, which is only ever
+// held for the moment between claiming a session and publishing its owner.
+const recordLockWait = 5 * time.Second
 
 // Record is what a session remembers. The target outlives the process,
 // so a bare skali dev proxy restarts with the last host and CA; PID and
@@ -65,8 +71,20 @@ type Record struct {
 var ErrRunning = errors.New("devremote: session already running")
 
 // Acquire claims the session for this process until release is called or
-// the process exits.
+// the process exits, and publishes this process as its owner before it
+// returns. Claiming and publishing happen under the record lock, which
+// Running reads under too, so a held session is never paired with a
+// previous owner's process id: that process may be gone and its id reused,
+// and stop would signal a stranger. The remembered target stays as it was
+// until the owner saves a new one.
 func (s Session) Acquire() (release func(), err error) {
+	ctx, cancel := context.WithTimeout(context.Background(), recordLockWait)
+	defer cancel()
+	unlockRecord, err := filelock.Acquire(ctx, s.recordLockPath())
+	if err != nil {
+		return nil, err
+	}
+	defer unlockRecord()
 	release, err = filelock.Try(s.lockPath())
 	if err != nil {
 		return nil, err
@@ -74,15 +92,31 @@ func (s Session) Acquire() (release func(), err error) {
 	if release == nil {
 		return nil, ErrRunning
 	}
+	var owner Record
+	if previous, err := s.Load(); err == nil {
+		owner = *previous
+	}
+	owner.PID, owner.Started = os.Getpid(), time.Now().UTC()
+	if err := s.Save(owner); err != nil {
+		release()
+		return nil, err
+	}
 	return release, nil
 }
 
-// Running reports whether a process holds the session, with its record
-// when one does.
+// Running reports whether a process holds the session, with its record,
+// which names that process, when one does.
 func (s Session) Running() (*Record, bool, error) {
 	if _, err := os.Stat(s.lockPath()); errors.Is(err, os.ErrNotExist) {
 		return nil, false, nil
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), recordLockWait)
+	defer cancel()
+	unlockRecord, err := filelock.Shared(ctx, s.recordLockPath())
+	if err != nil {
+		return nil, false, err
+	}
+	defer unlockRecord()
 	release, err := filelock.Try(s.lockPath())
 	if err != nil {
 		return nil, false, err
@@ -93,9 +127,7 @@ func (s Session) Running() (*Record, bool, error) {
 	}
 	record, err := s.Load()
 	if err != nil {
-		// The holder writes its record right after it locks; between
-		// the two it is running all the same.
-		return &Record{}, true, nil
+		return nil, true, fmt.Errorf("devremote: read the running %s session: %w", s.name, err)
 	}
 	return record, true, nil
 }
@@ -113,7 +145,8 @@ func (s Session) Load() (*Record, error) {
 	return &record, nil
 }
 
-// Save writes the session's record.
+// Save writes the session's record. Only the session's owner, the process
+// that acquired it, may save while it runs.
 func (s Session) Save(record Record) error {
 	raw, err := json.MarshalIndent(record, "", "  ")
 	if err != nil {

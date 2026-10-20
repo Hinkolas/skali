@@ -24,6 +24,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/Hinkolas/skali/internal/localdev"
 )
@@ -46,14 +47,16 @@ func Dir() (string, error) {
 	return filepath.Join(state, "remote-dev"), nil
 }
 
-// PinnedCAPath is where the remote installation's CA certificate is kept
-// once it matched its fingerprint; the trust stores import it from there.
-func PinnedCAPath() (string, error) {
+// PinnedCAPath is where a remote installation's CA certificate is kept
+// once it matched fingerprint; the trust stores import it from there. Each
+// fingerprint has a file of its own, so a concurrent run pinning another
+// CA can never swap the file between verification and installation.
+func PinnedCAPath(fingerprint string) (string, error) {
 	dir, err := Dir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "ca.crt"), nil
+	return filepath.Join(dir, "ca-"+strings.TrimPrefix(fingerprint, fingerprintPrefix)+".crt"), nil
 }
 
 // hostPort joins a host and a port into a dialable address.

@@ -302,9 +302,8 @@ func startDetachedProxy(ctx context.Context, out io.Writer, session devremote.Se
 	if err != nil {
 		return err
 	}
-	if err := session.Save(devremote.Record{Host: host, Fingerprint: fingerprint}); err != nil {
-		return err
-	}
+	// The background process records host and fingerprint once it holds
+	// the session; writing them here could clobber a running owner.
 	trusted := trustRemoteCA(ctx, out, ca, path, host)
 	pid, err := startDetached(ctx, session.LogPath(), []string{"dev", "proxy", host, "--ca", fingerprint})
 	if err != nil {
@@ -391,9 +390,6 @@ func runDevExpose(command *cobra.Command, args []string, detach bool) error {
 			return explainExposeBind(err, addr)
 		}
 		closeListeners(listeners)
-		if err := session.Save(devremote.Record{Host: addr.String()}); err != nil {
-			return err
-		}
 		pid, err := startDetached(ctx, session.LogPath(), []string{"dev", "expose", addr.String()})
 		if err != nil {
 			return err
@@ -494,11 +490,10 @@ func explainExposeBind(err error, addr netip.Addr) error {
 
 // --- shared -------------------------------------------------------------
 
-// proxyCommandLine is the command the other machine runs.
+// proxyCommandLine is the command the other machine runs. An IPv6 host
+// stays bare: zsh would take brackets for a glob, and the proxy takes no
+// port that brackets would set apart.
 func proxyCommandLine(host, fingerprint string) string {
-	if strings.Contains(host, ":") {
-		host = "[" + host + "]"
-	}
 	return "skali dev proxy " + host + " --ca " + fingerprint
 }
 

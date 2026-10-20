@@ -54,6 +54,9 @@ func TestParseExposeAddress(t *testing.T) {
 	for input, mention := range map[string]string{
 		"0.0.0.0":   "every interface",
 		"::":        "every interface",
+		"::%en0":    "every interface",
+		"[::%en0]":  "every interface",
+		"::1%lo0":   "loopback",
 		"127.0.0.1": "loopback",
 		"::1":       "loopback",
 		"127.0.0.2": "loopback",

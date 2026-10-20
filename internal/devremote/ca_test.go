@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 
@@ -167,4 +168,22 @@ func TestFetchCAExplainsAnEdgeWithoutTheEndpoint(t *testing.T) {
 	listener.Close()
 	_, err = fetch(closed, fingerprint)
 	require.ErrorContains(t, err, "reach the remote edge at "+closed)
+}
+
+// Two CAs pinned one after the other keep separate files, each holding
+// exactly the certificate its own fingerprint names, so installing one can
+// never import the other.
+func TestPinKeepsOneFilePerFingerprint(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	first, second := newTestCA(t, "first"), newTestCA(t, "second")
+	firstPath, err := (&RemoteCA{PEM: first.pem, Certificate: first.certificate, Fingerprint: Fingerprint(first.certificate.Raw)}).Pin()
+	require.NoError(t, err)
+	secondPath, err := (&RemoteCA{PEM: second.pem, Certificate: second.certificate, Fingerprint: Fingerprint(second.certificate.Raw)}).Pin()
+	require.NoError(t, err)
+	require.NotEqual(t, firstPath, secondPath)
+	for path, ca := range map[string]*testCA{firstPath: first, secondPath: second} {
+		content, err := os.ReadFile(path)
+		require.NoError(t, err)
+		require.Equal(t, ca.pem, content)
+	}
 }

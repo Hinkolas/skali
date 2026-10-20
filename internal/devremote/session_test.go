@@ -48,3 +48,25 @@ func TestSessionLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "mac-mini", record.Host, "the target outlives the process")
 }
+
+// A new owner is published the moment it claims the session and keeps the
+// remembered target: stop must never read a previous owner's process id,
+// which the system may have handed to an unrelated process since.
+func TestSessionAcquirePublishesItsOwner(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	proxy, err := ProxySession()
+	require.NoError(t, err)
+	previous := time.Unix(0, 0).UTC()
+	require.NoError(t, proxy.Save(Record{Host: "mac-mini", Fingerprint: "sha256:00", PID: 999999, Started: previous}))
+
+	release, err := proxy.Acquire()
+	require.NoError(t, err)
+	defer release()
+	record, running, err := proxy.Running()
+	require.NoError(t, err)
+	require.True(t, running)
+	require.Equal(t, os.Getpid(), record.PID)
+	require.True(t, record.Started.After(previous))
+	require.Equal(t, "mac-mini", record.Host)
+	require.Equal(t, "sha256:00", record.Fingerprint)
+}

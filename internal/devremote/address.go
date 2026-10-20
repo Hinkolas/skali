@@ -50,11 +50,14 @@ func ParseExposeAddress(value string) (netip.Addr, error) {
 			"the other machine connects from, for example its LAN or VPN address", value)
 	}
 	addr = addr.Unmap()
+	// The zone does not narrow a wildcard: the system binds ::%en0 on every
+	// interface. netip compares zones in IsUnspecified, so check without.
+	unzoned := addr.WithZone("")
 	switch {
-	case addr.IsUnspecified():
+	case unzoned.IsUnspecified():
 		return netip.Addr{}, errors.New("refusing to expose the development edge on every interface; " +
 			"pass the one address the other machine connects to, for example its LAN or VPN address")
-	case addr.IsLoopback():
+	case unzoned.IsLoopback():
 		return netip.Addr{}, errors.New("the development edge already listens on loopback; " +
 			"pass an address other machines reach this one on, for example its LAN or VPN address")
 	}
