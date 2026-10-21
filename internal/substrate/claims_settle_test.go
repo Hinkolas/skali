@@ -471,6 +471,61 @@ func TestEnsureWithholdsReadinessUntilExtensionsApply(t *testing.T) {
 	require.Empty(t, states[0].Waiting)
 }
 
+// A database declared with two extensions settles like one with a single
+// extension: the claim row reads its list back in Postgres' jsonb rendering,
+// and the provisioned claim must not keep reporting the extensions pending
+// on every pass (#234).
+func TestEnsureSettlesMultipleExtensions(t *testing.T) {
+	fx := newSettleFixture(t)
+	ctx := context.Background()
+	input := fx.ensureInput("pg_trgm", "unaccent")
+	_, err := fx.control.Ensure(ctx, input)
+	require.NoError(t, err)
+	fx.fake.set(clusterHealthyPhase, 1, true)
+	_, phase := fx.pass(t)
+	require.Equal(t, claim.PhaseProvisioned, phase)
+
+	for range 3 {
+		states, err := fx.control.Ensure(ctx, input)
+		require.NoError(t, err)
+		require.True(t, states[0].Provisioned)
+		require.Empty(t, states[0].Waiting)
+		require.False(t, fx.control.extensionsPending(fx.claim.ID))
+		fx.pass(t)
+	}
+}
+
+// Adding a second extension to a provisioned claim withholds readiness
+// until CNPG applied it, then settles, and the pass that settles it wakes
+// the environment: the claim's phase never moved, so nothing else would.
+func TestEnsureSettlesAddedExtensionAndWakesEnvironment(t *testing.T) {
+	fx := newSettleFixture(t)
+	ctx := context.Background()
+	_, err := fx.control.Ensure(ctx, fx.ensureInput("pg_trgm"))
+	require.NoError(t, err)
+	fx.fake.set(clusterHealthyPhase, 1, true)
+	fx.pass(t)
+
+	fx.fake.set(clusterHealthyPhase, 1, false)
+	states, err := fx.control.Ensure(ctx, fx.ensureInput("pg_trgm", "unaccent"))
+	require.NoError(t, err)
+	require.False(t, states[0].Provisioned)
+	require.Equal(t, extensionsPendingReason, states[0].Waiting)
+	*fx.poked = nil
+	fx.pass(t)
+	require.True(t, fx.control.extensionsPending(fx.claim.ID))
+	require.Empty(t, *fx.poked, "a pass still waiting on CNPG settles nothing")
+
+	fx.fake.set(clusterHealthyPhase, 1, true)
+	fx.pass(t)
+	require.False(t, fx.control.extensionsPending(fx.claim.ID))
+	require.Equal(t, []uuid.UUID{fx.envID}, *fx.poked)
+	states, err = fx.control.Ensure(ctx, fx.ensureInput("pg_trgm", "unaccent"))
+	require.NoError(t, err)
+	require.True(t, states[0].Provisioned)
+	require.Empty(t, states[0].Waiting)
+}
+
 // TestExtensionsPendingSettlesOnlyOnTheAppliedEncoding pins the race guard:
 // a pass that applied an older list must not clear a newer request, and a
 // released claim drops its marker outright.
@@ -481,11 +536,13 @@ func TestExtensionsPendingSettlesOnlyOnTheAppliedEncoding(t *testing.T) {
 	fx.control.markExtensionsPending(id, desired)
 	require.True(t, fx.control.extensionsPending(id))
 
-	fx.control.settleExtensions(id, dbstore.MarshalExtensions([]string{"pg_trgm"}))
+	require.False(t, fx.control.settleExtensions(id, []byte(`["pg_trgm"]`)))
 	require.True(t, fx.control.extensionsPending(id), "an older applied list must not settle the request")
 
-	fx.control.settleExtensions(id, dbstore.MarshalExtensions([]string{"vector", "pg_trgm"}))
-	require.False(t, fx.control.extensionsPending(id), "the encoding is canonical regardless of input order")
+	// The applied list is the row's, in Postgres' jsonb rendering.
+	require.True(t, fx.control.settleExtensions(id, []byte(`["pg_trgm", "vector"]`)))
+	require.False(t, fx.control.extensionsPending(id), "the stored list settles by value, not by bytes")
+	require.False(t, fx.control.settleExtensions(id, []byte(`["pg_trgm", "vector"]`)), "nothing is left to settle")
 
 	fx.control.markExtensionsPending(id, desired)
 	fx.control.clearExtensions(id)

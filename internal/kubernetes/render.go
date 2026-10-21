@@ -504,7 +504,7 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 			},
 		})
 		if intercepted {
-			slice, err := renderInterceptSlice(objectName("intercept", project.Name, key), name, options.Namespace, labels, servicePorts, hostPorts, options.InterceptHostIP)
+			slice, err := renderInterceptSlice(InterceptSliceName(project.Name, key), name, options.Namespace, labels, servicePorts, hostPorts, options.InterceptHostIP)
 			if err != nil {
 				return nil, err
 			}
@@ -1223,6 +1223,12 @@ func ApplicationName(project, application string) string {
 // Service, HPA, and routes keep ApplicationName; only workloads are colored.
 func ColoredApplicationName(project, application, color string) string {
 	return objectName("app", project, application, color)
+}
+
+// InterceptSliceName names the EndpointSlice that routes an intercepted
+// application's Service to the local dev process on the host.
+func InterceptSliceName(project, application string) string {
+	return objectName("intercept", project, application)
 }
 
 func RouteName(project, application, route, variant string) string {

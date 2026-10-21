@@ -7,9 +7,11 @@
 package dbstore
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 
 	"github.com/google/uuid"
@@ -136,8 +138,10 @@ func New(st *store.Store) *Service {
 }
 
 // MarshalExtensions encodes an extension list the way claim rows store it:
-// sorted JSON, "[]" when empty. Callers compare desired against stored
-// bytes with it, so the encoding must stay canonical.
+// sorted JSON, "[]" when empty. It is the canonical encoding, but not the
+// one a row reads back with: Postgres renders jsonb in its own form
+// (`["pg_trgm", "unaccent"]`), so stored bytes are compared through
+// CanonicalExtensions or SameExtensions, never directly.
 func MarshalExtensions(extensions []string) []byte {
 	sorted := slices.Clone(extensions)
 	slices.Sort(sorted)
@@ -150,6 +154,37 @@ func MarshalExtensions(extensions []string) []byte {
 		panic(fmt.Sprintf("dbstore: marshal extensions: %v", err))
 	}
 	return data
+}
+
+// CanonicalExtensions re-encodes a stored extension list with
+// MarshalExtensions. A list that does not decode is returned as is, so it
+// never compares equal to a canonical encoding.
+func CanonicalExtensions(stored []byte) []byte {
+	var extensions []string
+	if err := json.Unmarshal(stored, &extensions); err != nil {
+		return stored
+	}
+	return MarshalExtensions(extensions)
+}
+
+// SameExtensions reports whether a stored extension list holds exactly the
+// desired extensions, in any order.
+func SameExtensions(stored []byte, desired []string) bool {
+	return bytes.Equal(CanonicalExtensions(stored), MarshalExtensions(desired))
+}
+
+// sameJSON reports whether two stored or desired JSON documents hold the
+// same value; nil (SQL NULL) equals only nil. jsonb reads back with its own
+// key order and spacing, so its bytes never match json.Marshal output.
+func sameJSON(stored, desired []byte) bool {
+	if stored == nil || desired == nil {
+		return stored == nil && desired == nil
+	}
+	var left, right any
+	if json.Unmarshal(stored, &left) != nil || json.Unmarshal(desired, &right) != nil {
+		return bytes.Equal(stored, desired)
+	}
+	return reflect.DeepEqual(left, right)
 }
 
 // Extensions decodes a claim row's extension list.

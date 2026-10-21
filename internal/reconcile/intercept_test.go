@@ -62,10 +62,21 @@ func (f *kernelFixture) executeVersionLocals(t *testing.T, definitionVersion uui
 	return result
 }
 
+const webInterceptSlice = "intercept-demo-web-affcdc6d146a6bd037773cb30f69840a"
+
+// observeIntercept stands in for the watch delivering what a pass applied
+// for the intercepted web application: its selectorless Service and the
+// EndpointSlice pointing it at the host.
+func (f *kernelFixture) observeIntercept() {
+	f.fake.SetService(f.environmentID, f.namespace, f.webServiceName(), "web", nil)
+	f.fake.SetEndpointSlice(f.environmentID, f.namespace, webInterceptSlice, "web")
+}
+
 // An intercepted application renders Service + EndpointSlice but no
-// Deployment, synthesizes healthy without any observed workload, and
-// activates immediately. Clearing the intercept re-renders the Deployment
-// and prunes the stale slice.
+// Deployment, and needs no observed workload: it is healthy, and the
+// revision activates, once the routing to the dev process is observed.
+// Clearing the intercept re-renders the Deployment and prunes the stale
+// slice.
 func TestReconcileInterceptedApplication(t *testing.T) {
 	t.Parallel()
 	f := newKernelFixture(t, Config{RolloutDeadline: time.Hour})
@@ -78,35 +89,47 @@ func TestReconcileInterceptedApplication(t *testing.T) {
 
 	requeue, err := f.kernel.reconcileEnvironment(ctx, f.environmentID)
 	require.NoError(t, err)
-	require.Zero(t, requeue, "an intercepted-only revision activates on the first pass")
+	require.Equal(t, requeueHealthCheck, requeue, "the routing is applied but not observed yet")
+	require.Nil(t, f.target(t).ActiveRevisionID)
 
 	ops := f.cluster.recorded()
 	require.Contains(t, ops, "apply Service/"+f.namespace+"/"+f.webServiceName())
-	require.Contains(t, ops, "apply EndpointSlice/"+f.namespace+"/intercept-demo-web-affcdc6d146a6bd037773cb30f69840a")
+	require.Contains(t, ops, "apply EndpointSlice/"+f.namespace+"/"+webInterceptSlice)
 	require.NotContains(t, ops, "apply Deployment/"+f.namespace+"/"+f.webDeploymentName(t))
-
-	target := f.target(t)
-	require.NotNil(t, target.ActiveRevisionID)
-	require.Equal(t, result.RevisionID, *target.ActiveRevisionID)
 
 	status, err := f.kernel.Status(ctx, f.environmentID)
 	require.NoError(t, err)
 	require.Len(t, status.Services, 1)
 	require.True(t, status.Services[0].Intercepted)
+	require.Equal(t, module.HealthProgressing, status.Services[0].Health)
+	require.Equal(t, "intercept-routing-missing", status.Services[0].Diagnostics[0].Code)
+	require.Contains(t, status.Services[0].Diagnostics[0].Message, "Service "+f.webServiceName())
+	require.Contains(t, status.Services[0].Diagnostics[0].Message, "EndpointSlice "+webInterceptSlice)
+
+	f.observeIntercept()
+	requeue, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	require.Zero(t, requeue, "an intercepted-only revision activates once its routing is observed")
+	target := f.target(t)
+	require.NotNil(t, target.ActiveRevisionID)
+	require.Equal(t, result.RevisionID, *target.ActiveRevisionID)
+
+	status, err = f.kernel.Status(ctx, f.environmentID)
+	require.NoError(t, err)
 	require.Equal(t, module.HealthHealthy, status.Services[0].Health)
+	require.Len(t, status.Services[0].Diagnostics, 1)
 	require.Equal(t, "intercepted", status.Services[0].Diagnostics[0].Code)
 
 	// Flip back: a deploy without local applications clears the intercept.
 	// The stale slice is in the observed snapshot; the next pass re-applies
 	// the Deployment and prunes the slice.
-	f.fake.SetEndpointSlice(f.environmentID, f.namespace, "intercept-demo-web-affcdc6d146a6bd037773cb30f69840a", "web")
 	f.executeVersionLocals(t, definitionVersion, nil)
 
 	_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
 	require.NoError(t, err)
 	ops = f.cluster.recorded()
 	require.Contains(t, ops, "apply Deployment/"+f.namespace+"/"+f.webDeploymentName(t))
-	require.Contains(t, ops, "delete EndpointSlice/"+f.namespace+"/intercept-demo-web-affcdc6d146a6bd037773cb30f69840a")
+	require.Contains(t, ops, "delete EndpointSlice/"+f.namespace+"/"+webInterceptSlice)
 
 	// With the workload healthy again the flip-back activates.
 	f.markHealthy(t)

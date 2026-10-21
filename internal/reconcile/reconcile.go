@@ -26,6 +26,7 @@ import (
 	"github.com/Hinkolas/skali/internal/redact"
 	"github.com/Hinkolas/skali/internal/revision"
 	"github.com/Hinkolas/skali/internal/store"
+	"github.com/Hinkolas/skali/internal/utils"
 	"github.com/Hinkolas/skali/internal/workstats"
 )
 
@@ -199,6 +200,12 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 	// produces a visible waiting step, not an opaque retry.
 	preHealth := healthByService(k.evaluateServices(environmentID, rev, snapshot, intercepts, nil, desired.colors))
 	var unhealthyEarlier []string
+	// withheld names every service of the target revision this pass did not
+	// bring to its desired state, with the reason: a claim that is not
+	// ready, an application waiting on a dependency. Whatever the cluster
+	// shows for them was left by an earlier revision or session, so their
+	// health says nothing about the target and activation waits.
+	withheld := make(map[string]string)
 	for _, batch := range batches {
 		blockedOn := strings.Join(unhealthyEarlier, ", ")
 		for _, dotted := range batch {
@@ -216,6 +223,7 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 				stepKey, title := "claim:"+dotted, "Provision "+dotted
 				if reason := claimWaiting[dotted]; reason != "" {
 					attachment.waitServiceStep(ctx, dotted, stepKey, title, reason)
+					withheld[dotted] = reason
 				} else if attachment.adopted() {
 					attachment.completeServiceStep(ctx, dotted, stepKey, title, journal.StepSucceeded,
 						[]string{noun + " provisioned; connection outputs published"})
@@ -242,10 +250,12 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 			}
 			if reason, waits := waiting[dotted]; waits {
 				attachment.waitServiceStep(ctx, dotted, "apply:"+service, "Apply "+service, reason)
+				withheld[dotted] = reason
 				continue
 			}
 			if blockedOn != "" {
 				attachment.waitServiceStep(ctx, dotted, "apply:"+service, "Apply "+service, "waiting for "+blockedOn)
+				withheld[dotted] = "waiting for " + blockedOn
 				continue
 			}
 			objs := desired.services[service]
@@ -388,10 +398,10 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 			healthy = false
 		}
 	}
-	if len(releaseWaiting) > 0 {
-		// A pending release command means the target revision's workload was
-		// deliberately not applied; the previous revision reporting healthy
-		// must not activate the new one.
+	if len(releaseWaiting) > 0 || len(withheld) > 0 {
+		// A pending release command or a withheld service means the target
+		// revision's objects were deliberately not applied; what an earlier
+		// revision left reporting healthy must not activate the new one.
 		healthy = false
 	}
 	if !healthy {
@@ -461,7 +471,7 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 			// late recovery still activates.
 			attachment.completeStepFields(ctx, "", "verify", "Verify health", journal.StepFailed,
 				[]string{strings.Join(healthSummary(statuses), "\n")}, healthFields(statuses))
-			attachment.finish(ctx, journal.RunFailed, rolloutFailure(tls, statuses))
+			attachment.finish(ctx, journal.RunFailed, rolloutFailure(tls, statuses, withheld))
 			rows, err := k.deps.Deploy.FallbackTargetLocked(ctx, store.FallbackEnvironmentTargetParams{
 				EnvironmentID:    environmentID,
 				TargetRevisionID: target.TargetRevisionID,
@@ -1182,7 +1192,7 @@ func healthSummary(statuses []ServiceStatus) []string {
 // deadline: the TLS failure when issuance is what failed, otherwise the
 // services that are not healthy. The verify step's log keeps the full
 // per-service summary, whose shape clients parse.
-func rolloutFailure(tls tlsOutcome, statuses []ServiceStatus) string {
+func rolloutFailure(tls tlsOutcome, statuses []ServiceStatus, withheld map[string]string) string {
 	if tls.failed && tls.failure != "" {
 		return tls.failure
 	}
@@ -1192,10 +1202,14 @@ func rolloutFailure(tls tlsOutcome, statuses []ServiceStatus) string {
 			unhealthy = append(unhealthy, status)
 		}
 	}
-	if len(unhealthy) == 0 {
+	reasons := healthSummary(unhealthy)
+	for _, dotted := range utils.SortedKeys(withheld) {
+		reasons = append(reasons, dotted+": "+withheld[dotted])
+	}
+	if len(reasons) == 0 {
 		return "rollout deadline exceeded"
 	}
-	return "rollout deadline exceeded: " + strings.Join(healthSummary(unhealthy), "; ")
+	return "rollout deadline exceeded: " + strings.Join(reasons, "; ")
 }
 
 // healthFields is the structured twin of healthSummary: one record per

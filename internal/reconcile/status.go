@@ -333,12 +333,8 @@ func (k *Kernel) evaluateServices(environmentID uuid.UUID, rev *revision.Revisio
 			// stays free of store state, and its missing-workload verdict
 			// would otherwise block activation and trip rollout fallback
 			// for a Deployment that deliberately does not exist.
-			status.Health = module.HealthHealthy
 			status.Intercepted = true
-			status.Diagnostics = []module.Diagnostic{{
-				Severity: "info", Code: "intercepted",
-				Message: "served by a local dev process on the host",
-			}}
+			status.Health, status.Diagnostics = k.interceptHealth(rev.Definition, snapshot, item.key)
 			statuses = append(statuses, status)
 			continue
 		}
@@ -387,6 +383,68 @@ func (k *Kernel) evaluateServices(environmentID uuid.UUID, rev *revision.Revisio
 		statuses = append(statuses, status)
 	}
 	return statuses
+}
+
+// interceptHealth judges an application served by a local dev process on
+// the host. The process is the developer's and is not probed, but the
+// routing that reaches it is the platform's: the selectorless Service, the
+// EndpointSlice pointing it at the host, and every route's IngressRoutes.
+// Without one of them requests never reach the process (the edge answers
+// 404 for a hostname it has no router for), so a route's hostname and
+// certificate alone never make the application healthy.
+func (k *Kernel) interceptHealth(definition compiler.ProjectDefinition, snapshot observe.Snapshot,
+	key string) (module.Health, []module.Diagnostic) {
+	intercepted := module.Diagnostic{Severity: "info", Code: "intercepted",
+		Message: "served by a local dev process on the host"}
+	if source := module.StaleSource(snapshot.ForService(key)); source != nil {
+		message := "observation source state is " + source.State
+		if !source.StaleSince.IsZero() {
+			message = "observation is stale since " + source.StaleSince.UTC().Format(time.RFC3339)
+		}
+		return module.HealthUnknown, []module.Diagnostic{{
+			Severity: "warning", Code: "observation_stale_since", Message: message,
+		}, intercepted}
+	}
+	application := definition.Applications[key]
+	var missing []string
+	if len(rendering.InterceptPortNames(application)) > 0 {
+		if name := rendering.ApplicationName(definition.Name, key); !observedObject(snapshot, key, module.KindService, name) {
+			missing = append(missing, "Service "+name)
+		}
+		if name := rendering.InterceptSliceName(definition.Name, key); !observedObject(snapshot, key, module.KindEndpointSlice, name) {
+			missing = append(missing, "EndpointSlice "+name)
+		}
+	}
+	for _, routeKey := range utils.SortedKeys(application.Routes) {
+		variants := []string{"primary"}
+		if k.cfg.Certificates && application.Routes[routeKey].TLS != "disabled" {
+			variants = append(variants, "http")
+		}
+		for _, variant := range variants {
+			if name := rendering.RouteName(definition.Name, key, routeKey, variant); !observedObject(snapshot, key, module.KindIngress, name) {
+				missing = append(missing, "IngressRoute "+name)
+			}
+		}
+	}
+	if len(missing) > 0 {
+		return module.HealthProgressing, []module.Diagnostic{{
+			Severity: "warning", Code: "intercept-routing-missing",
+			Message: "requests cannot reach the dev process: no " + strings.Join(missing, ", ") + " observed",
+		}, intercepted}
+	}
+	return module.HealthHealthy, []module.Diagnostic{intercepted}
+}
+
+// observedObject reports whether the snapshot holds the service's object
+// of the given kind and name.
+func observedObject(snapshot observe.Snapshot, service, kind, name string) bool {
+	for index := range snapshot.Objects {
+		obj := &snapshot.Objects[index]
+		if obj.Service == service && obj.Kind == kind && obj.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // routesFor joins the application's declared routes with the observed

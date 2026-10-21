@@ -39,16 +39,19 @@ func TestReconcileHostGatewayUnresolvedWaits(t *testing.T) {
 	require.Equal(t, "waiting", flattenSteps(tree.Steps)["render"])
 	require.Empty(t, f.cluster.recorded(), "nothing applies before the desired state renders")
 
-	// The name resolves: the wait closes, the intercepted revision renders
-	// and activates on this pass.
+	// The name resolves: the wait closes, the intercepted revision renders,
+	// and it activates once the watch shows the routing it applied.
 	f.kernel.deps.HostGateway = func(context.Context) (string, error) { return "192.0.2.10", nil }
-	requeue, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
 	require.NoError(t, err)
-	require.Zero(t, requeue)
 	tree, err = f.journal.RunTree(ctx, result.RunID)
 	require.NoError(t, err)
 	require.Equal(t, "succeeded", flattenSteps(tree.Steps)["render"])
-	require.Contains(t, f.cluster.recorded(), "apply EndpointSlice/"+f.namespace+"/intercept-demo-web-affcdc6d146a6bd037773cb30f69840a")
+	require.Contains(t, f.cluster.recorded(), "apply EndpointSlice/"+f.namespace+"/"+webInterceptSlice)
+	f.observeIntercept()
+	requeue, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	require.Zero(t, requeue)
 	target := f.target(t)
 	require.NotNil(t, target.ActiveRevisionID)
 	require.Equal(t, result.RevisionID, *target.ActiveRevisionID)

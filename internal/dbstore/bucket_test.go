@@ -182,6 +182,38 @@ func TestEnsureBucketClaimFromLive(t *testing.T) {
 	require.NotEqual(t, created.ID, fresh.ID)
 }
 
+// jsonb reads the cors and route documents back with its own key order and
+// spacing. An unchanged spec must still compare unchanged instead of
+// rewriting the claim and re-running its reconciliation on every pass.
+func TestEnsureBucketClaimJSONUnchanged(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	ctx := context.Background()
+
+	routed := bucketSpec()
+	routed.CORS = []byte(`{"rules":[{"allowedOrigins":["https://example.com"],"allowedMethods":["GET","PUT"],"maxAgeSeconds":600}]}`)
+	routed.Route = []byte(`{"domain":"files.example.com","tls":"automatic"}`)
+	created, err := f.svc.EnsureBucketClaim(ctx, f.owner("files"), routed)
+	require.NoError(t, err)
+	require.NotEqual(t, string(routed.Route), string(created.Route),
+		"the row must carry Postgres' rendering for this test to mean anything")
+
+	same, changed, err := f.svc.EnsureBucketClaimChanged(ctx, f.owner("files"), routed)
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.Equal(t, created.UpdatedAt, same.UpdatedAt)
+	live, changed, err := f.svc.EnsureBucketClaimFrom(ctx, f.owner("files"), routed, same)
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.Same(t, same, live)
+
+	moved := routed
+	moved.Route = []byte(`{"domain":"media.example.com","tls":"automatic"}`)
+	_, changed, err = f.svc.EnsureBucketClaimFrom(ctx, f.owner("files"), moved, live)
+	require.NoError(t, err)
+	require.True(t, changed)
+}
+
 func TestReleaseUnallocatedBucketClaimReleasesDirectly(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)

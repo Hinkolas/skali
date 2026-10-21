@@ -1,7 +1,6 @@
 package substrate
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -70,10 +69,9 @@ func (c *Controller) Ensure(ctx context.Context, in reconcile.ClaimEnsureInput) 
 		// pre-image is the only place that difference is visible. The
 		// marker is set only once the fold succeeded, so a spec conflict
 		// never leaves a request behind that no pass could ever apply.
-		desiredExtensions := dbstore.MarshalExtensions(database.Extensions)
 		current := liveByKey[key]
 		extensionsChanged := current != nil && claim.Phase(current.Phase) == claim.PhaseProvisioned &&
-			!bytes.Equal(current.Extensions, desiredExtensions)
+			!dbstore.SameExtensions(current.Extensions, database.Extensions)
 		row, changed, err := c.deps.DB.EnsureClaimFrom(ctx, owner, dbstore.ClaimSpec{
 			Engine:       database.Engine,
 			Major:        major,
@@ -92,7 +90,7 @@ func (c *Controller) Ensure(ctx context.Context, in reconcile.ClaimEnsureInput) 
 			return nil, err
 		}
 		if extensionsChanged {
-			c.markExtensionsPending(row.ID, desiredExtensions)
+			c.markExtensionsPending(row.ID, dbstore.MarshalExtensions(database.Extensions))
 		}
 		switch {
 		case changed || claim.Phase(row.Phase) != claim.PhaseProvisioned || c.extensionsPending(row.ID):
