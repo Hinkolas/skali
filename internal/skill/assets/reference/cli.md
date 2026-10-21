@@ -50,15 +50,20 @@ can remove them. Invalid YAML diagnostics identify the configuration file to edi
 - `skali dev --preview` deploys everything in the cluster, exactly like a
   remote deploy would, ignoring dev blocks.
 - One fixed `skali-dev` platform uses the selected target's release. An absent
-  platform is created; a matching platform is reused. A different release or k3s
-  pin fails before changing it. Run `skali dev reset` explicitly to discard its
-  data and create the newly selected release. Working-tree/release transitions
-  also require reset. `skali dev --remote <name>` selects another target.
+  platform is created; a matching platform is reused. An older release or k3s
+  pin fails before changing it and names `skali dev upgrade`, which moves the
+  platform forward in place after showing its plan and asking for confirmation
+  (`--yes` skips it). Projects, data, credentials, and the development CA are
+  kept. An interrupted upgrade blocks the platform until `skali dev upgrade`
+  runs again and finishes it. A newer release, a k3s jump of more than one
+  minor version, and working-tree/release transitions require `skali dev
+  reset`, which discards the data. `skali dev --remote <name>` selects another
+  target.
 - `skali dev stop` retains data; `skali dev start` restarts it. Stop, reset and
   platform status work without the remote or a CLI download. Status identifies
-  the installed release. Stop distinguishes stopped, already stopped, and absent
-  clusters. Confirmed reset can delete the fixed cluster even if its installation
-  record is missing. There is no `dev upgrade` or `dev prune`.
+  the installed release and an unfinished upgrade. Stop distinguishes stopped,
+  already stopped, and absent clusters. Confirmed reset can delete the fixed
+  cluster even if its installation record is missing. There is no `dev prune`.
 - `skali dev run <name>` runs a named command from the manifest
   (`applications.<app>.commands`) on this machine with the application's
   resolved environment; `skali dev run <app> -- <command>...` runs a raw

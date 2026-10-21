@@ -150,7 +150,11 @@ asked once in the terminal and the background process takes over the open
 ports. Without a terminal, such as in a script, `sudo` cannot ask, and the
 proxy stops with an error that says so.
 
-## When the remote platform is reset
+## When the remote platform is upgraded or reset
+
+`skali dev upgrade` on the remote machine keeps its development CA, so the
+proxy and the laptop's trust need nothing. The routes are unavailable while
+the remote platform restarts during the upgrade and come back on their own.
 
 `skali dev reset` on the remote machine creates a new development CA. The
 proxy then refuses to start because the CA no longer matches. Run

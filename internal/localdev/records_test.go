@@ -127,7 +127,7 @@ func TestVersionMismatchLeavesRecordUnchanged(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, SaveState(state))
 	withVersion(t, "v0.5.0-rc.1")
-	require.ErrorContains(t, CheckVersion(state), "skali dev reset")
+	require.ErrorContains(t, CheckVersion(state), "skali dev upgrade")
 	actual, err := LoadState()
 	require.NoError(t, err)
 	require.Equal(t, state.Version, actual.Version)

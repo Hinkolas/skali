@@ -237,9 +237,9 @@ func newDevCommand() *cobra.Command {
 			"everything on the local platform. The platform runs the same\n" +
 			"skali release as the project's target cluster (the checkout\n" +
 			"binding, else the current remote, else this skali), using that release\n" +
-			"in one local cluster; switching releases requires skali dev reset.\n" +
-			"The platform lifecycle lives under skali dev start, stop,\n" +
-			"and reset. Values come from the env file remembered for the local\n" +
+			"in one local cluster; skali dev upgrade moves it to a newer release in\n" +
+			"place. The platform lifecycle lives under skali dev start, stop,\n" +
+			"upgrade, and reset. Values come from the env file remembered for the local\n" +
 			"environment in .skali/ (a lone .env/.env.* file is taken as is, several\n" +
 			"are picked from once); --pick-env-file asks again. Local values never\n" +
 			"leave this machine.",
@@ -363,7 +363,7 @@ func newDevCommand() *cobra.Command {
 			"converge pass (re-applying the complete platform bundle) even when\n" +
 			"the platform looks healthy; it is the repair verb for a platform\n" +
 			"whose recorded state lies. The platform's release is this skali's;\n" +
-			"a different release or k3s pin requires skali dev reset first.",
+			"an older release or k3s pin needs skali dev upgrade first.",
 		Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
 			clusterStatus, err := localdev.Status(command.Context())
@@ -391,8 +391,10 @@ func newDevCommand() *cobra.Command {
 	reset := &cobra.Command{
 		Use:   "reset",
 		Short: "Destroy the local dev platform completely",
-		Long:  "Deletes the fixed local cluster and its data, even if its installation record is missing. Requires confirmation or --yes.",
-		Args:  cobra.NoArgs,
+		Long: "Deletes the fixed local cluster and its data, even if its installation record is missing,\n" +
+			"together with its development CA. Requires confirmation or --yes. Moving to a newer\n" +
+			"release does not need it: skali dev upgrade keeps the platform's data and CA.",
+		Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
 			return runDevReset(command, resetYes)
 		},
@@ -401,7 +403,7 @@ func newDevCommand() *cobra.Command {
 
 	command.AddCommand(up, status, logs, newDevExecCommand(), newDevRunCommand(),
 		newDevValuesCommand(), newDevTrustCommand(), newDevProxyCommand(), newDevExposeCommand(),
-		down, ls, stop, start, reset)
+		down, ls, stop, start, newDevUpgradeCommand(&skalidImage), reset)
 	return command
 }
 
@@ -1148,6 +1150,10 @@ func runDevStatus(command *cobra.Command, args []string) error {
 		fmt.Fprintf(out, "platform   %s (cluster %s, %s, %s)\n",
 			stateColor(style, string(clusterStatus)), localdev.ClusterName(),
 			releaseLabel, k3sImage)
+		if state != nil && state.Upgrade != nil {
+			fmt.Fprintf(out, "upgrade    %s from %s to %s; skali dev upgrade continues it\n",
+				stateColor(style, "unfinished"), releaseName(state.Upgrade.FromVersion), releaseName(state.Upgrade.ToVersion))
+		}
 		if state != nil {
 			printRemoteCommand(out)
 		}
@@ -1249,7 +1255,7 @@ func stateColor(style *clirender.Style, state string) string {
 		return style.Green(state)
 	case "stopped", "down", "releasing", "progressing", "degraded", "waiting", "pending", "issuing":
 		return style.Yellow(state)
-	case "failed", "unhealthy", "error", "cancelled", "failing", "expired":
+	case "failed", "unhealthy", "error", "cancelled", "failing", "expired", "unfinished":
 		return style.Red(state)
 	}
 	return state

@@ -36,7 +36,7 @@ func TestDevSingleReleaseEndToEnd(t *testing.T) {
 	require.Contains(t, string(before), versions[0])
 	h.binary = binaries[1]
 	out = h.run(true, "", "dev", "start", "--offline")
-	require.Contains(t, out, "skali dev reset")
+	require.Contains(t, out, "skali dev upgrade")
 	after, err := os.ReadFile(record)
 	require.NoError(t, err)
 	require.Equal(t, before, after)

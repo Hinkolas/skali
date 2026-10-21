@@ -196,10 +196,55 @@ The local remote is dev-owned and never becomes the current deployment target.
 
 `skali dev` and `skali dev start` use the shared target resolver. An absent
 platform is created at that release. A matching platform starts or is reused.
-A different release, incompatible k3s pin, or transition between released and
-working-tree platforms fails before changing the platform and names
-`skali dev reset` as the remedy. Switching targets never automatically stops,
-upgrades, deletes or creates another version's cluster.
+Any other platform fails before changing anything: an older release or k3s pin
+names `skali dev upgrade`, and everything else names `skali dev reset`. Switching
+targets never automatically stops, upgrades, deletes or creates another
+version's cluster.
+
+### Upgrading the local platform
+
+`skali dev upgrade` (dispatched to the target release like `skali dev start`)
+moves the existing platform to that release and k3s pin in place. Before
+changing anything it shows the installed and target release, skalid image and
+k3s image, the platform components whose images move, the platform database's
+current and target migration version, what is kept, and the expected
+interruption, then asks for confirmation (`--yes` skips the question).
+
+| From the installed platform | Upgrade |
+| --- | --- |
+| Older release, same or next k3s minor | supported |
+| Same release, newer k3s patch, revision or next minor | supported (also for working-tree platforms) |
+| Newer release or newer k3s | refused: migrations and k3s datastores do not go back |
+| k3s more than one minor version older | refused: upgrade through a release that pins the minor in between |
+| Released to working tree or back | refused: no comparable version; reset |
+| Different edge ports, missing CA or missing cluster | refused: reset |
+
+Refusals happen before the first change and name the way forward. The release
+half of an upgrade is the bundle converge a production update runs: skalid
+applies its forward-only database migrations at start and the operators move
+to their new pins. The k3s half replaces the node container, because a k3d
+node cannot change its image: the old container's configuration and the
+files k3d and k3s wrote into it are saved under the record directory, a new
+container is created on the new k3s image with the same configuration and the
+same volumes and checked against the saved configuration, and only then is the
+old container removed (never with its volumes). Everything the platform holds
+lives in those volumes and the record directory: the platform database,
+projects, environments, values, credentials, project databases, buckets,
+volumes, registry artifacts, and the development CA's certificate and key.
+The CA's fingerprint is unchanged, so its local trust and every dev proxy
+pinned to it stay valid.
+
+The upgrade is recorded in the installation record before its first change and
+cleared after skalid answers through the TLS edge at the target. The record
+already names the target release while it is set, so an older CLI refuses the
+platform, and the target's own `skali dev` and `skali dev start` refuse it too
+until `skali dev upgrade` finishes it; `skali dev status` shows it as
+unfinished. An interrupted or failed upgrade keeps all data and the CA and
+continues from where it stopped when run again. A failure while replacing the
+node before the old container was removed puts the record back to the installed
+release, since nothing else changed yet. The upgrade never falls back to a
+reset; `skali dev reset` stays the one destructive operation, and it removes
+the volumes a replaced node mounted as well.
 
 The fixed ports, host process interception, project environments and stop/start
 data retention remain. Create/start/login/stop/reset are serialized. Reset
@@ -219,7 +264,7 @@ exist for isolated tests, not for automatically selecting parallel runtimes.
 Records left by testing the abandoned per-release design are detected, never
 adopted or silently deleted. The error lists each exact `k3d cluster delete NAME`
 and record path to remove once the user has decided to discard that local data.
-There is no `dev prune` or `dev upgrade` command.
+There is no `dev prune` command.
 
 ## 6. Embedded references and installed skill
 
