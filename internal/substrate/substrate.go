@@ -387,7 +387,7 @@ func (c *Controller) setWaiting(claimID uuid.UUID, reason string) bool {
 const extensionsPendingReason = "applying the requested extensions"
 
 // markExtensionsPending records that a provisioned claim's extension list
-// changed to desired (the row encoding from dbstore.MarshalExtensions). A
+// changed to desired (the canonical dbstore.MarshalExtensions encoding). A
 // provisioned claim never regresses in phase, yet an application must not
 // roll before CNPG created what its migrations rely on, so Ensure withholds
 // readiness until a pass applied exactly these bytes. The marker is keyed by
@@ -410,14 +410,20 @@ func (c *Controller) extensionsPending(claimID uuid.UUID) bool {
 	return pending
 }
 
-// settleExtensions clears the marker once a pass applied the encoding it
-// waits for; an older encoding leaves it in place.
-func (c *Controller) settleExtensions(claimID uuid.UUID, applied []byte) {
+// settleExtensions clears the marker once a pass applied the list it waits
+// for; an older list leaves it in place. applied is the row's stored
+// encoding, compared canonically. It reports whether it cleared the marker:
+// the claim's phase did not move, so the environment waiting on the
+// change needs its own wakeup.
+func (c *Controller) settleExtensions(claimID uuid.UUID, applied []byte) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if desired, pending := c.pendingExtensions[claimID]; pending && bytes.Equal(desired, applied) {
-		delete(c.pendingExtensions, claimID)
+	desired, pending := c.pendingExtensions[claimID]
+	if !pending || !bytes.Equal(desired, dbstore.CanonicalExtensions(applied)) {
+		return false
 	}
+	delete(c.pendingExtensions, claimID)
+	return true
 }
 
 // clearExtensions drops the marker regardless of what was applied; for

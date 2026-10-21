@@ -1,7 +1,6 @@
 package dbstore
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -125,8 +124,8 @@ func bucketSpecDiffers(existing store.BucketClaim, spec BucketSpec) (bool, error
 		existing.MaxObjectBytes != spec.MaxObjectBytes ||
 		existing.AbortUploadsAfterSeconds != spec.AbortUploadsAfterSeconds ||
 		existing.ExpireNoncurrentAfterSeconds != spec.ExpireNoncurrentAfterSeconds ||
-		!bytes.Equal(existing.Cors, spec.CORS) ||
-		!bytes.Equal(existing.Route, spec.Route), nil
+		!sameJSON(existing.Cors, spec.CORS) ||
+		!sameJSON(existing.Route, spec.Route), nil
 }
 
 func (s *Service) liveBucketClaim(ctx context.Context, q *store.Queries, owner Owner) (store.BucketClaim, error) {

@@ -1,7 +1,6 @@
 package dbstore
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -119,7 +118,7 @@ func claimSpecDiffers(existing store.DatabaseClaim, spec ClaimSpec) (bool, error
 	return existing.Availability != spec.Availability ||
 		existing.StorageBytes != spec.StorageBytes ||
 		existing.PitrSeconds != spec.PITRSeconds ||
-		!bytes.Equal(existing.Extensions, MarshalExtensions(spec.Extensions)), nil
+		!SameExtensions(existing.Extensions, spec.Extensions), nil
 }
 
 func (s *Service) liveClaim(ctx context.Context, q *store.Queries, owner Owner) (store.DatabaseClaim, error) {

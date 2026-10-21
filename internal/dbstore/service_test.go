@@ -203,6 +203,49 @@ func TestEnsureClaimFromLive(t *testing.T) {
 	require.NotEqual(t, created.ID, fresh.ID)
 }
 
+// Postgres reads jsonb back in its own rendering (`["pg_trgm", "unaccent"]`),
+// never byte-equal to MarshalExtensions once the list holds two entries.
+// An unchanged multi-extension spec must still compare unchanged instead of
+// rewriting the claim on every pass (#234).
+func TestEnsureClaimMultipleExtensionsUnchanged(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	ctx := context.Background()
+
+	multi := spec()
+	multi.Extensions = []string{"unaccent", "pg_trgm"}
+	created, err := f.svc.EnsureClaim(ctx, f.owner("data"), multi)
+	require.NoError(t, err)
+	require.NotEqual(t, string(MarshalExtensions(multi.Extensions)), string(created.Extensions),
+		"the row must carry Postgres' rendering for this test to mean anything")
+
+	same, changed, err := f.svc.EnsureClaimChanged(ctx, f.owner("data"), multi)
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.Equal(t, created.UpdatedAt, same.UpdatedAt)
+	live, changed, err := f.svc.EnsureClaimFrom(ctx, f.owner("data"), multi, same)
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.Same(t, same, live)
+
+	added := multi
+	added.Extensions = []string{"pg_trgm", "unaccent", "citext"}
+	updated, changed, err := f.svc.EnsureClaimFrom(ctx, f.owner("data"), added, live)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, []string{"citext", "pg_trgm", "unaccent"}, Extensions(*updated))
+}
+
+func TestSameExtensions(t *testing.T) {
+	t.Parallel()
+	require.True(t, SameExtensions([]byte(`["pg_trgm", "unaccent"]`), []string{"unaccent", "pg_trgm"}))
+	require.True(t, SameExtensions([]byte(`[]`), nil))
+	require.False(t, SameExtensions([]byte(`["pg_trgm"]`), []string{"pg_trgm", "unaccent"}))
+	require.False(t, SameExtensions([]byte(`["pg_trgm", "unaccent"]`), []string{"pg_trgm"}))
+	require.False(t, SameExtensions([]byte(`{`), nil), "an undecodable list never matches")
+	require.Equal(t, `["pg_trgm","unaccent"]`, string(CanonicalExtensions([]byte(`["unaccent", "pg_trgm"]`))))
+}
+
 func TestReleaseUnplacedClaimReleasesDirectly(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)

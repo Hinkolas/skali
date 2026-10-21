@@ -48,6 +48,7 @@ func (c *Controller) reconcileClaim(ctx context.Context, id uuid.UUID) (time.Dur
 
 	transitioned, wakeup, err := c.provision(ctx, *row)
 	requeue := time.Duration(0)
+	settled := false
 	switch waiting, ok := errors.AsType[errWaiting](err); {
 	case ok:
 		c.setWaiting(id, waiting.reason)
@@ -56,9 +57,9 @@ func (c *Controller) reconcileClaim(ctx context.Context, id uuid.UUID) (time.Dur
 		return 0, err
 	default:
 		c.setWaiting(id, "")
-		// The pass applied the row it read at the top; only that encoding
+		// The pass applied the row it read at the top; only that list
 		// settles a pending extension change.
-		c.settleExtensions(id, row.Extensions)
+		settled = c.settleExtensions(id, row.Extensions)
 		// A rotation in flight wakes the worker again on its own: for the
 		// retirement at the window's end, nothing else is guaranteed to.
 		requeue = wakeup
@@ -71,7 +72,9 @@ func (c *Controller) reconcileClaim(ctx context.Context, id uuid.UUID) (time.Dur
 		return 0, err
 	}
 	c.publishClaim(*current)
-	if (transitioned || current.Phase != row.Phase) && c.deps.Enqueue != nil && current.EnvironmentID != nil {
+	// A settled extension change moves no phase, yet the environment's
+	// rollout is waiting on exactly it.
+	if (transitioned || current.Phase != row.Phase || settled) && c.deps.Enqueue != nil && current.EnvironmentID != nil {
 		c.deps.Enqueue(*current.EnvironmentID)
 	}
 	// A non-terminal claim must never leave the queue: a pass that ends
