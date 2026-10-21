@@ -635,6 +635,12 @@ func Create(ctx context.Context) error {
 		return fmt.Errorf("localdev: write registries config: %w", err)
 	}
 	if out, err := k3dRetryingBusyPorts(ctx, createArgs(registries)...); err != nil {
+		// Reached only with the cluster listed absent, so the name is held
+		// by remnants of a partial cluster the listing does not show.
+		if strings.Contains(string(out), "a cluster with that name already exists") {
+			return fmt.Errorf("localdev: k3d cluster create: %w\n%s\nparts of an earlier %s cluster remain "+
+				"that k3d cluster list does not show; remove them with `skali dev reset`", err, out, ClusterName())
+		}
 		return fmt.Errorf("localdev: k3d cluster create: %w\n%s", err, out)
 	}
 	if out, err := exec.CommandContext(ctx, "docker", "rename",
@@ -740,53 +746,148 @@ func StopFor(ctx context.Context, name string) error {
 
 func Delete(ctx context.Context) error { return DeleteFor(ctx, ClusterName()) }
 
-// DeleteFor deletes the named cluster with its volumes. k3d removes the
-// anonymous volumes its node created; a node replaced by skali dev upgrade
-// mounts the same volumes by name, which docker no longer counts as the
-// container's own, so whatever volume the nodes mounted and still exists
-// afterwards is removed here.
+// DeleteFor deletes the named cluster with its volumes and network, and
+// whatever a partial cluster left of them. k3d's own delete only finds a
+// cluster by its containers and only knows the network and image volume
+// from its server's labels: a lone tools helper goes without the network,
+// a lone network or image volume stays. Such remnants hide from k3d
+// cluster list yet a leftover container makes k3d cluster create refuse
+// the name, and a leftover network is adopted as external and never
+// deleted again (#232). An absent cluster deletes nothing and succeeds.
+// A node replaced by skali dev upgrade mounts its data volumes by name,
+// which docker no longer counts as the container's own and which carry no
+// cluster label, so the volumes the nodes mounted go last.
 func DeleteFor(ctx context.Context, name string) error {
-	volumes := clusterVolumes(ctx, name)
+	mounted, err := clusterVolumes(ctx, name)
+	if err != nil {
+		return err
+	}
 	if out, err := exec.CommandContext(ctx, k3dBinary(), "cluster", "delete", name).CombinedOutput(); err != nil {
 		return fmt.Errorf("localdev: k3d cluster delete %s: %w\n%s", name, err, out)
 	}
-	var failed []string
-	for _, volume := range volumes {
-		if exec.CommandContext(ctx, "docker", "volume", "inspect", volume).Run() != nil {
-			continue
-		}
-		if err := exec.CommandContext(ctx, "docker", "volume", "rm", volume).Run(); err != nil {
-			failed = append(failed, volume)
+	if err := removeRemnants(ctx, name); err != nil {
+		return err
+	}
+	if len(mounted) == 0 {
+		return nil
+	}
+	existing, err := dockerList(ctx, "volume", "ls", "--quiet")
+	if err != nil {
+		return err
+	}
+	var remaining []string
+	for _, volume := range mounted {
+		if slices.Contains(existing, volume) {
+			remaining = append(remaining, volume)
 		}
 	}
-	if len(failed) > 0 {
-		return fmt.Errorf("localdev: cluster %s is deleted but its volumes %s remain; remove them with docker volume rm",
-			name, strings.Join(failed, ", "))
+	return dockerRemove(ctx, remaining, "volume", "rm")
+}
+
+// removeRemnants removes the docker objects k3d left of the named cluster:
+// containers and volumes by their exact k3d.cluster label, then the
+// network k3d created under the cluster's name (networks carry no cluster
+// label). Containers go first, as they hold the volumes and the network.
+// A registry is k3d's to judge: its delete finds one by the same label
+// and keeps it only while another cluster still uses it. Such a registry
+// still holds the cluster name for k3d cluster create, so the sweep
+// removes everything else and then fails, keeping the record and
+// credentials for a retry once the registry is free.
+func removeRemnants(ctx context.Context, name string) error {
+	label := "label=k3d.cluster=" + name
+	listed, err := dockerList(ctx, "ps", "--all", "--filter", label, "--format", `{{.Names}} {{.Label "k3d.role"}}`)
+	if err != nil {
+		return err
+	}
+	var containers, registries []string
+	for _, line := range listed {
+		container, role, _ := strings.Cut(line, " ")
+		if role == "registry" {
+			registries = append(registries, container)
+		} else {
+			containers = append(containers, container)
+		}
+	}
+	if err := dockerRemove(ctx, containers, "rm", "--force", "--volumes"); err != nil {
+		return err
+	}
+	volumes, err := dockerList(ctx, "volume", "ls", "--quiet", "--filter", label)
+	if err != nil {
+		return err
+	}
+	if err := dockerRemove(ctx, volumes, "volume", "rm"); err != nil {
+		return err
+	}
+	networks, err := dockerList(ctx, "network", "ls", "--filter", "label=app=k3d", "--format", "{{.Name}}")
+	if err != nil {
+		return err
+	}
+	if network := "k3d-" + name; slices.Contains(networks, network) {
+		if err := dockerRemove(ctx, []string{network}, "network", "rm"); err != nil {
+			return err
+		}
+	}
+	if len(registries) > 0 {
+		return fmt.Errorf("localdev: k3d kept registry %s of cluster %s because another cluster uses it, "+
+			"and it still reserves the name %s; remove it once no cluster needs it (docker rm --force %s) "+
+			"and run the reset again", strings.Join(registries, ", "), name, name, strings.Join(registries, " "))
 	}
 	return nil
 }
 
-// clusterVolumes lists the docker volumes the cluster's containers mount;
-// best effort, since the delete must not depend on it.
-func clusterVolumes(ctx context.Context, name string) []string {
-	out, err := exec.CommandContext(ctx, "docker", "container", "ls", "-a", "-q",
-		"--filter", "label=k3d.cluster="+name).Output()
+// clusterVolumes lists the docker volumes the cluster's containers mount,
+// read before k3d's delete removes the containers that name them. Bind
+// mounts show as host paths and are not the cluster's to remove.
+func clusterVolumes(ctx context.Context, name string) ([]string, error) {
+	lines, err := dockerList(ctx, "ps", "--all", "--no-trunc", "--filter", "label=k3d.cluster="+name, "--format", "{{.Mounts}}")
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	var volumes []string
-	for _, id := range strings.Fields(string(out)) {
-		container, err := inspectContainer(ctx, id)
-		if err != nil {
-			continue
-		}
-		for _, mount := range container.Mounts {
-			if mount.Type == "volume" && !slices.Contains(volumes, mount.Name) {
-				volumes = append(volumes, mount.Name)
+	for _, line := range lines {
+		for volume := range strings.SplitSeq(line, ",") {
+			if volume != "" && !strings.Contains(volume, "/") && !slices.Contains(volumes, volume) {
+				volumes = append(volumes, volume)
 			}
 		}
 	}
-	return volumes
+	return volumes, nil
+}
+
+// dockerList runs a docker listing and returns its non-empty lines.
+func dockerList(ctx context.Context, args ...string) ([]string, error) {
+	out, err := exec.CommandContext(ctx, "docker", args...).Output()
+	if err != nil {
+		return nil, fmt.Errorf("localdev: docker %s: %w%s", strings.Join(args, " "), err, exitStderr(err))
+	}
+	var lines []string
+	for line := range strings.Lines(string(out)) {
+		if line = strings.TrimSpace(line); line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines, nil
+}
+
+// dockerRemove runs a docker removal over items, if there are any.
+func dockerRemove(ctx context.Context, items []string, args ...string) error {
+	if len(items) == 0 {
+		return nil
+	}
+	command := slices.Concat(args, items)
+	if out, err := exec.CommandContext(ctx, "docker", command...).CombinedOutput(); err != nil {
+		return fmt.Errorf("localdev: docker %s: %w\n%s", strings.Join(command, " "), err, out)
+	}
+	return nil
+}
+
+// exitStderr is the stderr an Output call captured, as an error suffix.
+func exitStderr(err error) string {
+	var exit *exec.ExitError
+	if errors.As(err, &exit) && len(bytes.TrimSpace(exit.Stderr)) > 0 {
+		return "\n" + string(bytes.TrimSpace(exit.Stderr))
+	}
+	return ""
 }
 
 // ImageID resolves the docker image ID of a local image: its content

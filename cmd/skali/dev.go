@@ -1326,25 +1326,23 @@ func destroyLocalPlatform(ctx context.Context, out io.Writer) error {
 		return err
 	}
 	tasks := clirender.NewTasks(out)
-	status, err := localdev.Status(ctx)
-	if err != nil {
-		return err
-	}
 	if _, err := localdev.LoadState(); err != nil && !errors.Is(err, localdev.ErrNotInstalled) {
 		return err
 	}
-	if status != localdev.ClusterAbsent {
-		task := tasks.Start("Delete cluster " + localdev.ClusterName() + " and volumes")
-		if err := localdev.Delete(ctx); err != nil {
-			task.Fail()
-			return err
-		}
-		task.Done("")
+	// Delete runs even when k3d cluster list omits the cluster: a partial
+	// cluster hides from the listing but still holds the name (#232). It
+	// must succeed before the record and credentials go, so a failed
+	// cleanup can be retried.
+	task := tasks.Start("Delete cluster " + localdev.ClusterName() + ", its volumes and network")
+	if err := localdev.Delete(ctx); err != nil {
+		task.Fail()
+		return err
 	}
+	task.Done("")
 	// The CA goes with the record; a trust store entry for it outlives the
 	// platform and signs nothing anymore, so say so once.
 	trusted, _ := localdev.LoadCA()
-	task := tasks.Start("Remove local installation record")
+	task = tasks.Start("Remove local installation record")
 	if err := localdev.RemoveState(); err != nil {
 		task.Fail()
 		return err

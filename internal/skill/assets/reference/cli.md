@@ -63,7 +63,9 @@ can remove them. Invalid YAML diagnostics identify the configuration file to edi
   platform status work without the remote or a CLI download. Status identifies
   the installed release and an unfinished upgrade. Stop distinguishes stopped,
   already stopped, and absent clusters. Confirmed reset can delete the fixed
-  cluster even if its installation record is missing. There is no `dev prune`.
+  cluster even if its installation record is missing, and also removes a
+  partial cluster (a leftover helper container, volume or network) that k3d
+  cluster list no longer shows. There is no `dev prune`.
 - `skali dev run <name>` runs a named command from the manifest
   (`applications.<app>.commands`) on this machine with the application's
   resolved environment; `skali dev run <app> -- <command>...` runs a raw
