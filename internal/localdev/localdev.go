@@ -29,11 +29,17 @@ import (
 )
 
 // The pinned local topology. A K3sImage bump must carry k3sBuiltinImages
-// (images.go) along to the new release's k3s-images.txt.
+// (images.go) along to the new release's k3s-images.txt; skali dev upgrade
+// moves an existing node to it in place (one minor version at a time).
 const (
 	K3sImage   = "rancher/k3s:v1.36.3-k3s1"
 	AdminEmail = "dev@skali.localhost"
 )
+
+// PlatformK3sImage is the k3s image this binary's local platform runs: the
+// pin, or SKALI_DEV_K3S_IMAGE, which exists so the end-to-end suite can
+// create a node on an older k3s and upgrade it.
+func PlatformK3sImage() string { return utils.EnvOr("SKALI_DEV_K3S_IMAGE", K3sImage) }
 
 // The cluster names and host loopback ports are constants of the product
 // contract; the SKALI_DEV_* environment overrides exist so the end-to-end
@@ -165,6 +171,9 @@ type State struct {
 	// the development CA into the trust store, so a declined password
 	// dialog is not asked again on every run; skali dev trust retries.
 	CATrustAttempted bool `json:"ca_trust_attempted,omitempty"`
+	// Upgrade marks an upgrade that started and has not finished; only
+	// skali dev upgrade runs the platform while it is set (upgrade.go).
+	Upgrade *UpgradeRecord `json:"upgrade,omitempty"`
 }
 
 // EdgePorts are the host ports the edge is published on.
@@ -366,21 +375,31 @@ func ObsoletePlatforms() error {
 	return nil
 }
 
-// CheckVersion refuses all implicit release and substrate transitions.
+// CheckVersion refuses all implicit release and substrate transitions: a
+// supported one names skali dev upgrade, anything else explains why only
+// a reset gets there.
 func CheckVersion(state *State) error {
 	if state == nil {
 		return nil
 	}
-	if state.Version != PlatformVersion() || state.K3sImage != K3sImage {
-		installed, wanted := state.Version, PlatformVersion()
-		if installed == "" {
-			installed = "working tree"
-		}
-		if wanted == "" {
-			wanted = "working tree"
-		}
-		return fmt.Errorf("local dev platform runs %s (%s); selected CLI requires %s (%s); run skali dev reset to delete the local platform and its data, then skali dev to recreate it", installed, state.K3sImage, wanted, K3sImage)
+	if state.Upgrade != nil {
+		return state.Upgrade.unfinishedError()
 	}
+	if state.Version != PlatformVersion() || state.K3sImage != PlatformK3sImage() {
+		if err := checkTransition(state); err != nil {
+			return err
+		}
+		return fmt.Errorf("local dev platform runs %s (%s); selected CLI requires %s (%s); "+
+			"run skali dev upgrade to upgrade it in place, keeping its data and development CA",
+			releaseLabel(state.Version), state.K3sImage, releaseLabel(PlatformVersion()), PlatformK3sImage())
+	}
+	return checkRecord(state)
+}
+
+// checkRecord proves the record describes one consistent platform this CLI
+// can drive: its image agrees with its release and its edge sits on the
+// ports this CLI publishes.
+func checkRecord(state *State) error {
 	_, published := version.PublishedSkalidVersion(state.SkalidImage)
 	if state.Version == "" && published {
 		return fmt.Errorf("working-tree platform record names a released skalid image; run skali dev reset")
@@ -398,6 +417,14 @@ func CheckVersion(state *State) error {
 		return fmt.Errorf("local dev platform publishes its edge on ports %d (http) and %d (https); this CLI expects %d and %d, and k3d port mappings are fixed at creation; run skali dev reset to delete the local platform and its data, then skali dev to recreate it", state.Edge.HTTP, state.Edge.HTTPS, wanted.HTTP, wanted.HTTPS)
 	}
 	return nil
+}
+
+// releaseLabel names a platform release for messages.
+func releaseLabel(release string) string {
+	if release == "" {
+		return "working tree"
+	}
+	return release
 }
 
 func SaveState(state *State) error {
@@ -457,7 +484,7 @@ func NewState(skalidImage string) (*State, error) {
 	return &State{
 		Cluster:       ClusterName(),
 		Version:       PlatformVersion(),
-		K3sImage:      K3sImage,
+		K3sImage:      PlatformK3sImage(),
 		SkalidImage:   skalidImage,
 		AdminEmail:    AdminEmail,
 		AdminPassword: password,
@@ -639,7 +666,7 @@ func Create(ctx context.Context) error {
 func createArgs(registries string) []string {
 	args := []string{
 		"cluster", "create", ClusterName(),
-		"--image", K3sImage,
+		"--image", PlatformK3sImage(),
 		"--no-lb",
 		"--kubeconfig-update-default=false",
 		"--kubeconfig-switch-context=false",
@@ -727,11 +754,34 @@ func Delete(ctx context.Context) error { return DeleteFor(ctx, ClusterName()) }
 // cluster list yet a leftover container makes k3d cluster create refuse
 // the name, and a leftover network is adopted as external and never
 // deleted again (#232). An absent cluster deletes nothing and succeeds.
+// A node replaced by skali dev upgrade mounts its data volumes by name,
+// which docker no longer counts as the container's own and which carry no
+// cluster label, so the volumes the nodes mounted go last.
 func DeleteFor(ctx context.Context, name string) error {
+	mounted, err := clusterVolumes(ctx, name)
+	if err != nil {
+		return err
+	}
 	if out, err := exec.CommandContext(ctx, k3dBinary(), "cluster", "delete", name).CombinedOutput(); err != nil {
 		return fmt.Errorf("localdev: k3d cluster delete %s: %w\n%s", name, err, out)
 	}
-	return removeRemnants(ctx, name)
+	if err := removeRemnants(ctx, name); err != nil {
+		return err
+	}
+	if len(mounted) == 0 {
+		return nil
+	}
+	existing, err := dockerList(ctx, "volume", "ls", "--quiet")
+	if err != nil {
+		return err
+	}
+	var remaining []string
+	for _, volume := range mounted {
+		if slices.Contains(existing, volume) {
+			remaining = append(remaining, volume)
+		}
+	}
+	return dockerRemove(ctx, remaining, "volume", "rm")
 }
 
 // removeRemnants removes the docker objects k3d left of the named cluster:
@@ -783,6 +833,25 @@ func removeRemnants(ctx context.Context, name string) error {
 			"and run the reset again", strings.Join(registries, ", "), name, name, strings.Join(registries, " "))
 	}
 	return nil
+}
+
+// clusterVolumes lists the docker volumes the cluster's containers mount,
+// read before k3d's delete removes the containers that name them. Bind
+// mounts show as host paths and are not the cluster's to remove.
+func clusterVolumes(ctx context.Context, name string) ([]string, error) {
+	lines, err := dockerList(ctx, "ps", "--all", "--no-trunc", "--filter", "label=k3d.cluster="+name, "--format", "{{.Mounts}}")
+	if err != nil {
+		return nil, err
+	}
+	var volumes []string
+	for _, line := range lines {
+		for volume := range strings.SplitSeq(line, ",") {
+			if volume != "" && !strings.Contains(volume, "/") && !slices.Contains(volumes, volume) {
+				volumes = append(volumes, volume)
+			}
+		}
+	}
+	return volumes, nil
 }
 
 // dockerList runs a docker listing and returns its non-empty lines.

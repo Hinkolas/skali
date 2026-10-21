@@ -16,6 +16,9 @@ import (
 // under app=k3d.
 type dockerRemnants struct {
 	containers, volumes, networks []string
+	// mounts are the {{.Mounts}} lines of the cluster's containers;
+	// allVolumes is every volume docker lists without a filter.
+	mounts, allVolumes []string
 	// fail names the docker command (its leading words) that exits 1.
 	fail string
 }
@@ -37,10 +40,14 @@ func fakeDeleteTools(t *testing.T, k3dExit int, remnants dockerRemnants) string 
 	if remnants.fail != "" {
 		script += "case \"$*\" in '" + remnants.fail + "'*) echo 'removal refused' >&2; exit 1;; esac\n"
 	}
-	script += "case \"$1 $2\" in\n" +
+	script += "case \"$*\" in\n" +
+		"*'{{.Mounts}}'*) printf '" + lines(remnants.mounts) + "';;\n" +
+		"'volume ls --quiet') printf '" + lines(remnants.allVolumes) + "';;\n" +
+		"*) case \"$1 $2\" in\n" +
 		"'ps --all') printf '" + lines(remnants.containers) + "';;\n" +
 		"'volume ls') printf '" + lines(remnants.volumes) + "';;\n" +
 		"'network ls') printf '" + lines(remnants.networks) + "';;\n" +
+		"esac;;\n" +
 		"esac\n"
 	require.NoError(t, os.WriteFile(filepath.Join(bin, "docker"), []byte(script), 0o755))
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -57,6 +64,7 @@ func deleteCalls(t *testing.T, log string) []string {
 const remnantCluster = "skali-dev-remnant-test"
 
 var remnantListings = []string{
+	"docker ps --all --no-trunc --filter label=k3d.cluster=" + remnantCluster + " --format {{.Mounts}}",
 	"k3d cluster delete " + remnantCluster,
 	"docker ps --all --filter label=k3d.cluster=" + remnantCluster + " --format {{.Names}} {{.Label \"k3d.role\"}}",
 	"docker volume ls --quiet --filter label=k3d.cluster=" + remnantCluster,
@@ -73,9 +81,9 @@ func TestDeleteRemovesToolsHelperRemnant(t *testing.T) {
 	})
 	require.NoError(t, DeleteFor(context.Background(), remnantCluster))
 	require.Equal(t, []string{
-		remnantListings[0], remnantListings[1],
+		remnantListings[0], remnantListings[1], remnantListings[2],
 		"docker rm --force --volumes k3d-" + remnantCluster + "-tools",
-		remnantListings[2], remnantListings[3],
+		remnantListings[3], remnantListings[4],
 		"docker network rm k3d-" + remnantCluster,
 	}, deleteCalls(t, log))
 }
@@ -89,9 +97,9 @@ func TestDeleteRemovesNetworkAndVolumeRemnants(t *testing.T) {
 	})
 	require.NoError(t, DeleteFor(context.Background(), remnantCluster))
 	require.Equal(t, []string{
-		remnantListings[0], remnantListings[1], remnantListings[2],
+		remnantListings[0], remnantListings[1], remnantListings[2], remnantListings[3],
 		"docker volume rm k3d-" + remnantCluster + "-images",
-		remnantListings[3],
+		remnantListings[4],
 		"docker network rm k3d-" + remnantCluster,
 	}, deleteCalls(t, log))
 }
@@ -109,9 +117,9 @@ func TestDeleteKeepsRegistryK3dKept(t *testing.T) {
 	require.ErrorContains(t, err, "kept registry k3d-shared-registry")
 	require.ErrorContains(t, err, "docker rm --force k3d-shared-registry")
 	require.Equal(t, []string{
-		remnantListings[0], remnantListings[1],
+		remnantListings[0], remnantListings[1], remnantListings[2],
 		"docker rm --force --volumes k3d-" + remnantCluster + "-tools",
-		remnantListings[2], remnantListings[3],
+		remnantListings[3], remnantListings[4],
 		"docker network rm k3d-" + remnantCluster,
 	}, deleteCalls(t, log))
 }
@@ -122,11 +130,28 @@ func TestDeleteAbsentClusterRemovesNothing(t *testing.T) {
 	require.Equal(t, remnantListings, deleteCalls(t, log))
 }
 
+// A node replaced by skali dev upgrade mounts its data volumes by name:
+// they carry no cluster label and k3d's delete no longer removes them with
+// the container, so the volumes the nodes mounted go after the sweep. Host
+// paths of bind mounts and volumes already gone are left alone.
+func TestDeleteRemovesVolumesAReplacedNodeMounted(t *testing.T) {
+	images := "k3d-" + remnantCluster + "-images"
+	log := fakeDeleteTools(t, 0, dockerRemnants{
+		mounts:     []string{images + ",0de5e553,40d3455b,/Users/dev/registries.yaml"},
+		allVolumes: []string{"0de5e553", "40d3455b", "unrelated"},
+	})
+	require.NoError(t, DeleteFor(context.Background(), remnantCluster))
+	require.Equal(t, append(append([]string{}, remnantListings...),
+		"docker volume ls --quiet",
+		"docker volume rm 0de5e553 40d3455b",
+	), deleteCalls(t, log))
+}
+
 func TestDeleteReportsCleanupFailures(t *testing.T) {
 	t.Run("k3d", func(t *testing.T) {
 		log := fakeDeleteTools(t, 1, dockerRemnants{containers: []string{"k3d-" + remnantCluster + "-tools noRole"}})
 		require.ErrorContains(t, DeleteFor(context.Background(), remnantCluster), "k3d cluster delete")
-		require.Equal(t, remnantListings[:1], deleteCalls(t, log), "nothing is swept past a failed k3d delete")
+		require.Equal(t, remnantListings[:2], deleteCalls(t, log), "nothing is swept past a failed k3d delete")
 	})
 	t.Run("listing", func(t *testing.T) {
 		fakeDeleteTools(t, 0, dockerRemnants{fail: "ps"})

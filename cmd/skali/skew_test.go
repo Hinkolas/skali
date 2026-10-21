@@ -60,15 +60,16 @@ func TestDevSkewError(t *testing.T) {
 	err := devSkewError("ghcr.io/hinkolas/skalid:v0.1.0")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "the local platform skali-dev runs skalid v0.1.0 and this CLI is v0.2.0")
-	require.Contains(t, err.Error(), "skali dev reset")
+	require.Contains(t, err.Error(), "skali dev upgrade")
 	require.NotContains(t, err.Error(), "hint:")
 
+	// A newer platform cannot move back.
 	err = devSkewError("ghcr.io/hinkolas/skalid:v0.3.0")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "skali dev reset")
 
-	// A prerelease of the CLI's version is another release.
-	require.ErrorContains(t, devSkewError("ghcr.io/hinkolas/skalid:v0.2.0-rc.1"), "skali dev reset")
+	// A prerelease of the CLI's version is another, older release.
+	require.ErrorContains(t, devSkewError("ghcr.io/hinkolas/skalid:v0.2.0-rc.1"), "skali dev upgrade")
 
 	require.NoError(t, devSkewError("ghcr.io/hinkolas/skalid:v0.2.0"))
 	// Non-published platforms have no comparable version.

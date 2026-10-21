@@ -42,7 +42,14 @@ func (silentProgress) Note(string)  {}
 // bundle stages in order, and the bootstrap operator user. It returns the
 // installation state for login.
 func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
-	unlock, err := Lock(ctx)
+	return ensure(ctx, opts, false)
+}
+
+// ensure is Ensure; upgrading runs it under an unfinished upgrade record
+// (whose release and k3s pin are already the target's) and never creates a
+// cluster, since an upgrade only moves an existing one.
+func ensure(ctx context.Context, opts EnsureOptions, upgrading bool) (*State, error) {
+	ctx, unlock, err := LockContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -54,7 +61,14 @@ func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
 	if err != nil && !errors.Is(err, ErrNotInstalled) {
 		return nil, err
 	}
-	if err := CheckVersion(existing); err != nil {
+	if upgrading && existing != nil {
+		current := *existing
+		current.Upgrade = nil
+		err = CheckVersion(&current)
+	} else {
+		err = CheckVersion(existing)
+	}
+	if err != nil {
 		return nil, err
 	}
 	progress := opts.Progress
@@ -105,6 +119,9 @@ func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
 		return nil, err
 	}
 	status := StatusOf(statuses, ClusterName())
+	if upgrading && status == ClusterAbsent {
+		return nil, fmt.Errorf("the local platform's cluster %s is missing; the upgrade cannot continue", ClusterName())
+	}
 	// A cluster without an installation record is not ours to adopt or
 	// destroy (an older or foreign installation); the user decides.
 	if freshInstall && status != ClusterAbsent {
@@ -153,7 +170,7 @@ func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
 		// Create always uses the current pin and the current edge ports; a
 		// recreation under retained state must not keep reporting the old
 		// cluster's k3s or mappings.
-		state.K3sImage = K3sImage
+		state.K3sImage = PlatformK3sImage()
 		state.Edge = currentEdgePorts()
 		// The record precedes the cluster. A record without a cluster is a
 		// plain create on the next pass, while a cluster without a record
@@ -167,7 +184,7 @@ func Ensure(ctx context.Context, opts EnsureOptions) (*State, error) {
 		if err := Create(ctx); err != nil {
 			return nil, err
 		}
-		progress.Done(K3sImage + ", pinned")
+		progress.Done(PlatformK3sImage() + ", pinned")
 	case ClusterStopped:
 		progress.Start("Start k3d cluster " + ClusterName())
 		if err := checkEdgePortsFree(ctx); err != nil {

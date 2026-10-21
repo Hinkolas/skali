@@ -136,7 +136,8 @@ generated for your machine. The first run offers to trust that CA
 
 Ctrl-C pauses the project and keeps its data, `skali dev` brings it back, and
 `skali dev -d` runs it in the background. `skali dev status`, `exec`, `list`,
-and `reset` do what they say. Add a `dev:` block to an application and
+and `reset` do what they say. After updating skali, `skali dev upgrade` moves
+the local platform to the new release and keeps its data and development CA. Add a `dev:` block to an application and
 `skali dev` runs that app as a process on your machine with hot reload,
 behind the cluster's routes and with its real database and bucket
 credentials.

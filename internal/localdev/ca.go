@@ -20,9 +20,10 @@ import (
 // The development CA signs every route certificate of the local platform:
 // cert-manager holds the key as the skali ClusterIssuer's secret, the
 // developer's trust store (and the CLI) hold the certificate. It is
-// generated once per installation into the cluster's state directory and
-// removed with it by skali dev reset, so a recreated platform gets a fresh
-// CA and the old one, if still trusted, signs nothing anymore.
+// generated once per installation into the cluster's state directory, kept
+// by skali dev upgrade, and removed with it by skali dev reset, so a
+// recreated platform gets a fresh CA and the old one, if still trusted,
+// signs nothing anymore.
 const (
 	caCertFile = "ca.crt"
 	caKeyFile  = "ca.key"

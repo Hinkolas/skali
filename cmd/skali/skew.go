@@ -75,13 +75,18 @@ func skewHint(remote, cli, server string) string {
 // devSkewError refuses to drive a released local platform from a released
 // CLI of another version, before any request the daemon would refuse with
 // cli_version_mismatch. Each release's platform runs its own image, so this
-// only fires on a record that lies (an image swapped underneath it); the
-// cure is a fresh platform. Development builds and working-tree or custom
+// only fires on a record that lies (an image swapped underneath it); an
+// older platform moves forward with skali dev upgrade, a newer one only
+// with a fresh platform. Development builds and working-tree or custom
 // images have no comparable version and pass.
 func devSkewError(image string) error {
 	platform, ok := versionpkg.PublishedSkalidVersion(image)
 	if !ok || !versionpkg.ReleasesDiffer(versionpkg.Version, platform) {
 		return nil
+	}
+	if versionpkg.Older(platform, versionpkg.Version) {
+		return fmt.Errorf("the local platform %s runs skalid %s and this CLI is %s; run skali dev upgrade to move it to this CLI's release",
+			localdev.ClusterName(), platform, versionpkg.Version)
 	}
 	return fmt.Errorf("the local platform %s runs skalid %s and this CLI is %s; run skali dev reset to recreate it at this CLI's release",
 		localdev.ClusterName(), platform, versionpkg.Version)
