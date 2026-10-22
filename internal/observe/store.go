@@ -80,6 +80,9 @@ type JobStatus struct {
 	Reason    string // terminal failure reason, e.g. BackoffLimitExceeded, DeadlineExceeded
 	Message   string
 	Created   time.Time
+	// Promotion is the Job's skali.dev/promotion label: the promotion stamp
+	// it was created under. Empty on Jobs created before the label existed.
+	Promotion string
 }
 
 type objectKey struct {

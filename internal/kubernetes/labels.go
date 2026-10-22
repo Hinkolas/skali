@@ -1,6 +1,11 @@
 package kubernetes
 
-import "github.com/Hinkolas/skali/internal/platform"
+import (
+	"strconv"
+	"time"
+
+	"github.com/Hinkolas/skali/internal/platform"
+)
 
 // The stable label contract that indexes every managed object back to its
 // installation, project, environment, service, and revision. Selector labels
@@ -77,3 +82,17 @@ func RevisionLabelValue(checksum string) string {
 // blue-green application selects exactly one color; switching it is the
 // traffic switch.
 const LabelColor = "skali.dev/color"
+
+// LabelPromotion binds a release Job to the promotion that created it: the
+// target's promotion stamp (see PromotionStamp). The Job's name already
+// names its revision, but one revision can be promoted more than once (a
+// forced redeploy, a rollback to it), and only the stamp tells a failed
+// release of this promotion from one an earlier promotion left behind.
+const LabelPromotion = "skali.dev/promotion"
+
+// PromotionStamp renders a promotion time as a label value: its
+// microseconds since the epoch, the full precision Postgres keeps, so two
+// promotions never share a stamp.
+func PromotionStamp(promotedAt time.Time) string {
+	return strconv.FormatInt(promotedAt.UnixMicro(), 10)
+}

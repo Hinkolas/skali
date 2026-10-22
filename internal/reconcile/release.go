@@ -34,17 +34,25 @@ const (
 const releaseTailLines = int64(40)
 
 // ensureRelease drives one application's release command toward completion:
-// the per-revision Job is created when absent, watched while it runs, and
-// its terminal state gates the workload apply. A failed Job created before
-// the current promote (a leftover from an earlier attempt) is deleted so
-// this attempt re-runs the command; a failed Job of the current attempt
-// fails the rollout with the Job's log tail in the journal.
+// the per-revision Job is created when absent, labeled with the promotion
+// it runs for, watched while it runs, and its terminal state gates the
+// workload apply. A failed Job of an earlier promotion (the same revision
+// promoted again) is deleted so this promotion re-runs the command; a
+// failed Job of the current promotion fails the rollout with the Job's log
+// tail in the journal and is never run again for it.
 func (k *Kernel) ensureRelease(ctx context.Context, attachment *runAttachment, target store.EnvironmentTarget,
 	service string, job *batchv1.Job, snapshot observe.Snapshot) (releaseState, string, error) {
 	stepKey, title := "release:"+service, "Run release command for "+service
 	dotted := "applications." + service
 	live := liveReleaseJob(snapshot, job.Namespace, job.Name)
 	if live == nil || live.Job == nil {
+		// The Job is applied only while absent, so the label stays what it
+		// was created with: the promotion it belongs to.
+		job = job.DeepCopy()
+		if job.Labels == nil {
+			job.Labels = map[string]string{}
+		}
+		job.Labels[rendering.LabelPromotion] = rendering.PromotionStamp(target.PromotedAt)
 		changed, err := k.executeOps(ctx, []Op{{Kind: OpApply, Object: job}})
 		if err != nil {
 			k.journalServiceOpFailure(ctx, attachment, dotted, stepKey, title, changed, err)
@@ -64,9 +72,9 @@ func (k *Kernel) ensureRelease(ctx context.Context, attachment *runAttachment, t
 			[]string{"release command completed"})
 		return releaseDone, "", nil
 	case status.Failed:
-		if status.Created.Before(target.UpdatedAt) {
-			// The failure predates the promote, so it belongs to an earlier
-			// attempt; deleting it lets this attempt run afresh.
+		if !ofPromotion(status, target) {
+			// The failure belongs to an earlier promotion of this revision;
+			// deleting it lets this promotion run afresh.
 			if _, err := k.deps.Cluster.Delete(ctx, live.Ref); err != nil {
 				k.journalServiceOpFailure(ctx, attachment, dotted, stepKey, title, nil, err)
 				return releaseRunning, "", err
@@ -88,6 +96,19 @@ func (k *Kernel) ensureRelease(ctx context.Context, attachment *runAttachment, t
 		attachment.waitServiceStep(ctx, dotted, stepKey, title, reason)
 		return releaseRunning, reason, nil
 	}
+}
+
+// ofPromotion reports whether a release Job ran for the target's current
+// promotion. A labeled Job compares its stamp exactly. A Job created before
+// the label existed falls back to its creation time, which has whole-second
+// precision: only a Job from a second before the promotion's own is
+// earlier, so a release that failed within the promotion's second stays
+// failed rather than running again.
+func ofPromotion(status *observe.JobStatus, target store.EnvironmentTarget) bool {
+	if status.Promotion != "" {
+		return status.Promotion == rendering.PromotionStamp(target.PromotedAt)
+	}
+	return !status.Created.Before(target.PromotedAt.Truncate(time.Second))
 }
 
 // releaseFailureLine is the one-line verdict on a failed release Job: what
