@@ -279,7 +279,18 @@ then fails and leaves the database as it was. A restore replaces the
 objects its dump holds and leaves others the database gained since in
 place. A volume restore reads its archive from the target twice, once to
 verify it and once to extract it, and both passes share the restore Job's
-timeout (`SKALI_BACKUP_JOB_TIMEOUT`, one hour by default).
+timeout (`SKALI_BACKUP_JOB_TIMEOUT`, one hour by default). Bucket backups
+and restores run in the daemon instead of a Job and have their own bound
+(`SKALI_BACKUP_COPY_TIMEOUT`, six hours by default).
+
+## Failed backups leave their data behind
+
+A backup that fails or is cancelled leaves whatever it already wrote in the
+backup target: no manifest refers to it, so it is never listed or restored,
+but neither retention nor `skali backup remove` deletes it. A scheduled
+backup that failed is retried up to twice, and each attempt writes under its
+own snapshot id. Clean such leftovers from the target by hand if space
+matters.
 
 ## Builds run on your machine
 

@@ -153,6 +153,7 @@ func (s *minioStore) PutWithMeta(ctx context.Context, key string, r io.Reader, s
 		Expires:            meta.Expires,
 		UserMetadata:       meta.UserMetadata,
 		UserTags:           meta.Tags,
+		Progress:           uploadProgress(ctx),
 	})
 	if err != nil {
 		return fmt.Errorf("backup: put %s: %w", key, err)

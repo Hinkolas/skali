@@ -219,7 +219,10 @@ func (c *Controller) executeRestore(ctx context.Context, scope *journal.Scope, r
 
 	restored := restorableComponents(&revisionDoc.Definition, manifest.Components)
 	if err := scope.Step(ctx, "verify", "Verify snapshot data", func(ctx context.Context, log *journal.StepLog) error {
-		if err := c.verifySnapshot(ctx, log, bctx, manifest, restored); err != nil {
+		err := c.withinCopyTimeout(ctx, "the snapshot check", func(ctx context.Context) error {
+			return c.verifySnapshot(ctx, log, bctx, manifest, restored)
+		})
+		if err != nil {
 			return fmt.Errorf("%w; nothing was changed", err)
 		}
 		return nil
@@ -360,9 +363,10 @@ func (c *Controller) verifySnapshot(ctx context.Context, log *journal.StepLog, b
 }
 
 // stopEnvironment persists the down decision together with the restore
-// hold and waits until the environment's workloads are gone. The kernel
-// does the actual teardown; with the adoption guard it journals nothing
-// into this run, so the wait here is the user-visible narration.
+// hold and waits until the environment's workloads are gone, retrying
+// failed reads (readFailures). The kernel does the actual teardown; with
+// the adoption guard it journals nothing into this run, so the wait here
+// is the user-visible narration.
 func (c *Controller) stopEnvironment(ctx context.Context, log *journal.StepLog, row *store.Backup, restored []Component) error {
 	// Capture-then-down: MarkEnvironmentRestoring NULLs both revision
 	// pointers, which is why the resume revision was captured at accept
@@ -395,34 +399,48 @@ func (c *Controller) stopEnvironment(ctx context.Context, log *journal.StepLog, 
 	namespace := kubernetes.NamespaceName(row.EnvironmentID.String())
 	selector := kubernetes.EnvironmentSelector(row.EnvironmentID.String())
 	deadline := time.Now().Add(c.cfg.JobTimeout)
+	var failures readFailures
 	for time.Now().Before(deadline) {
-		deployments, err := c.deps.Kube.Clientset.AppsV1().Deployments(namespace).
-			List(ctx, metav1.ListOptions{LabelSelector: selector})
-		if err != nil {
-			return fmt.Errorf("list deployments: %w", err)
-		}
-		var running int
-		pods, err := c.deps.Kube.Clientset.CoreV1().Pods(namespace).
-			List(ctx, metav1.ListOptions{LabelSelector: selector})
-		if err != nil {
-			return fmt.Errorf("list pods: %w", err)
-		}
-		for _, pod := range pods.Items {
-			if pod.Status.Phase == corev1.PodRunning || pod.Status.Phase == corev1.PodPending {
-				running++
+		running, err := c.runningWorkloads(ctx, namespace, selector)
+		wait := stopPollInterval
+		switch {
+		case err != nil:
+			if wait, err = failures.retry(ctx, err); err != nil {
+				return err
 			}
-		}
-		if len(deployments.Items) == 0 && running == 0 {
+		case running == 0:
 			log.Info(ctx, "workloads stopped; volumes and databases remain")
 			return nil
+		default:
+			failures.ok()
 		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(stopPollInterval):
+		if err := pause(ctx, wait); err != nil {
+			return err
 		}
 	}
 	return errors.New("workloads did not stop in time")
+}
+
+// runningWorkloads counts the environment's Deployments and its pods that
+// are running or about to.
+func (c *Controller) runningWorkloads(ctx context.Context, namespace, selector string) (int, error) {
+	deployments, err := c.deps.Kube.Clientset.AppsV1().Deployments(namespace).
+		List(ctx, metav1.ListOptions{LabelSelector: selector})
+	if err != nil {
+		return 0, fmt.Errorf("list deployments: %w", err)
+	}
+	pods, err := c.deps.Kube.Clientset.CoreV1().Pods(namespace).
+		List(ctx, metav1.ListOptions{LabelSelector: selector})
+	if err != nil {
+		return 0, fmt.Errorf("list pods: %w", err)
+	}
+	running := len(deployments.Items)
+	for _, pod := range pods.Items {
+		if pod.Status.Phase == corev1.PodRunning || pod.Status.Phase == corev1.PodPending {
+			running++
+		}
+	}
+	return running, nil
 }
 
 // restoreComponent restores one snapshot component into the environment,
@@ -449,7 +467,9 @@ func (c *Controller) restoreComponent(ctx context.Context, scope *journal.Scope,
 		}
 		return scope.Step(ctx, label, "Restore bucket "+component.ServiceKey,
 			func(ctx context.Context, log *journal.StepLog) error {
-				return c.restoreBucket(ctx, log, bctx, component)
+				return c.withinCopyTimeout(ctx, "the bucket restore", func(ctx context.Context) error {
+					return c.restoreBucket(ctx, log, bctx, component)
+				})
 			})
 	default:
 		if !exists {
@@ -589,20 +609,24 @@ func sameCount(got, want bucketListing) string {
 // deployment.
 func (c *Controller) awaitReconverge(ctx context.Context, log *journal.StepLog, row *store.Backup) error {
 	deadline := time.Now().Add(c.cfg.ReconvergeTimeout)
+	var failures readFailures
 	for time.Now().Before(deadline) {
+		wait := reconvergePollInterval
 		target, err := c.deps.Store.GetEnvironmentTarget(ctx, row.EnvironmentID)
-		if err != nil {
-			return fmt.Errorf("read environment target: %w", err)
-		}
-		if target.ActiveRevisionID != nil && row.RevisionID != nil &&
-			*target.ActiveRevisionID == *row.RevisionID {
+		switch {
+		case err != nil:
+			if wait, err = failures.retry(ctx, err); err != nil {
+				return fmt.Errorf("read environment target: %w", err)
+			}
+		case target.ActiveRevisionID != nil && row.RevisionID != nil &&
+			*target.ActiveRevisionID == *row.RevisionID:
 			log.Info(ctx, "environment is healthy on the restored data")
 			return nil
+		default:
+			failures.ok()
 		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(reconvergePollInterval):
+		if err := pause(ctx, wait); err != nil {
+			return err
 		}
 	}
 	return errors.New("the environment did not become healthy in time; reconciliation continues toward the resumed revision")

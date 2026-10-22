@@ -425,6 +425,7 @@ func runServe() error {
 			WorkerImage:     cfg.BackupWorkerImage,
 			JobTimeout:      cfg.BackupJobTimeout,
 			CopyConcurrency: cfg.BackupCopyConcurrency,
+			CopyTimeout:     cfg.BackupCopyTimeout,
 		})
 		if err := backupCtl.RecoverOnBoot(ctx); err != nil {
 			return fmt.Errorf("recover backups: %w", err)

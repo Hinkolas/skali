@@ -2,6 +2,8 @@ package backup
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -73,6 +75,13 @@ type Config struct {
 	// CopyConcurrency is how many objects a bucket backup or restore copies
 	// at once; zero takes the default.
 	CopyConcurrency int
+	// CopyTimeout bounds the in-process work of one bucket component (the
+	// count, the copy, a restore's clear and check) and a restore's
+	// verification of the snapshot: the parts no Job deadline covers.
+	CopyTimeout time.Duration
+	// CopyStallTimeout abandons one object's copy attempt that moved no
+	// data for this long; zero takes the default.
+	CopyStallTimeout time.Duration
 }
 
 // Controller executes backup and restore rows. Create with New, start with
@@ -115,6 +124,9 @@ func New(deps Deps, cfg Config) *Controller {
 	if cfg.CopyConcurrency <= 0 {
 		cfg.CopyConcurrency = defaultCopyConcurrency
 	}
+	if cfg.CopyTimeout <= 0 {
+		cfg.CopyTimeout = defaultCopyTimeout
+	}
 	c := &Controller{
 		deps: deps,
 		cfg:  cfg,
@@ -133,7 +145,32 @@ func New(deps Deps, cfg Config) *Controller {
 
 // copyOptions is how bucket copies run under this controller's settings.
 func (c *Controller) copyOptions() copyOptions {
-	return copyOptions{Concurrency: c.cfg.CopyConcurrency}
+	return copyOptions{Concurrency: c.cfg.CopyConcurrency, StallTimeout: c.cfg.CopyStallTimeout}
+}
+
+// copyTimeoutError is in-process work that ran into the controller's copy
+// timeout.
+type copyTimeoutError struct {
+	What  string
+	Limit time.Duration
+}
+
+func (e *copyTimeoutError) Error() string {
+	return fmt.Sprintf("%s did not finish within %s (SKALI_BACKUP_COPY_TIMEOUT)", e.What, e.Limit)
+}
+
+// withinCopyTimeout runs fn under the copy timeout and reports running
+// into it as such, in place of whatever the interrupted call returned. A
+// cancel from outside stays a cancel.
+func (c *Controller) withinCopyTimeout(ctx context.Context, what string, fn func(context.Context) error) error {
+	timeout := &copyTimeoutError{What: what, Limit: c.cfg.CopyTimeout}
+	ctx, cancel := context.WithTimeoutCause(ctx, c.cfg.CopyTimeout, timeout)
+	defer cancel()
+	err := fn(ctx)
+	if err != nil && errors.Is(context.Cause(ctx), timeout) {
+		return timeout
+	}
+	return err
 }
 
 // Enqueue schedules one backup row's execution.

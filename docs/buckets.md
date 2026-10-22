@@ -333,7 +333,17 @@ target rather than by bandwidth, so a bucket of many small objects moves
 in minutes instead of tens of minutes. A transient failure on one object (a
 server error, throttling, a dropped connection) is retried a few times
 with backoff before it fails the run; a denied or invalid request fails the
-run at once with the object's key in the error. A restore clears the live
+run at once with the object's key in the error. A copy whose data stops
+moving, because the source stopped sending or the target stopped taking
+it, is abandoned after two minutes without progress and retried like any
+other transient failure, so a stalled volume server or target cannot hold
+the installation's backup worker. A slow copy that keeps moving is not
+stalled. One bucket backup or restore as a whole (the count, the copy, and
+a restore's clear and check) is bounded by `SKALI_BACKUP_COPY_TIMEOUT`, six
+hours by default, and fails with the timeout named when it runs out. A
+restore that fails or times out after it stopped the environment keeps the
+environment down and the bucket fenced, as described in
+[prerelease safety](prerelease-safety.md). A restore clears the live
 bucket with batched deletes before the copy back, and clears it again
 until nothing is listed: the gateway keeps a folder after its last object
 is gone, and a folder the snapshot never had must not survive the

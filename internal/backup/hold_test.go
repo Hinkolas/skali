@@ -379,3 +379,60 @@ func TestTeardownDuringRestoreIsNotUndone(t *testing.T) {
 	require.Nil(t, target.TargetRevisionID)
 	require.Equal(t, result.BackupID, *target.IncompleteRestoreID)
 }
+
+// silentStore takes no data: every write waits until its request is
+// abandoned, the way a target that stopped answering holds a connection.
+type silentStore struct{ *memoryStore }
+
+func (silentStore) PutWithMeta(ctx context.Context, _ string, _ io.Reader, _ int64, _ objectMeta) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+// A bucket restore that runs into the copy timeout fails with the timeout
+// named and frees its worker. Having stopped the environment, it holds it
+// like any failed restore: down, the bucket fenced, nothing resumed on
+// half-written data, and nothing re-runs the restore by itself.
+func TestRestoreCopyTimeoutKeepsTheHold(t *testing.T) {
+	f := newHoldFixture(t)
+	f.controller.cfg.CopyTimeout = 200 * time.Millisecond
+	snapshot := f.snapshot(t, "snap", 3)
+	f.bucket = silentStore{memoryStore: f.destination}
+
+	start := time.Now()
+	result, row := f.restore(t, snapshot)
+	require.Less(t, time.Since(start), 30*time.Second)
+	require.Equal(t, StatusFailed, row.Status)
+	require.Contains(t, *row.Error, "the bucket restore did not finish within 200ms")
+	require.Equal(t, string(journal.RunFailed), f.runStatus(t, result.RunID))
+	require.True(t, f.slotFree(t))
+	target := f.target(t)
+	require.Equal(t, "down", target.State)
+	require.Equal(t, row.ID, *target.IncompleteRestoreID)
+	require.True(t, f.fence.fenced)
+	require.False(t, f.fence.unfenced, "the bucket stays fenced")
+	unfinished, err := f.st.ListUnfinishedBackups(context.Background())
+	require.NoError(t, err)
+	require.Empty(t, unfinished, "the timed-out restore is not replayed")
+}
+
+// A bucket backup whose target stops taking data fails with the timeout
+// named instead of holding the installation's backup worker.
+func TestBackupCopyTimeoutFailsTheRun(t *testing.T) {
+	f := newHoldFixture(t)
+	f.controller.cfg.CopyTimeout = 200 * time.Millisecond
+	f.controller.openStore = func(s3Location) (objectStore, error) {
+		return silentStore{memoryStore: f.snapshots}, nil
+	}
+	ctx := context.Background()
+	result, err := f.controller.CreateBackup(ctx, BackupInput{EnvironmentID: f.environmentID, Actor: "tester"})
+	require.NoError(t, err)
+	require.NoError(t, f.controller.process(ctx, result.BackupID))
+
+	row := f.rowStatus(t, result.BackupID)
+	require.Equal(t, StatusFailed, row.Status)
+	require.Contains(t, *row.Error, "the bucket backup did not finish within 200ms")
+	require.Equal(t, string(journal.RunFailed), f.runStatus(t, result.RunID))
+	require.True(t, f.slotFree(t))
+	require.Empty(t, f.snapshots.keys(snapshotPrefix("", "demo", "production")), "no manifest certifies the snapshot")
+}

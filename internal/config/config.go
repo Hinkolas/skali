@@ -225,6 +225,13 @@ type API struct {
 	// throttles parallel requests.
 	BackupCopyConcurrency int `env:"SKALI_BACKUP_COPY_CONCURRENCY,default=16"`
 
+	// BackupCopyTimeout bounds one bucket backup or restore as a whole (the
+	// count, the copy, and a restore's clear and check of the bucket), and
+	// a restore's check of the snapshot. A copy that stops moving data
+	// fails well before this, after two minutes without progress; this
+	// ends one that keeps moving too slowly.
+	BackupCopyTimeout time.Duration `env:"SKALI_BACKUP_COPY_TIMEOUT,default=6h"`
+
 	// BackupScheduler runs the environments' backup schedules. Off is for
 	// tests and debugging; a cluster without schedules or without a backup
 	// target idles either way.

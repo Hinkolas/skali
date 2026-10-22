@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -353,6 +355,7 @@ func TestRetryableCopyError(t *testing.T) {
 		{"unexpected eof", io.ErrUnexpectedEOF, true},
 		{"eof", fmt.Errorf("read: %w", io.EOF), true},
 		{"unknown", errors.New("something else"), false},
+		{"stalled", fmt.Errorf("copy k: %w", &copyStalledError{Window: time.Minute}), true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -381,4 +384,236 @@ func TestMemoryStoreRemoveAll(t *testing.T) {
 	require.EqualValues(t, 5, removed)
 	require.Empty(t, store.keys(""))
 	require.Equal(t, "remove-all", store.ops[len(store.ops)-1])
+}
+
+// stallingSource serves every object, but the body of each key in stall
+// sends its first byte and then nothing more until the request is
+// abandoned, the way a volume server that stopped answering mid-response
+// holds a connection open. Each key stalls on as many attempts as its
+// count says; later attempts are served in full.
+type stallingSource struct {
+	*memoryStore
+	mu    sync.Mutex
+	stall map[string]int
+	gets  map[string]int
+}
+
+func newStallingSource(stall map[string]int) *stallingSource {
+	return &stallingSource{memoryStore: newMemoryStore(), stall: stall, gets: map[string]int{}}
+}
+
+func (s *stallingSource) GetWithMeta(ctx context.Context, key string) (io.ReadCloser, objectMeta, error) {
+	reader, meta, err := s.memoryStore.GetWithMeta(ctx, key)
+	if err != nil {
+		return nil, meta, err
+	}
+	s.mu.Lock()
+	s.gets[key]++
+	stalls := s.gets[key] <= s.stall[key]
+	s.mu.Unlock()
+	if !stalls {
+		return reader, meta, nil
+	}
+	return io.NopCloser(&stalledBody{ctx: ctx, first: true}), meta, nil
+}
+
+func (s *stallingSource) attemptsFor(key string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.gets[key]
+}
+
+type stalledBody struct {
+	ctx   context.Context
+	first bool
+}
+
+func (b *stalledBody) Read(p []byte) (int, error) {
+	if b.first && len(p) > 0 {
+		b.first = false
+		p[0] = 'x'
+		return 1, nil
+	}
+	<-b.ctx.Done()
+	return 0, b.ctx.Err()
+}
+
+// trickleSource serves one object a byte at a time, every interval.
+type trickleSource struct {
+	*memoryStore
+	interval time.Duration
+}
+
+func (s *trickleSource) GetWithMeta(ctx context.Context, key string) (io.ReadCloser, objectMeta, error) {
+	reader, meta, err := s.memoryStore.GetWithMeta(ctx, key)
+	if err != nil {
+		return nil, meta, err
+	}
+	return io.NopCloser(&trickle{r: reader, interval: s.interval}), meta, nil
+}
+
+type trickle struct {
+	r        io.Reader
+	interval time.Duration
+}
+
+func (t *trickle) Read(p []byte) (int, error) {
+	time.Sleep(t.interval)
+	return t.r.Read(p[:min(1, len(p))])
+}
+
+// bufferingDestination takes the whole body at once and then spends a
+// while sending it, reporting what it sent through the upload's progress
+// hook as minio-go does: the source sees no reads meanwhile.
+type bufferingDestination struct {
+	*memoryStore
+	chunks   int
+	interval time.Duration
+}
+
+func (d *bufferingDestination) PutWithMeta(ctx context.Context, key string, r io.Reader, size int64, meta objectMeta) error {
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return err
+	}
+	hook := uploadProgress(ctx)
+	for range d.chunks {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(d.interval):
+		}
+		if hook != nil {
+			_, _ = hook.Read(make([]byte, 1))
+		}
+	}
+	return d.memoryStore.PutWithMeta(ctx, key, strings.NewReader(string(data)), size, meta)
+}
+
+// A copy whose bytes stop moving is abandoned after the stall bound and
+// retried; one that stalls on every attempt fails with the stall named,
+// and the copy ends instead of waiting on the connection.
+func TestCopyObjectsAbandonsStalledTransfers(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	opts := copyOptions{Concurrency: 2, Attempts: 3, Backoff: noBackoff, StallTimeout: 50 * time.Millisecond}
+
+	t.Run("RecoversOnRetry", func(t *testing.T) {
+		t.Parallel()
+		source, destination := newStallingSource(map[string]int{"object-002": 1}), newMemoryStore()
+		fillStore(t, source.memoryStore, "", 4)
+		count, _, err := copyObjects(ctx, &quietLog{}, source, destination, "", "", 4, opts)
+		require.NoError(t, err)
+		require.EqualValues(t, 4, count)
+		require.Equal(t, 2, source.attemptsFor("object-002"))
+		data, err := destination.Get(ctx, "object-002")
+		require.NoError(t, err)
+		body, err := io.ReadAll(data)
+		require.NoError(t, err)
+		require.Equal(t, "object-002", string(body), "the retry copied the whole object, not the stalled prefix")
+	})
+
+	t.Run("StallsEveryAttempt", func(t *testing.T) {
+		t.Parallel()
+		source, destination := newStallingSource(map[string]int{"object-001": 99}), newMemoryStore()
+		fillStore(t, source.memoryStore, "", 4)
+		start := time.Now()
+		_, _, err := copyObjects(ctx, &quietLog{}, source, destination, "", "", 4, opts)
+		require.Error(t, err)
+		require.ErrorContains(t, err, "copy object-001 failed after 3 attempts: no data moved for 50ms")
+		var stalled *copyStalledError
+		require.ErrorAs(t, err, &stalled)
+		require.Equal(t, 3, source.attemptsFor("object-001"))
+		require.Less(t, time.Since(start), 5*time.Second)
+		require.False(t, destination.has("object-001"))
+	})
+}
+
+// Slow is not stalled: data that keeps moving, on either side of the
+// copy, keeps the attempt alive well past the stall bound.
+func TestCopyObjectsToleratesSlowTransfers(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	opts := copyOptions{Concurrency: 1, Attempts: 1, StallTimeout: 60 * time.Millisecond}
+
+	t.Run("SlowSource", func(t *testing.T) {
+		t.Parallel()
+		source := &trickleSource{memoryStore: newMemoryStore(), interval: 15 * time.Millisecond}
+		fillStore(t, source.memoryStore, "", 1)
+		destination := newMemoryStore()
+		start := time.Now()
+		count, _, err := copyObjects(ctx, &quietLog{}, source, destination, "", "", 1, opts)
+		require.NoError(t, err)
+		require.EqualValues(t, 1, count)
+		require.Greater(t, time.Since(start), 2*opts.StallTimeout, "the copy outlasted the stall bound")
+	})
+
+	t.Run("SlowUpload", func(t *testing.T) {
+		t.Parallel()
+		source := newMemoryStore()
+		fillStore(t, source, "", 1)
+		destination := &bufferingDestination{memoryStore: newMemoryStore(), chunks: 12, interval: 15 * time.Millisecond}
+		count, _, err := copyObjects(ctx, &quietLog{}, source, destination, "", "", 1, opts)
+		require.NoError(t, err, "the upload's progress counts although the source is no longer read")
+		require.EqualValues(t, 1, count)
+	})
+}
+
+// A cancel reaches a copy waiting out a retry's backoff at once.
+func TestCopyObjectsCancelInterruptsBackoff(t *testing.T) {
+	t.Parallel()
+	source := newMemoryStore()
+	fillStore(t, source, "", 1)
+	destination := newFlakyStore(map[string][]error{
+		"object-000": {minio.ErrorResponse{StatusCode: 503, Code: "SlowDown"}},
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	waiting := make(chan struct{})
+	opts := copyOptions{Concurrency: 1, Backoff: func(int) time.Duration {
+		close(waiting)
+		return time.Hour
+	}}
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := copyObjects(ctx, &quietLog{}, source, destination, "", "", 1, opts)
+		done <- err
+	}()
+	<-waiting
+	cancel()
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, context.Canceled)
+		require.ErrorContains(t, err, "interrupted")
+	case <-time.After(5 * time.Second):
+		t.Fatal("the cancel did not interrupt the backoff")
+	}
+}
+
+// The S3 store hands the upload's progress hook to minio-go, which reads
+// it as the request body goes out.
+func TestMinioStoreReportsUploadProgress(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.Header().Set("ETag", `"etag"`)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+	store, err := newObjectStore(s3Location{Endpoint: server.URL, Region: "us-east-1", Bucket: "backups",
+		AccessKey: "key", SecretKey: "secret"})
+	require.NoError(t, err)
+
+	var sent atomic.Int64
+	hook := progressFunc(func(p []byte) { sent.Add(int64(len(p))) })
+	body := strings.Repeat("x", 64<<10)
+	ctx := withUploadProgress(context.Background(), hook)
+	require.NoError(t, store.PutWithMeta(ctx, "k", strings.NewReader(body), int64(len(body)), objectMeta{}))
+	require.EqualValues(t, len(body), sent.Load())
+}
+
+type progressFunc func(p []byte)
+
+func (f progressFunc) Read(p []byte) (int, error) {
+	f(p)
+	return len(p), nil
 }

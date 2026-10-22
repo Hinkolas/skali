@@ -38,10 +38,12 @@ const (
 	// ends.
 	targetSecretName = "skali-backup-target"
 
-	jobPollInterval = 2 * time.Second
-	jobTTLSeconds   = int64(3600)
-	jobLogTail      = 40
+	jobTTLSeconds = int64(3600)
+	jobLogTail    = 40
 )
+
+// jobPollInterval is how often a running Job's status is read.
+var jobPollInterval = 2 * time.Second
 
 // resolveWorkerImage picks the image backup Jobs run the data mover in:
 // the configured override, else the daemon's own image.
@@ -314,7 +316,8 @@ func renderVolumeJob(name, namespace, backupID, workerImage, targetSecret, claim
 }
 
 // runJob creates the Job, waits for it to finish, folds its useful output
-// into the step log, and deletes it. A leftover Job of the same name (a
+// into the step log, and deletes it. Failed reads of the Job's status are
+// retried (readFailures); the Job's own deadline bounds the wait. A leftover Job of the same name (a
 // previous failed attempt) is removed first so the run is idempotent.
 func (c *Controller) runJob(ctx context.Context, log *journal.StepLog, job *batchv1.Job) error {
 	spec := c.jobSpec(job.Spec.Template.Spec)
@@ -334,18 +337,21 @@ func (c *Controller) runJob(ctx context.Context, log *journal.StepLog, job *batc
 		return fmt.Errorf("create job %s: %w", job.Name, err)
 	}
 
-	ticker := time.NewTicker(jobPollInterval)
-	defer ticker.Stop()
+	var failures readFailures
+	wait := jobPollInterval
 	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
+		if err := pause(ctx, wait); err != nil {
+			return err
 		}
 		current, err := jobs.Get(ctx, job.Name, metav1.GetOptions{})
 		if err != nil {
-			return fmt.Errorf("watch job %s: %w", job.Name, err)
+			if wait, err = failures.retry(ctx, err); err != nil {
+				return fmt.Errorf("watch job %s: %w", job.Name, err)
+			}
+			continue
 		}
+		failures.ok()
+		wait = jobPollInterval
 		if current.Status.Succeeded > 0 {
 			c.tailJobInto(ctx, log, job.Namespace, job.Name, false)
 			c.deleteJob(ctx, job.Namespace, job.Name)
