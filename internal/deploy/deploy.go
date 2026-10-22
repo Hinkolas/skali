@@ -491,8 +491,8 @@ func (s *Service) Rollback(ctx context.Context, in RollbackInput) (*RollbackResu
 	if target.TargetRevisionID != nil && *target.TargetRevisionID == in.RevisionID {
 		return nil, ErrAlreadyTargeted
 	}
-	if _, err := s.st.GetPreparingDeploymentForEnvironment(ctx, in.EnvironmentID); err == nil {
-		return nil, ErrDeploymentInFlight
+	if preparing, err := s.st.GetPreparingDeploymentForEnvironment(ctx, in.EnvironmentID); err == nil {
+		return nil, preparingInFlight(preparing)
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("deploy: check in-flight deployment: %w", err)
 	}
@@ -504,7 +504,7 @@ func (s *Service) Rollback(ctx context.Context, in RollbackInput) (*RollbackResu
 		Actor:         in.Actor,
 	})
 	if errors.Is(err, journal.ErrRunConflict) {
-		return nil, ErrDeploymentInFlight
+		return nil, s.inFlight(ctx, in.EnvironmentID)
 	}
 	if err != nil {
 		return nil, err
@@ -625,8 +625,8 @@ func (s *Service) Restart(ctx context.Context, in RestartInput) (*RestartResult,
 			return nil, ErrApplicationNotFound
 		}
 	}
-	if _, err := s.st.GetPreparingDeploymentForEnvironment(ctx, in.EnvironmentID); err == nil {
-		return nil, ErrDeploymentInFlight
+	if preparing, err := s.st.GetPreparingDeploymentForEnvironment(ctx, in.EnvironmentID); err == nil {
+		return nil, preparingInFlight(preparing)
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("deploy: check in-flight deployment: %w", err)
 	}
@@ -651,11 +651,15 @@ func (s *Service) Restart(ctx context.Context, in RestartInput) (*RestartResult,
 		Deployment:    encoded,
 	})
 	if errors.Is(err, journal.ErrRunConflict) {
-		return nil, ErrDeploymentInFlight
+		return nil, s.inFlight(ctx, in.EnvironmentID)
 	}
 	if err != nil {
 		return nil, err
 	}
+	// From here on a run exists that only this call can conclude: a client
+	// that disconnects mid-restart must not strand it running.
+	ctx, cancel := detached(ctx)
+	defer cancel()
 
 	// The stamp and the handoff commit together: the kernel adopts the run
 	// for the revision it restarts once the restart exists to roll out.

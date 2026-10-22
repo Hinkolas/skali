@@ -474,8 +474,8 @@ func (s *Service) Open(ctx context.Context, in OpenInput) (*Opened, error) {
 	// The in-flight gate first: with a window already open, every other
 	// verdict (plan, values, capabilities) would mislead. The partial
 	// unique index still backs this against races.
-	if _, err := s.st.GetPreparingDeploymentForEnvironment(ctx, in.EnvironmentID); err == nil {
-		return nil, ErrDeploymentInFlight
+	if preparing, err := s.st.GetPreparingDeploymentForEnvironment(ctx, in.EnvironmentID); err == nil {
+		return nil, preparingInFlight(preparing)
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("deploy: check in-flight deployment: %w", err)
 	}
@@ -545,7 +545,7 @@ func (s *Service) Open(ctx context.Context, in OpenInput) (*Opened, error) {
 		Deployment:       encoded,
 	})
 	if errors.Is(err, journal.ErrRunConflict) {
-		return nil, ErrDeploymentInFlight
+		return nil, s.inFlight(ctx, in.EnvironmentID)
 	}
 	if err != nil {
 		return nil, err
@@ -553,14 +553,32 @@ func (s *Service) Open(ctx context.Context, in OpenInput) (*Opened, error) {
 
 	opened, err := s.openUnderRun(ctx, in, env, run.ID, preview)
 	if err != nil {
-		// The window never opened; the run must not stay running.
-		if finishErr := in.Journal.FailRun(ctx, run.ID, nil, err.Error()); finishErr != nil &&
-			!errors.Is(finishErr, journal.ErrInvalidTransition) {
-			return nil, fmt.Errorf("deploy: close run after failed open: %w (original: %w)", finishErr, err)
-		}
-		return nil, err
+		return nil, s.abandonOpen(ctx, in.Journal, run.ID, err)
 	}
 	return opened, nil
+}
+
+// abandonOpen closes what a failed Open left behind: the window, when its
+// deployment row was already created, and the run either way. It runs
+// detached and bounded, since the failure may well be that the request is
+// gone, and a run left running or a row left preparing would hold the
+// environment until the stale sweep.
+func (s *Service) abandonOpen(ctx context.Context, jsvc *journal.Service, runID uuid.UUID, cause error) error {
+	ctx, cancel := detached(ctx)
+	defer cancel()
+	deployment, err := s.st.GetDeploymentByRunID(ctx, &runID)
+	if err == nil {
+		if err := s.FailDeployment(ctx, deployment.ID, jsvc, cause.Error()); err != nil &&
+			!errors.Is(err, ErrInvalidDeploymentTransition) {
+			return fmt.Errorf("deploy: close deployment after failed open: %w (original: %w)", err, cause)
+		}
+		return cause
+	}
+	if err := jsvc.FailRun(ctx, runID, nil, cause.Error()); err != nil &&
+		!errors.Is(err, journal.ErrInvalidTransition) {
+		return fmt.Errorf("deploy: close run after failed open: %w (original: %w)", err, cause)
+	}
+	return cause
 }
 
 func (s *Service) openUnderRun(ctx context.Context, in OpenInput, env store.Environment, runID uuid.UUID, preview *Preview) (*Opened, error) {

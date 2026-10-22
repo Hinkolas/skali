@@ -435,7 +435,7 @@ func (h *projectsHandlers) delete(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, codeNotFound, "not found")
 		case errors.Is(err, deploy.ErrDeploymentInFlight):
 			writeError(w, http.StatusConflict, codeDeploymentInFlight,
-				"a deployment is in flight in one of the environments; cancel its run or wait for it to finish")
+				inFlightMessage(err, "a deployment is in flight in one of the environments"))
 		case errors.Is(err, deploy.ErrEnvironmentBusy):
 			writeEnvironmentBusy(w)
 		default:

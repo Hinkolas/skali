@@ -199,6 +199,8 @@ func TestDeploymentFlowEndToEnd(t *testing.T) {
 	})
 	require.Equal(t, http.StatusConflict, status)
 	require.Equal(t, "deployment_in_flight", errCode(body))
+	require.Contains(t, errMessage(body), "skali run cancel "+runID,
+		"the refusal names the run holding the environment")
 
 	// The client journals its build below the artifacts subtree.
 	status, body = a.do("POST", "/v1/runs/"+runID+"/steps", token, map[string]any{

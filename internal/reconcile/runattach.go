@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -154,6 +155,36 @@ func (k *Kernel) attachRun(ctx context.Context, state store.GetEnvironmentPassRo
 
 func (a *runAttachment) active() bool  { return a.run != nil }
 func (a *runAttachment) adopted() bool { return a.run != nil && !a.created }
+
+// owned reports whether the pass alone concludes the attached run: one it
+// created, or a reconcile run an interrupted earlier pass left running,
+// which no one else will ever finish. Adopted rollout and teardown runs
+// live on across passes until their work concludes them.
+func (a *runAttachment) owned() bool {
+	return a.run != nil && (a.created || a.run.Kind == "reconcile")
+}
+
+// settleTimeout bounds the journal writes that conclude a run after the
+// pass's own context ended.
+const settleTimeout = 10 * time.Second
+
+// settle concludes a run the pass owns that is still running when the
+// pass returns, on every path: failed with the pass's error, succeeded
+// otherwise, since its work is recorded. It runs detached from the pass's
+// context, which may be what ended the pass: a run left running holds the
+// environment's only operation slot.
+func (a *runAttachment) settle(ctx context.Context, cause error) {
+	if !a.owned() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), settleTimeout)
+	defer cancel()
+	if cause != nil {
+		a.finish(ctx, journal.RunFailed, "reconciliation failed: "+cause.Error())
+		return
+	}
+	a.finish(ctx, journal.RunSucceeded, "")
+}
 
 // redactorFor returns the redactor for a journal write, building it first.
 func (a *runAttachment) redactorFor(ctx context.Context) *redact.Redactor {
