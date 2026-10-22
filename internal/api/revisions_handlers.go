@@ -135,7 +135,8 @@ func (h *revisionsHandlers) putTarget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		RevisionID string `json:"revision_id"`
+		RevisionID       string `json:"revision_id"`
+		AllowDestructive bool   `json:"allow_destructive"`
 	}
 	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, codeBadRequest, err.Error())
@@ -148,10 +149,11 @@ func (h *revisionsHandlers) putTarget(w http.ResponseWriter, r *http.Request) {
 	}
 	user := UserFrom(r.Context())
 	result, err := h.deploy.Rollback(r.Context(), deploy.RollbackInput{
-		EnvironmentID: id,
-		RevisionID:    revisionID,
-		Actor:         user.ID.String(),
-		Journal:       h.journal,
+		EnvironmentID:    id,
+		RevisionID:       revisionID,
+		Actor:            user.ID.String(),
+		Journal:          h.journal,
+		AllowDestructive: req.AllowDestructive,
 	})
 	if err != nil {
 		writeDeployError(r.Context(), w, err)

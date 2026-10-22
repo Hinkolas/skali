@@ -925,6 +925,7 @@ func writeDeployError(ctx context.Context, w http.ResponseWriter, err error) {
 	var unknownLocal *deploy.UnknownLocalApplicationError
 	var invalidIntercept *deploy.InvalidInterceptPortsError
 	var volumeShrink *deploy.VolumeShrinkError
+	var destructiveRollback *deploy.DestructiveRollbackError
 	var transition *deploy.TransitionError
 	var quotaBelowUsage *deploy.BucketQuotaError
 	var usageUnavailable *deploy.BucketUsageUnavailableError
@@ -945,6 +946,8 @@ func writeDeployError(ctx context.Context, w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, codeConflict, "the environment is being deleted")
 	case errors.Is(err, deploy.ErrEnvironmentBusy):
 		writeEnvironmentBusy(w)
+	case errors.As(err, &destructiveRollback):
+		writeError(w, http.StatusConflict, codeDestructiveChange, trimDeployPrefix(destructiveRollback))
 	case errors.Is(err, deploy.ErrDestructiveChange):
 		writeError(w, http.StatusConflict, codeDestructiveChange,
 			"the plan contains destructive changes; review it and explicitly allow them")

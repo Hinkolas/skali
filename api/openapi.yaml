@@ -1583,6 +1583,14 @@ paths:
         the client can attach to, and reconciliation is enqueued
         immediately; the rollout deadline and automatic fallback apply as
         for a deployment.
+
+        A rollback is checked against the active revision as a deployment
+        is: one to a revision that no longer declares a database, bucket,
+        or volume the active revision does is refused with
+        `destructive_change`, naming each change, until
+        `allow_destructive` confirms it. Rolling back to the active
+        revision while a rollout is in flight drops only what that
+        rollout added, as its fallback would, and needs no confirmation.
       tags: [revisions]
       requestBody:
         required: true
@@ -1595,6 +1603,13 @@ paths:
                 revision_id:
                   type: string
                   format: uuid
+                allow_destructive:
+                  type: boolean
+                  default: false
+                  description: |
+                    Confirms a rollback refused with `destructive_change`.
+                    A database or bucket the revision no longer declares
+                    is deleted with its data once the rollback is active.
       responses:
         "200":
           description: Target moved; the rollout continues under the run.
@@ -1627,12 +1642,17 @@ paths:
             the environment for 10 seconds; retry shortly.
             `restore_incomplete`: an incomplete restore holds the
             environment; re-run a restore or accept its data first.
+            `destructive_change`: the rollback drops a database, bucket,
+            or volume the active revision declares; the message names
+            each one. Send `allow_destructive` to confirm it.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "422":
           description: |
             The revision asks for what a deployment may not:
+            `bad_request`: a volume would shrink below its size in the
+            active revision; volumes only grow.
             `unsupported_transition`: the definition changes a live
             database's engine, version, or isolation, or a live bucket's
             visibility or versioning; no confirmation allows it.

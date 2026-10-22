@@ -237,3 +237,31 @@ func TestPromotionFlowEndToEnd(t *testing.T) {
 	require.Nil(t, lastTargets[targetEnv])
 	require.Nil(t, lastTargets[emptyEnv])
 }
+
+// A rollback that drops what the active revision declares is refused with
+// destructive_change, naming it, until allow_destructive confirms it.
+func TestRollbackDestructiveConfirmation(t *testing.T) {
+	a := newTestAPI(t)
+	a.createUser("rollback@example.com", "hunter2hunter2")
+	token := a.login("rollback@example.com", "hunter2hunter2")
+	projectID, envID := a.createEnvironment(t, token)
+
+	volumeless := a.submitDefinition(t, token, projectID, deployAPIManifestNoVolume)
+	candidate := a.stageValues(t, token, envID, volumeless, "rollback-destructive-value")
+	first := a.deployAndActivate(t, token, envID, volumeless, candidate)
+	withVolume := a.submitDefinition(t, token, projectID, deployAPIManifest)
+	second := a.deployAndActivate(t, token, envID, withVolume, "")
+
+	status, body := a.do("PUT", "/v1/environments/"+envID+"/target", token,
+		map[string]any{"revision_id": first})
+	require.Equal(t, http.StatusConflict, status, "%v", body)
+	require.Equal(t, "destructive_change", errCode(body))
+	require.Contains(t, errMessage(body), "applications.web")
+	require.Contains(t, errMessage(body), "deletes persistent volumes: data")
+	require.Equal(t, second, a.targetOf(t, envID).TargetRevisionID.String())
+
+	status, body = a.do("PUT", "/v1/environments/"+envID+"/target", token,
+		map[string]any{"revision_id": first, "allow_destructive": true})
+	require.Equal(t, http.StatusOK, status, "%v", body)
+	require.Equal(t, first, body["target"].(map[string]any)["target_revision_id"])
+}

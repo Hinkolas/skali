@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Hinkolas/skali/internal/deploy"
+	"github.com/Hinkolas/skali/internal/plan"
 )
 
 // Refused stateful transitions reach clients with their own codes and the
@@ -43,4 +44,21 @@ func TestWriteDeployErrorTransitions(t *testing.T) {
 		require.NotContains(t, errMessage(body), "deploy:")
 		require.Contains(t, errMessage(body), tc.service)
 	}
+}
+
+// A refused destructive rollback answers like a destructive deployment,
+// but names what it drops: a rollback has no plan preview to show it.
+func TestWriteDeployErrorDestructiveRollback(t *testing.T) {
+	t.Parallel()
+	recorder := httptest.NewRecorder()
+	writeDeployError(context.Background(), recorder, &deploy.DestructiveRollbackError{Changes: []plan.Change{{
+		Service: "databases.main", Action: plan.ActionRemove, Destructive: true,
+		Detail: "deletes the logical database and its data",
+	}}})
+	require.Equal(t, http.StatusConflict, recorder.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &body))
+	require.Equal(t, "destructive_change", errCode(body))
+	require.Equal(t, "the rollback is destructive: databases.main (deletes the logical database and its data); "+
+		"review it and explicitly allow it", errMessage(body))
 }

@@ -199,11 +199,12 @@ func TestSetTargetSendsRevisionAndDecodesRun(t *testing.T) {
 		var body map[string]string
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
 		require.Equal(t, "rev-1", body["revision_id"])
+		require.NotContains(t, body, "allow_destructive")
 		_, _ = w.Write([]byte(`{"target":{"target_revision_id":"rev-1","active_revision_id":"rev-2","updated_at":"2026-08-01T00:00:00Z"},"run_id":"run-9"}`))
 	}))
 	defer srv.Close()
 
-	result, err := New(srv.URL, "tok", Caller{}).SetTarget(context.Background(), "env-1", "rev-1")
+	result, err := New(srv.URL, "tok", Caller{}).SetTarget(context.Background(), "env-1", "rev-1", false)
 	require.NoError(t, err)
 	require.Equal(t, "run-9", result.RunID)
 	require.Equal(t, "rev-1", *result.Target.TargetRevisionID)

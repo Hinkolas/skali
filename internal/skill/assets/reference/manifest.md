@@ -578,9 +578,11 @@ are refused.
 
 Removing a database or bucket from the manifest destroys its data. The
 plan marks the change as destructive and deploy requires typed
-confirmation. Changing a live bucket's `visibility` or `versioning` is
-also treated as a destructive replacement; quota-only changes update in
-place.
+confirmation; so does a rollback to a revision from before it was added.
+Changing a live database's `engine`, `version`, or `isolation`, or a
+live bucket's `visibility` or `versioning`, is refused outright; no
+confirmation allows it. Quota changes update in place, but a bucket's
+quota cannot drop to or below what it stores.
 
 ## Examples
 

@@ -255,7 +255,7 @@
 
 	function rollback(revisionID: string) {
 		if (!data.env) return;
-		const envId = data.env.id;
+		const { id: envId, name: envName } = data.env;
 		dialog.confirm({
 			title: 'Roll back to this revision?',
 			description:
@@ -263,19 +263,53 @@
 			confirmLabel: 'Roll back',
 			onConfirm: async () => {
 				try {
-					const result = await api.put<{ target: Target; run_id: string }>(
-						`/v1/environments/${envId}/target`,
-						{ revision_id: revisionID }
-					);
-					toast.success('Rollback started');
-					sidepanel.open(RunDetailPanel, { runId: result.run_id }, { label: 'Run details' });
-					await invalidateAll();
+					await setTarget(envId, revisionID, false);
+				} catch (err) {
+					// A rollback that drops a database, bucket, or volume is
+					// refused until it is confirmed as a destructive deploy is:
+					// the environment's name typed back.
+					if (err instanceof ApiError && err.code === 'destructive_change') {
+						confirmDestructiveRollback(envId, envName, revisionID, err.message);
+						return;
+					}
+					toast.error(err instanceof ApiError ? err.message : 'Could not roll back');
+					throw err;
+				}
+			}
+		});
+	}
+
+	function confirmDestructiveRollback(
+		envId: string,
+		envName: string,
+		revisionID: string,
+		reason: string
+	) {
+		dialog.confirm({
+			title: 'This rollback is destructive',
+			description: reason.charAt(0).toUpperCase() + reason.slice(1) + '.',
+			confirmLabel: 'Roll back',
+			variant: 'danger',
+			typeToConfirm: envName,
+			onConfirm: async () => {
+				try {
+					await setTarget(envId, revisionID, true);
 				} catch (err) {
 					toast.error(err instanceof ApiError ? err.message : 'Could not roll back');
 					throw err;
 				}
 			}
 		});
+	}
+
+	async function setTarget(envId: string, revisionID: string, allowDestructive: boolean) {
+		const result = await api.put<{ target: Target; run_id: string }>(
+			`/v1/environments/${envId}/target`,
+			{ revision_id: revisionID, allow_destructive: allowDestructive }
+		);
+		toast.success('Rollback started');
+		sidepanel.open(RunDetailPanel, { runId: result.run_id }, { label: 'Run details' });
+		await invalidateAll();
 	}
 </script>
 
