@@ -285,15 +285,13 @@ func TestDeploymentFlowEndToEnd(t *testing.T) {
 	target := a.targetOf(t, envID)
 	require.Equal(t, revisionID, target.TargetRevisionID.String())
 	require.Nil(t, target.ActiveRevisionID)
-	status, body = a.do("GET", "/v1/runs/"+runID, token, nil)
-	require.Equal(t, http.StatusOK, status)
-	require.Equal(t, "running", body["run"].(map[string]any)["status"],
-		"the kernel, not completion, concludes the run")
 	revisionUUID, err := uuid.Parse(revisionID)
 	require.NoError(t, err)
 	stored, err := a.st.GetRevisionByID(context.Background(), revisionUUID)
 	require.NoError(t, err)
-	promoted := body["run"].(map[string]any)["deployment"].(map[string]any)
+	run := a.awaitRunRevision(t, token, runID)
+	require.Equal(t, "running", run["status"], "the kernel, not completion, concludes the run")
+	promoted := run["deployment"].(map[string]any)
 	require.Equal(t, stored.Checksum, promoted["revision"])
 	require.Equal(t, opened["changes"], promoted["changes"])
 
@@ -336,6 +334,7 @@ func TestDeploymentFlowEndToEnd(t *testing.T) {
 	require.Equal(t, revisionID, a.awaitDeployment(t, token, forcedDeployment)["revision_id"],
 		"the unchanged revision is re-promoted")
 	require.NotNil(t, a.targetOf(t, envID).RestartedAt)
+	a.awaitRunRevision(t, token, forcedRun)
 	a.finishRun(t, forcedRun)
 	a.activate(t, envID)
 	// The run list carries what each run changed: the forced deployment
@@ -379,9 +378,7 @@ func TestDeploymentFlowEndToEnd(t *testing.T) {
 	status, body = a.do("POST", "/v1/deployments/"+secondDeployment+"/complete", token, nil)
 	require.Equal(t, http.StatusAccepted, status, "%v", body)
 	require.NotEqual(t, revisionID, a.awaitDeployment(t, token, secondDeployment)["revision_id"])
-	status, body = a.do("GET", "/v1/runs/"+secondRun, token, nil)
-	require.Equal(t, http.StatusOK, status)
-	valuesOnly := body["run"].(map[string]any)["deployment"].(map[string]any)
+	valuesOnly := a.awaitRunRevision(t, token, secondRun)["deployment"].(map[string]any)
 	require.NotContains(t, valuesOnly, "changes")
 	require.Equal(t, []any{map[string]any{
 		"name": "SESSION_SECRET", "action": "update", "services": []any{"applications.web"},
@@ -494,6 +491,23 @@ func (a *testAPI) awaitDeployment(t *testing.T, token, deploymentID string) map[
 		require.True(t, time.Now().Before(deadline), "deployment %s still preparing", deploymentID)
 		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+// awaitRunRevision polls a deployment's run until it records the revision
+// it promoted, and returns the run. The promotion commits first and the
+// run's document follows right after, so a reader can see the deployment
+// promoted a moment before its run names the revision.
+func (a *testAPI) awaitRunRevision(t *testing.T, token, runID string) map[string]any {
+	t.Helper()
+	var run map[string]any
+	require.Eventually(t, func() bool {
+		status, body := a.do("GET", "/v1/runs/"+runID, token, nil)
+		require.Equal(t, http.StatusOK, status, "%v", body)
+		run = body["run"].(map[string]any)
+		document, _ := run["deployment"].(map[string]any)
+		return document["revision"] != nil
+	}, 10*time.Second, 10*time.Millisecond, "run %s never recorded its revision", runID)
+	return run
 }
 
 // deployAPIManifestNoSecret drops the ${SESSION_SECRET} reference; the
