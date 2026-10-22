@@ -7,6 +7,11 @@ on:
   schedule:
     - cron: "17 6 * * *"
   workflow_dispatch:
+    inputs:
+      images:
+        description: Scan bundled, optional storage, build, and example images on both Linux architectures
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -19,6 +24,8 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+      - name: Keep example scans on the release toolchain
+        run: echo "GOTOOLCHAIN=$(go env GOVERSION)" >> "$GITHUB_ENV"
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./cmd/... ./internal/...
       - name: Audit example modules
         shell: bash
@@ -42,6 +49,53 @@ jobs:
           cache-dependency-path: studio/package-lock.json
       - run: npm ci
       - run: npm audit
+
+  # Images are a larger, explicit pre-release review, not a daily pull of
+  # every optional storage image. Findings fail this job and stay in the
+  # uploaded reports; exceptions belong in a dated review, not an ignore file.
+  images:
+    if: github.event_name == 'workflow_dispatch' && inputs.images
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Install verified Trivy
+        shell: bash
+        run: |
+          work=$(mktemp -d)
+          trap 'rm -rf "$work"' EXIT
+          curl --fail --silent --show-error --location \
+            https://github.com/aquasecurity/trivy/releases/download/v0.76.1/trivy_0.76.1_Linux-64bit.tar.gz \
+            -o "$work/trivy.tar.gz"
+          echo "c7cbe3137fb8a48a17574bede3dd6beb16742d1e9772929940fc90082c39d9c0  $work/trivy.tar.gz" | sha256sum --check
+          tar -xzf "$work/trivy.tar.gz" -C "$work" trivy
+          mkdir -p "$HOME/.local/bin"
+          install "$work/trivy" "$HOME/.local/bin/trivy"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Scan images
+        env:
+          AUDIT_PLATFORMS: linux/${{ matrix.arch }}
+        run: node scripts/audit-images.mjs .cache/dependency-audit/images
+      - name: Preserve inventory, database timestamp, reports, and failures
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: dependency-images-${{ matrix.arch }}
+          path: |
+            .cache/dependency-audit/images/*.json
+            .cache/dependency-audit/images/*.txt
+            .cache/dependency-audit/images/*.log
+          retention-days: 30
 
   website:
     runs-on: ubuntu-latest

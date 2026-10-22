@@ -224,6 +224,13 @@ feed answers again; the last release found stays visible and updatable.
 Version pins for k3s, k3d, CNPG, cert-manager, Longhorn, and Lima live in
 their packages next to their checksums; bump them together.
 
+Before cutting a release, repeat the [dependency review](dependency-review-v0.1.3.md).
+The daily/manual `audit.yml` checks Go and npm advisories separately from
+release CI. Its manual `images=true` input also inventories and scans bundled,
+optional storage, build, and example images on both Linux architectures and
+uploads dated reports. Review findings and record dispositions against the
+actual candidate; a green source scan does not assess third-party images.
+
 ## Layout
 
 ```

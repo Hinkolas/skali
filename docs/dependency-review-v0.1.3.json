@@ -1,0 +1,3874 @@
+{
+  "date": "2026-10-22",
+  "baseCommit": "2912a2b81730ea10b819f63aeb2c9167a1a3163d",
+  "changes": "Studio Vitest and its test dependencies updated from 5.0.0 to 5.0.5. Runtime pins unchanged.",
+  "trivyVersion": "0.76.1",
+  "trivyDB": {
+    "Version": 2,
+    "NextUpdate": "2026-10-23T13:15:26.425424534Z",
+    "UpdatedAt": "2026-10-22T13:15:26.425424764Z",
+    "DownloadedAt": "2026-10-22T17:03:39.632683Z"
+  },
+  "inputs": {
+    "go.mod": "f89453267997e319ba14f1ea326275ecd15d5e516b9f502bfa5f561d6c191d17",
+    "go.sum": "b8344953286b99e433c5ebc947833632cd99af0769068dfed0727252cb35dcba",
+    "studio/package.json": "462c0ba61c35e0b83ccd3073b2ef475695216e48787ab4d0bea94c18586e4fa3",
+    "studio/package-lock.json": "7bc2be8f70858990a894679ab46e73ecf9f478a1e3f3efe9f7947cdd18d0a138",
+    "website/package.json": "b842a5e13073cea603b90c5bdff0ec8ad72518fe678aacccfb082e1e30c0d8f3",
+    "website/package-lock.json": "d23cb6750ca8b98dc9d9a75b0874883c0f05bd169e414a0666c97c5cc34bab10",
+    "build/skalid.release.Dockerfile": "eaee5eb428e3faf873658465fae18130fed5eb573f1cea3739f5208fd636e7ad",
+    "build/skalid.Dockerfile": "d6b167676d9b1d171f3818caeb482512744e6723aef1444dd84836e3897252b4",
+    ".github/mirrored-images.txt": "790da6dd3b32c438db8e08de94d3ff123dce6c366c4cb61c683ceaad0ab95b71",
+    "internal/bundle/bundle.go": "803c16e2eedc5c9ddbbfa5fc37c66f93d6491aad6e22d0fbee08eabd7b33cf18",
+    "internal/installer/installer.go": "7d12c5fd11a321268e3175d8fe60b229fa0b4d64b6b84a3070124a86b27b4de4",
+    "internal/localdev/images.go": "0e433ce4817d9ad1b59a36474990d9d847967ef06fd2ff909c23e1558de74545",
+    "internal/substrate/cnpg/catalog.go": "ce318a1a8718354a3c1bf7a94cd4809e9f597023ad9f1e20d2151c1b480307f2",
+    "internal/substrate/seaweed/seaweed.go": "7095dc38cd59df4d3443a167f0abb6400b7f8f5981b9333974b8d9772c999d46",
+    "examples/deployment-timing/go.mod": "8922a736424704e3d8dbbe65126038a2e608131464df4e15077a16fbae3ac850",
+    "examples/file-sharing/web/go.mod": "4016c852bb3b7b76a22d00e16ec09bd3d4df701d1b0b5f941e4d081175cc9ba6",
+    "examples/guestbook/go.mod": "343699c9690cfe3010f75917bb6bdd3f339de2a962328eb59e6343b487d704af",
+    "examples/hello-world/go.mod": "c2efcc37943a71f69c3fa50a0670b504be100bf8a1945c7b0e1d6ffdda0dce03"
+  },
+  "inventory": [
+    {
+      "ref": "alpine:3.22",
+      "scopes": [
+        "examples"
+      ],
+      "source": "examples/file-sharing/web/deploy/Dockerfile"
+    },
+    {
+      "ref": "alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6",
+      "scopes": [
+        "build"
+      ],
+      "source": "build/skalid.Dockerfile"
+    },
+    {
+      "ref": "chrislusf/seaweedfs:4.39",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.RequiredImages"
+    },
+    {
+      "ref": "docker.io/library/alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6",
+      "scopes": [
+        "build"
+      ],
+      "source": ".github/mirrored-images.txt (same digests as GHCR copies)"
+    },
+    {
+      "ref": "docker.io/library/postgres:17.11@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3",
+      "scopes": [
+        "build"
+      ],
+      "source": ".github/mirrored-images.txt (same digests as GHCR copies)"
+    },
+    {
+      "ref": "docker.io/longhornio/backing-image-manager:v1.12.1",
+      "scopes": [
+        "longhorn"
+      ],
+      "source": "vendored Longhorn manifest (including controller-created images)"
+    },
+    {
+      "ref": "docker.io/longhornio/csi-attacher:v4.12.0",
+      "scopes": [
+        "longhorn"
+      ],
+      "source": "vendored Longhorn manifest (including controller-created images)"
+    },
+    {
+      "ref": "docker.io/longhornio/csi-node-driver-registrar:v2.17.0",
+      "scopes": [
+        "longhorn"
+      ],
+      "source": "vendored Longhorn manifest (including controller-created images)"
+    },
+    {
+      "ref": "docker.io/longhornio/csi-provisioner:v5.3.0",
+      "scopes": [
+        "longhorn"
+      ],
+      "source": "vendored Longhorn manifest (including controller-created images)"
+    },
+    {
+      "ref": "docker.io/longhornio/csi-resizer:v2.2.1",
+      "scopes": [
+        "longhorn"
+      ],
+      "source": "vendored Longhorn manifest (including controller-created images)"
+    },
+    {
+      "ref": "docker.io/longhornio/csi-snapshotter:v8.6.0",
+      "scopes": [
+        "longhorn"
+      ],
+      "source": "vendored Longhorn manifest (including controller-created images)"
+    },
+    {
+      "ref": "docker.io/longhornio/livenessprobe:v2.19.0",
+      "scopes": [
+        "longhorn"
+      ],
+      "source": "vendored Longhorn manifest (including controller-created images)"
+    },
+    {
+      "ref": "docker.io/longhornio/longhorn-engine:v1.12.1",
+      "scopes": [
+        "longhorn"
+      ],
+      "source": "vendored Longhorn manifest (including controller-created images)"
+    },
+    {
+      "ref": "docker.io/longhornio/longhorn-instance-manager:v1.12.1",
+      "scopes": [
+        "longhorn"
+      ],
+      "source": "vendored Longhorn manifest (including controller-created images)"
+    },
+    {
+      "ref": "docker.io/longhornio/longhorn-manager:v1.12.1",
+      "scopes": [
+        "longhorn"
+      ],
+      "source": "vendored Longhorn manifest (including controller-created images)"
+    },
+    {
+      "ref": "docker.io/longhornio/longhorn-share-manager:v1.12.1",
+      "scopes": [
+        "longhorn"
+      ],
+      "source": "vendored Longhorn manifest (including controller-created images)"
+    },
+    {
+      "ref": "docker.io/longhornio/longhorn-ui:v1.12.1",
+      "scopes": [
+        "longhorn"
+      ],
+      "source": "vendored Longhorn manifest (including controller-created images)"
+    },
+    {
+      "ref": "docker.io/longhornio/support-bundle-kit:v0.0.92",
+      "scopes": [
+        "longhorn"
+      ],
+      "source": "vendored Longhorn manifest (including controller-created images)"
+    },
+    {
+      "ref": "docker.io/moby/buildkit:v0.33.1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea",
+      "scopes": [
+        "build"
+      ],
+      "source": ".github/mirrored-images.txt (same digests as GHCR copies)"
+    },
+    {
+      "ref": "docker.io/tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0",
+      "scopes": [
+        "build"
+      ],
+      "source": ".github/mirrored-images.txt (same digests as GHCR copies)"
+    },
+    {
+      "ref": "ghcr.io/cloudnative-pg/cloudnative-pg:1.29.2",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.RequiredImages"
+    },
+    {
+      "ref": "ghcr.io/cloudnative-pg/postgresql:17.9-system-trixie",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.RequiredImages"
+    },
+    {
+      "ref": "ghcr.io/cloudnative-pg/postgresql:18.4-system-trixie",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.RequiredImages"
+    },
+    {
+      "ref": "ghcr.io/hinkolas/mirror/alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6",
+      "scopes": [
+        "build"
+      ],
+      "source": "build/skalid.release.Dockerfile"
+    },
+    {
+      "ref": "golang:1.26-alpine",
+      "scopes": [
+        "examples"
+      ],
+      "source": "examples/deployment-timing/Dockerfile"
+    },
+    {
+      "ref": "golang:1.26.10-alpine",
+      "scopes": [
+        "build"
+      ],
+      "source": "build/skalid.Dockerfile"
+    },
+    {
+      "ref": "node:22-alpine",
+      "scopes": [
+        "build"
+      ],
+      "source": "build/skalid.Dockerfile"
+    },
+    {
+      "ref": "python:3.12-alpine",
+      "scopes": [
+        "examples"
+      ],
+      "source": "examples/dev-loop/Dockerfile"
+    },
+    {
+      "ref": "quay.io/jetstack/cert-manager-acmesolver:v1.21.1",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "vendored cert-manager manifest (including ACME solver)"
+    },
+    {
+      "ref": "quay.io/jetstack/cert-manager-cainjector:v1.21.1",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.RequiredImages"
+    },
+    {
+      "ref": "quay.io/jetstack/cert-manager-controller:v1.21.1",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.RequiredImages"
+    },
+    {
+      "ref": "quay.io/jetstack/cert-manager-webhook:v1.21.1",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.RequiredImages"
+    },
+    {
+      "ref": "rancher/k3s:v1.36.3-k3s1",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.K3sImage (managed hosts install the matching k3s binary)"
+    },
+    {
+      "ref": "rancher/klipper-helm:v0.13.3-build20260727",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.RequiredImages"
+    },
+    {
+      "ref": "rancher/klipper-lb:v0.4.17",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.RequiredImages"
+    },
+    {
+      "ref": "rancher/local-path-provisioner:v0.0.36",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.RequiredImages"
+    },
+    {
+      "ref": "rancher/mirrored-coredns-coredns:1.14.6",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.RequiredImages"
+    },
+    {
+      "ref": "rancher/mirrored-library-busybox:1.37.0",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.RequiredImages"
+    },
+    {
+      "ref": "rancher/mirrored-library-traefik:3.7.8",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.RequiredImages"
+    },
+    {
+      "ref": "rancher/mirrored-metrics-server:v0.9.0",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.RequiredImages"
+    },
+    {
+      "ref": "rancher/mirrored-pause:3.10.2",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.RequiredImages"
+    },
+    {
+      "ref": "registry:2.8.3",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.RequiredImages"
+    }
+  ],
+  "sourceScans": [
+    {
+      "report": "examples-deployment-timing-linux-amd64.jsonl",
+      "sha256": "20bc79fdc90fc3c49a48c63069fd2965aac264a2b2f4f8ee6e7ed07cad623373",
+      "goVersion": "go1.26.10",
+      "database": {
+        "protocol_version": "v1.0.0",
+        "scanner_name": "govulncheck",
+        "scanner_version": "v1.7.0",
+        "db": "https://vuln.go.dev",
+        "db_last_modified": "2026-10-21T00:27:29Z",
+        "go_version": "go1.26.10",
+        "scan_level": "symbol",
+        "scan_mode": "source"
+      },
+      "moduleAdvisories": [
+        "GO-2026-5932",
+        "GO-2026-6603",
+        "GO-2026-6610",
+        "GO-2026-6611",
+        "GO-2026-6612",
+        "GO-2026-6617"
+      ],
+      "packageAdvisories": [],
+      "symbolAdvisories": []
+    },
+    {
+      "report": "examples-deployment-timing-linux-arm64.jsonl",
+      "sha256": "d766d0ee2356e20d19a61400ea777dc67c43b3f0d05586cd4917f7dcca4e2b0b",
+      "goVersion": "go1.26.10",
+      "database": {
+        "protocol_version": "v1.0.0",
+        "scanner_name": "govulncheck",
+        "scanner_version": "v1.7.0",
+        "db": "https://vuln.go.dev",
+        "db_last_modified": "2026-10-21T00:27:29Z",
+        "go_version": "go1.26.10",
+        "scan_level": "symbol",
+        "scan_mode": "source"
+      },
+      "moduleAdvisories": [
+        "GO-2026-5932",
+        "GO-2026-6603",
+        "GO-2026-6610",
+        "GO-2026-6611",
+        "GO-2026-6612",
+        "GO-2026-6617"
+      ],
+      "packageAdvisories": [],
+      "symbolAdvisories": []
+    },
+    {
+      "report": "examples-file-sharing-web-linux-amd64.jsonl",
+      "sha256": "c67f21c0679a3c4657e094f0c45726da4560fd5e713d74d8db5a9bb820208759",
+      "goVersion": "go1.26.10",
+      "database": {
+        "protocol_version": "v1.0.0",
+        "scanner_name": "govulncheck",
+        "scanner_version": "v1.7.0",
+        "db": "https://vuln.go.dev",
+        "db_last_modified": "2026-10-21T00:27:29Z",
+        "go_version": "go1.26.10",
+        "scan_level": "symbol",
+        "scan_mode": "source"
+      },
+      "moduleAdvisories": [
+        "GO-2026-5932",
+        "GO-2026-6603",
+        "GO-2026-6610",
+        "GO-2026-6611",
+        "GO-2026-6612",
+        "GO-2026-6617"
+      ],
+      "packageAdvisories": [],
+      "symbolAdvisories": []
+    },
+    {
+      "report": "examples-file-sharing-web-linux-arm64.jsonl",
+      "sha256": "81d617e680f96d8a76c8a6e2334a90340a13f5d8fe6a191845740e1029be7b87",
+      "goVersion": "go1.26.10",
+      "database": {
+        "protocol_version": "v1.0.0",
+        "scanner_name": "govulncheck",
+        "scanner_version": "v1.7.0",
+        "db": "https://vuln.go.dev",
+        "db_last_modified": "2026-10-21T00:27:29Z",
+        "go_version": "go1.26.10",
+        "scan_level": "symbol",
+        "scan_mode": "source"
+      },
+      "moduleAdvisories": [
+        "GO-2026-5932",
+        "GO-2026-6603",
+        "GO-2026-6610",
+        "GO-2026-6611",
+        "GO-2026-6612",
+        "GO-2026-6617"
+      ],
+      "packageAdvisories": [],
+      "symbolAdvisories": []
+    },
+    {
+      "report": "examples-guestbook-linux-amd64.jsonl",
+      "sha256": "57423676e45ffae7f7f4353d0b4d670248bbc2631bb116af1942c73a3ce25388",
+      "goVersion": "go1.26.10",
+      "database": {
+        "protocol_version": "v1.0.0",
+        "scanner_name": "govulncheck",
+        "scanner_version": "v1.7.0",
+        "db": "https://vuln.go.dev",
+        "db_last_modified": "2026-10-21T00:27:29Z",
+        "go_version": "go1.26.10",
+        "scan_level": "symbol",
+        "scan_mode": "source"
+      },
+      "moduleAdvisories": [
+        "GO-2026-5932",
+        "GO-2026-6603",
+        "GO-2026-6610",
+        "GO-2026-6611",
+        "GO-2026-6612",
+        "GO-2026-6617"
+      ],
+      "packageAdvisories": [],
+      "symbolAdvisories": []
+    },
+    {
+      "report": "examples-guestbook-linux-arm64.jsonl",
+      "sha256": "0a9ce13b45fa767ff3191fa0dee0b643813655697677958aa7da7f43fbc236d5",
+      "goVersion": "go1.26.10",
+      "database": {
+        "protocol_version": "v1.0.0",
+        "scanner_name": "govulncheck",
+        "scanner_version": "v1.7.0",
+        "db": "https://vuln.go.dev",
+        "db_last_modified": "2026-10-21T00:27:29Z",
+        "go_version": "go1.26.10",
+        "scan_level": "symbol",
+        "scan_mode": "source"
+      },
+      "moduleAdvisories": [
+        "GO-2026-5932",
+        "GO-2026-6603",
+        "GO-2026-6610",
+        "GO-2026-6611",
+        "GO-2026-6612",
+        "GO-2026-6617"
+      ],
+      "packageAdvisories": [],
+      "symbolAdvisories": []
+    },
+    {
+      "report": "examples-hello-world-linux-amd64.jsonl",
+      "sha256": "855ae2b3a18f7270f801aab5211b7e607656cff47aa8629dc13b2218a66edf8d",
+      "goVersion": "go1.26.10",
+      "database": {
+        "protocol_version": "v1.0.0",
+        "scanner_name": "govulncheck",
+        "scanner_version": "v1.7.0",
+        "db": "https://vuln.go.dev",
+        "db_last_modified": "2026-10-21T00:27:29Z",
+        "go_version": "go1.26.10",
+        "scan_level": "symbol",
+        "scan_mode": "source"
+      },
+      "moduleAdvisories": [],
+      "packageAdvisories": [],
+      "symbolAdvisories": []
+    },
+    {
+      "report": "examples-hello-world-linux-arm64.jsonl",
+      "sha256": "855ae2b3a18f7270f801aab5211b7e607656cff47aa8629dc13b2218a66edf8d",
+      "goVersion": "go1.26.10",
+      "database": {
+        "protocol_version": "v1.0.0",
+        "scanner_name": "govulncheck",
+        "scanner_version": "v1.7.0",
+        "db": "https://vuln.go.dev",
+        "db_last_modified": "2026-10-21T00:27:29Z",
+        "go_version": "go1.26.10",
+        "scan_level": "symbol",
+        "scan_mode": "source"
+      },
+      "moduleAdvisories": [],
+      "packageAdvisories": [],
+      "symbolAdvisories": []
+    },
+    {
+      "report": "go-main-darwin-amd64.jsonl",
+      "sha256": "f45d69234e90afb0b9b4a9c477a3dd97befd8ed61e4070cc10d039910e0fb332",
+      "goVersion": "go1.26.10",
+      "database": {
+        "protocol_version": "v1.0.0",
+        "scanner_name": "govulncheck",
+        "scanner_version": "v1.7.0",
+        "db": "https://vuln.go.dev",
+        "db_last_modified": "2026-10-21T00:27:29Z",
+        "go_version": "go1.26.10",
+        "scan_level": "symbol",
+        "scan_mode": "source"
+      },
+      "moduleAdvisories": [
+        "GO-2026-5932"
+      ],
+      "packageAdvisories": [],
+      "symbolAdvisories": []
+    },
+    {
+      "report": "go-main-darwin-arm64.jsonl",
+      "sha256": "7b861b88a13a7c4a474175a3c6acb301637a8881abbd4dbc197bc81d86c58dc7",
+      "goVersion": "go1.26.10",
+      "database": {
+        "protocol_version": "v1.0.0",
+        "scanner_name": "govulncheck",
+        "scanner_version": "v1.7.0",
+        "db": "https://vuln.go.dev",
+        "db_last_modified": "2026-10-21T00:27:29Z",
+        "go_version": "go1.26.10",
+        "scan_level": "symbol",
+        "scan_mode": "source"
+      },
+      "moduleAdvisories": [
+        "GO-2026-5932"
+      ],
+      "packageAdvisories": [],
+      "symbolAdvisories": []
+    },
+    {
+      "report": "go-main-linux-amd64.jsonl",
+      "sha256": "bbf54c22afe94ff15d534c5ddf64c3aa55a907c8c4dde5eeef4bba947271f3bb",
+      "goVersion": "go1.26.10",
+      "database": {
+        "protocol_version": "v1.0.0",
+        "scanner_name": "govulncheck",
+        "scanner_version": "v1.7.0",
+        "db": "https://vuln.go.dev",
+        "db_last_modified": "2026-10-21T00:27:29Z",
+        "go_version": "go1.26.10",
+        "scan_level": "symbol",
+        "scan_mode": "source"
+      },
+      "moduleAdvisories": [
+        "GO-2026-5932"
+      ],
+      "packageAdvisories": [],
+      "symbolAdvisories": []
+    },
+    {
+      "report": "go-main-linux-arm64.jsonl",
+      "sha256": "79775069733f073625437ec184809bcc9310651472d01e1f05e9356a2214a15a",
+      "goVersion": "go1.26.10",
+      "database": {
+        "protocol_version": "v1.0.0",
+        "scanner_name": "govulncheck",
+        "scanner_version": "v1.7.0",
+        "db": "https://vuln.go.dev",
+        "db_last_modified": "2026-10-21T00:27:29Z",
+        "go_version": "go1.26.10",
+        "scan_level": "symbol",
+        "scan_mode": "source"
+      },
+      "moduleAdvisories": [
+        "GO-2026-5932"
+      ],
+      "packageAdvisories": [],
+      "symbolAdvisories": []
+    }
+  ],
+  "binaryScans": [
+    {
+      "report": "installer-tools/k3d-darwin-amd64.jsonl",
+      "sha256": "a19233a557a58cc5c2c3cb2b11f0d44c144ac0f3d9a00508ed82b5bf06b79356",
+      "goVersion": "go1.26.3",
+      "database": {
+        "protocol_version": "v1.0.0",
+        "scanner_name": "govulncheck",
+        "scanner_version": "v1.7.0",
+        "db": "https://vuln.go.dev",
+        "db_last_modified": "2026-10-21T00:27:29Z",
+        "scan_level": "symbol",
+        "scan_mode": "binary"
+      },
+      "moduleAdvisories": [
+        "GO-2026-4610",
+        "GO-2026-4883",
+        "GO-2026-4887",
+        "GO-2026-4970",
+        "GO-2026-5026",
+        "GO-2026-5037",
+        "GO-2026-5038",
+        "GO-2026-5039",
+        "GO-2026-5617",
+        "GO-2026-5668",
+        "GO-2026-5746",
+        "GO-2026-5841",
+        "GO-2026-5856",
+        "GO-2026-5942",
+        "GO-2026-5970",
+        "GO-2026-5972",
+        "GO-2026-6061",
+        "GO-2026-6088",
+        "GO-2026-6089",
+        "GO-2026-6090",
+        "GO-2026-6091",
+        "GO-2026-6179",
+        "GO-2026-6180",
+        "GO-2026-6218",
+        "GO-2026-6253",
+        "GO-2026-6348",
+        "GO-2026-6441",
+        "GO-2026-6443",
+        "GO-2026-6505",
+        "GO-2026-6599",
+        "GO-2026-6600",
+        "GO-2026-6603",
+        "GO-2026-6605",
+        "GO-2026-6607",
+        "GO-2026-6608",
+        "GO-2026-6609",
+        "GO-2026-6610",
+        "GO-2026-6611",
+        "GO-2026-6612",
+        "GO-2026-6613",
+        "GO-2026-6617",
+        "GO-2026-6629",
+        "GO-2026-6686",
+        "GO-2026-6809"
+      ],
+      "packageAdvisories": [
+        "GO-2026-4610",
+        "GO-2026-4883",
+        "GO-2026-4887",
+        "GO-2026-4970",
+        "GO-2026-5026",
+        "GO-2026-5037",
+        "GO-2026-5038",
+        "GO-2026-5039",
+        "GO-2026-5617",
+        "GO-2026-5668",
+        "GO-2026-5746",
+        "GO-2026-5841",
+        "GO-2026-5856",
+        "GO-2026-5942",
+        "GO-2026-5970",
+        "GO-2026-5972",
+        "GO-2026-6061",
+        "GO-2026-6088",
+        "GO-2026-6089",
+        "GO-2026-6090",
+        "GO-2026-6091",
+        "GO-2026-6179",
+        "GO-2026-6180",
+        "GO-2026-6218",
+        "GO-2026-6348",
+        "GO-2026-6441",
+        "GO-2026-6443",
+        "GO-2026-6599",
+        "GO-2026-6600",
+        "GO-2026-6603",
+        "GO-2026-6605",
+        "GO-2026-6607",
+        "GO-2026-6608",
+        "GO-2026-6609",
+        "GO-2026-6610",
+        "GO-2026-6611",
+        "GO-2026-6612",
+        "GO-2026-6613",
+        "GO-2026-6617",
+        "GO-2026-6629",
+        "GO-2026-6686",
+        "GO-2026-6809"
+      ],
+      "symbolAdvisories": [
+        "GO-2026-4610",
+        "GO-2026-4883",
+        "GO-2026-4887",
+        "GO-2026-4970",
+        "GO-2026-5026",
+        "GO-2026-5037",
+        "GO-2026-5038",
+        "GO-2026-5039",
+        "GO-2026-5617",
+        "GO-2026-5668",
+        "GO-2026-5746",
+        "GO-2026-5841",
+        "GO-2026-5856",
+        "GO-2026-5942",
+        "GO-2026-5970",
+        "GO-2026-5972",
+        "GO-2026-6061",
+        "GO-2026-6088",
+        "GO-2026-6089",
+        "GO-2026-6090",
+        "GO-2026-6091",
+        "GO-2026-6179",
+        "GO-2026-6180",
+        "GO-2026-6218",
+        "GO-2026-6348",
+        "GO-2026-6441",
+        "GO-2026-6443",
+        "GO-2026-6599",
+        "GO-2026-6600",
+        "GO-2026-6603",
+        "GO-2026-6605",
+        "GO-2026-6607",
+        "GO-2026-6608",
+        "GO-2026-6609",
+        "GO-2026-6610",
+        "GO-2026-6611",
+        "GO-2026-6612",
+        "GO-2026-6613",
+        "GO-2026-6617",
+        "GO-2026-6629",
+        "GO-2026-6686",
+        "GO-2026-6809"
+      ],
+      "toolVersion": "5.9.0",
+      "binarySHA256": "b4aabc37534f95b9c764e7823f2df923f50d57600837aa60a06266cce47db732"
+    },
+    {
+      "report": "installer-tools/k3d-darwin-arm64.jsonl",
+      "sha256": "fcaa19988d8bf362c81458581d31c37016e51e5f41dc211b2599fc38a844ef2e",
+      "goVersion": "go1.26.3",
+      "database": {
+        "protocol_version": "v1.0.0",
+        "scanner_name": "govulncheck",
+        "scanner_version": "v1.7.0",
+        "db": "https://vuln.go.dev",
+        "db_last_modified": "2026-10-21T00:27:29Z",
+        "scan_level": "symbol",
+        "scan_mode": "binary"
+      },
+      "moduleAdvisories": [
+        "GO-2026-4610",
+        "GO-2026-4883",
+        "GO-2026-4887",
+        "GO-2026-4970",
+        "GO-2026-5026",
+        "GO-2026-5037",
+        "GO-2026-5038",
+        "GO-2026-5039",
+        "GO-2026-5617",
+        "GO-2026-5668",
+        "GO-2026-5746",
+        "GO-2026-5841",
+        "GO-2026-5856",
+        "GO-2026-5942",
+        "GO-2026-5970",
+        "GO-2026-5972",
+        "GO-2026-6061",
+        "GO-2026-6088",
+        "GO-2026-6089",
+        "GO-2026-6090",
+        "GO-2026-6091",
+        "GO-2026-6179",
+        "GO-2026-6180",
+        "GO-2026-6218",
+        "GO-2026-6253",
+        "GO-2026-6348",
+        "GO-2026-6441",
+        "GO-2026-6443",
+        "GO-2026-6505",
+        "GO-2026-6599",
+        "GO-2026-6600",
+        "GO-2026-6603",
+        "GO-2026-6605",
+        "GO-2026-6607",
+        "GO-2026-6608",
+        "GO-2026-6609",
+        "GO-2026-6610",
+        "GO-2026-6611",
+        "GO-2026-6612",
+        "GO-2026-6613",
+        "GO-2026-6617",
+        "GO-2026-6629",
+        "GO-2026-6686",
+        "GO-2026-6809"
+      ],
+      "packageAdvisories": [
+        "GO-2026-4610",
+        "GO-2026-4883",
+        "GO-2026-4887",
+        "GO-2026-4970",
+        "GO-2026-5026",
+        "GO-2026-5037",
+        "GO-2026-5038",
+        "GO-2026-5039",
+        "GO-2026-5617",
+        "GO-2026-5668",
+        "GO-2026-5746",
+        "GO-2026-5841",
+        "GO-2026-5856",
+        "GO-2026-5942",
+        "GO-2026-5970",
+        "GO-2026-5972",
+        "GO-2026-6061",
+        "GO-2026-6088",
+        "GO-2026-6089",
+        "GO-2026-6090",
+        "GO-2026-6091",
+        "GO-2026-6179",
+        "GO-2026-6180",
+        "GO-2026-6218",
+        "GO-2026-6348",
+        "GO-2026-6441",
+        "GO-2026-6443",
+        "GO-2026-6599",
+        "GO-2026-6600",
+        "GO-2026-6603",
+        "GO-2026-6605",
+        "GO-2026-6607",
+        "GO-2026-6608",
+        "GO-2026-6609",
+        "GO-2026-6610",
+        "GO-2026-6611",
+        "GO-2026-6612",
+        "GO-2026-6613",
+        "GO-2026-6617",
+        "GO-2026-6629",
+        "GO-2026-6686",
+        "GO-2026-6809"
+      ],
+      "symbolAdvisories": [
+        "GO-2026-4610",
+        "GO-2026-4883",
+        "GO-2026-4887",
+        "GO-2026-4970",
+        "GO-2026-5026",
+        "GO-2026-5037",
+        "GO-2026-5038",
+        "GO-2026-5039",
+        "GO-2026-5617",
+        "GO-2026-5668",
+        "GO-2026-5746",
+        "GO-2026-5841",
+        "GO-2026-5856",
+        "GO-2026-5942",
+        "GO-2026-5970",
+        "GO-2026-5972",
+        "GO-2026-6061",
+        "GO-2026-6088",
+        "GO-2026-6089",
+        "GO-2026-6090",
+        "GO-2026-6091",
+        "GO-2026-6179",
+        "GO-2026-6180",
+        "GO-2026-6218",
+        "GO-2026-6348",
+        "GO-2026-6441",
+        "GO-2026-6443",
+        "GO-2026-6599",
+        "GO-2026-6600",
+        "GO-2026-6603",
+        "GO-2026-6605",
+        "GO-2026-6607",
+        "GO-2026-6608",
+        "GO-2026-6609",
+        "GO-2026-6610",
+        "GO-2026-6611",
+        "GO-2026-6612",
+        "GO-2026-6613",
+        "GO-2026-6617",
+        "GO-2026-6629",
+        "GO-2026-6686",
+        "GO-2026-6809"
+      ],
+      "toolVersion": "5.9.0",
+      "binarySHA256": "fe106541d5d0a3f18debcd4d432a16f8c0ce3e6ddc06f8fbb6f696a122313e00"
+    },
+    {
+      "report": "installer-tools/k3d-linux-amd64.jsonl",
+      "sha256": "71df84d1f7e6f361fd1df46a6587cc2617ce1edc1bdc69fabe82e28e47f133dc",
+      "goVersion": "go1.26.3",
+      "database": {
+        "protocol_version": "v1.0.0",
+        "scanner_name": "govulncheck",
+        "scanner_version": "v1.7.0",
+        "db": "https://vuln.go.dev",
+        "db_last_modified": "2026-10-21T00:27:29Z",
+        "scan_level": "symbol",
+        "scan_mode": "binary"
+      },
+      "moduleAdvisories": [
+        "GO-2026-4610",
+        "GO-2026-4883",
+        "GO-2026-4887",
+        "GO-2026-4970",
+        "GO-2026-5026",
+        "GO-2026-5037",
+        "GO-2026-5038",
+        "GO-2026-5039",
+        "GO-2026-5617",
+        "GO-2026-5668",
+        "GO-2026-5746",
+        "GO-2026-5841",
+        "GO-2026-5856",
+        "GO-2026-5942",
+        "GO-2026-5970",
+        "GO-2026-5972",
+        "GO-2026-6061",
+        "GO-2026-6088",
+        "GO-2026-6089",
+        "GO-2026-6090",
+        "GO-2026-6091",
+        "GO-2026-6179",
+        "GO-2026-6180",
+        "GO-2026-6218",
+        "GO-2026-6253",
+        "GO-2026-6348",
+        "GO-2026-6441",
+        "GO-2026-6443",
+        "GO-2026-6505",
+        "GO-2026-6599",
+        "GO-2026-6600",
+        "GO-2026-6603",
+        "GO-2026-6605",
+        "GO-2026-6607",
+        "GO-2026-6608",
+        "GO-2026-6609",
+        "GO-2026-6610",
+        "GO-2026-6611",
+        "GO-2026-6612",
+        "GO-2026-6613",
+        "GO-2026-6617",
+        "GO-2026-6629",
+        "GO-2026-6686",
+        "GO-2026-6809"
+      ],
+      "packageAdvisories": [
+        "GO-2026-4610",
+        "GO-2026-4883",
+        "GO-2026-4887",
+        "GO-2026-4970",
+        "GO-2026-5026",
+        "GO-2026-5037",
+        "GO-2026-5038",
+        "GO-2026-5039",
+        "GO-2026-5617",
+        "GO-2026-5668",
+        "GO-2026-5746",
+        "GO-2026-5841",
+        "GO-2026-5856",
+        "GO-2026-5942",
+        "GO-2026-5970",
+        "GO-2026-5972",
+        "GO-2026-6061",
+        "GO-2026-6088",
+        "GO-2026-6089",
+        "GO-2026-6090",
+        "GO-2026-6091",
+        "GO-2026-6179",
+        "GO-2026-6180",
+        "GO-2026-6218",
+        "GO-2026-6348",
+        "GO-2026-6441",
+        "GO-2026-6443",
+        "GO-2026-6599",
+        "GO-2026-6600",
+        "GO-2026-6603",
+        "GO-2026-6605",
+        "GO-2026-6607",
+        "GO-2026-6608",
+        "GO-2026-6609",
+        "GO-2026-6610",
+        "GO-2026-6611",
+        "GO-2026-6612",
+        "GO-2026-6613",
+        "GO-2026-6617",
+        "GO-2026-6629",
+        "GO-2026-6686",
+        "GO-2026-6809"
+      ],
+      "symbolAdvisories": [
+        "GO-2026-4610",
+        "GO-2026-4883",
+        "GO-2026-4887",
+        "GO-2026-4970",
+        "GO-2026-5026",
+        "GO-2026-5037",
+        "GO-2026-5038",
+        "GO-2026-5039",
+        "GO-2026-5617",
+        "GO-2026-5668",
+        "GO-2026-5746",
+        "GO-2026-5841",
+        "GO-2026-5856",
+        "GO-2026-5942",
+        "GO-2026-5970",
+        "GO-2026-5972",
+        "GO-2026-6061",
+        "GO-2026-6088",
+        "GO-2026-6089",
+        "GO-2026-6090",
+        "GO-2026-6091",
+        "GO-2026-6179",
+        "GO-2026-6180",
+        "GO-2026-6218",
+        "GO-2026-6348",
+        "GO-2026-6441",
+        "GO-2026-6443",
+        "GO-2026-6599",
+        "GO-2026-6600",
+        "GO-2026-6603",
+        "GO-2026-6605",
+        "GO-2026-6607",
+        "GO-2026-6608",
+        "GO-2026-6609",
+        "GO-2026-6610",
+        "GO-2026-6611",
+        "GO-2026-6612",
+        "GO-2026-6613",
+        "GO-2026-6617",
+        "GO-2026-6629",
+        "GO-2026-6686",
+        "GO-2026-6809"
+      ],
+      "toolVersion": "5.9.0",
+      "binarySHA256": "06d8f25bc3a971c4eb29e0ff08429b180402db0f4dec838c9eac427e296800a0"
+    },
+    {
+      "report": "installer-tools/k3d-linux-arm64.jsonl",
+      "sha256": "e72e5ff82e38a0a99aa51d923e0facf1370bd6fe2aecccafaf9fc27d81210ea4",
+      "goVersion": "go1.26.3",
+      "database": {
+        "protocol_version": "v1.0.0",
+        "scanner_name": "govulncheck",
+        "scanner_version": "v1.7.0",
+        "db": "https://vuln.go.dev",
+        "db_last_modified": "2026-10-21T00:27:29Z",
+        "scan_level": "symbol",
+        "scan_mode": "binary"
+      },
+      "moduleAdvisories": [
+        "GO-2026-4610",
+        "GO-2026-4883",
+        "GO-2026-4887",
+        "GO-2026-4970",
+        "GO-2026-5026",
+        "GO-2026-5037",
+        "GO-2026-5038",
+        "GO-2026-5039",
+        "GO-2026-5617",
+        "GO-2026-5668",
+        "GO-2026-5746",
+        "GO-2026-5841",
+        "GO-2026-5856",
+        "GO-2026-5942",
+        "GO-2026-5970",
+        "GO-2026-5972",
+        "GO-2026-6061",
+        "GO-2026-6088",
+        "GO-2026-6089",
+        "GO-2026-6090",
+        "GO-2026-6091",
+        "GO-2026-6179",
+        "GO-2026-6180",
+        "GO-2026-6218",
+        "GO-2026-6253",
+        "GO-2026-6348",
+        "GO-2026-6441",
+        "GO-2026-6443",
+        "GO-2026-6505",
+        "GO-2026-6599",
+        "GO-2026-6600",
+        "GO-2026-6603",
+        "GO-2026-6605",
+        "GO-2026-6607",
+        "GO-2026-6608",
+        "GO-2026-6609",
+        "GO-2026-6610",
+        "GO-2026-6611",
+        "GO-2026-6612",
+        "GO-2026-6613",
+        "GO-2026-6617",
+        "GO-2026-6629",
+        "GO-2026-6686",
+        "GO-2026-6809"
+      ],
+      "packageAdvisories": [
+        "GO-2026-4610",
+        "GO-2026-4883",
+        "GO-2026-4887",
+        "GO-2026-4970",
+        "GO-2026-5026",
+        "GO-2026-5037",
+        "GO-2026-5038",
+        "GO-2026-5039",
+        "GO-2026-5617",
+        "GO-2026-5668",
+        "GO-2026-5746",
+        "GO-2026-5841",
+        "GO-2026-5856",
+        "GO-2026-5942",
+        "GO-2026-5970",
+        "GO-2026-5972",
+        "GO-2026-6061",
+        "GO-2026-6088",
+        "GO-2026-6089",
+        "GO-2026-6090",
+        "GO-2026-6091",
+        "GO-2026-6179",
+        "GO-2026-6180",
+        "GO-2026-6218",
+        "GO-2026-6348",
+        "GO-2026-6441",
+        "GO-2026-6443",
+        "GO-2026-6599",
+        "GO-2026-6600",
+        "GO-2026-6603",
+        "GO-2026-6605",
+        "GO-2026-6607",
+        "GO-2026-6608",
+        "GO-2026-6609",
+        "GO-2026-6610",
+        "GO-2026-6611",
+        "GO-2026-6612",
+        "GO-2026-6613",
+        "GO-2026-6617",
+        "GO-2026-6629",
+        "GO-2026-6686",
+        "GO-2026-6809"
+      ],
+      "symbolAdvisories": [
+        "GO-2026-4610",
+        "GO-2026-4883",
+        "GO-2026-4887",
+        "GO-2026-4970",
+        "GO-2026-5026",
+        "GO-2026-5037",
+        "GO-2026-5038",
+        "GO-2026-5039",
+        "GO-2026-5617",
+        "GO-2026-5668",
+        "GO-2026-5746",
+        "GO-2026-5841",
+        "GO-2026-5856",
+        "GO-2026-5942",
+        "GO-2026-5970",
+        "GO-2026-5972",
+        "GO-2026-6061",
+        "GO-2026-6088",
+        "GO-2026-6089",
+        "GO-2026-6090",
+        "GO-2026-6091",
+        "GO-2026-6179",
+        "GO-2026-6180",
+        "GO-2026-6218",
+        "GO-2026-6348",
+        "GO-2026-6441",
+        "GO-2026-6443",
+        "GO-2026-6599",
+        "GO-2026-6600",
+        "GO-2026-6603",
+        "GO-2026-6605",
+        "GO-2026-6607",
+        "GO-2026-6608",
+        "GO-2026-6609",
+        "GO-2026-6610",
+        "GO-2026-6611",
+        "GO-2026-6612",
+        "GO-2026-6613",
+        "GO-2026-6617",
+        "GO-2026-6629",
+        "GO-2026-6686",
+        "GO-2026-6809"
+      ],
+      "toolVersion": "5.9.0",
+      "binarySHA256": "03cde5cf23e6e8e67de5a039ecf26e5b85aca82fba3e5d13dadf904cd218a250"
+    },
+    {
+      "report": "installer-tools/limactl-arm64.jsonl",
+      "sha256": "4e00760d70482574461de727a77cff0bdadca55997ad1d1db68f5d4df164f7f6",
+      "goVersion": "go1.26.5",
+      "database": {
+        "protocol_version": "v1.0.0",
+        "scanner_name": "govulncheck",
+        "scanner_version": "v1.7.0",
+        "db": "https://vuln.go.dev",
+        "db_last_modified": "2026-10-21T00:27:29Z",
+        "scan_level": "symbol",
+        "scan_mode": "binary"
+      },
+      "moduleAdvisories": [
+        "GO-2026-5026",
+        "GO-2026-5932",
+        "GO-2026-5942",
+        "GO-2026-5972",
+        "GO-2026-6061",
+        "GO-2026-6088",
+        "GO-2026-6089",
+        "GO-2026-6090",
+        "GO-2026-6091",
+        "GO-2026-6179",
+        "GO-2026-6180",
+        "GO-2026-6218",
+        "GO-2026-6237",
+        "GO-2026-6303",
+        "GO-2026-6348",
+        "GO-2026-6354",
+        "GO-2026-6355",
+        "GO-2026-6441",
+        "GO-2026-6443",
+        "GO-2026-6599",
+        "GO-2026-6600",
+        "GO-2026-6603",
+        "GO-2026-6605",
+        "GO-2026-6607",
+        "GO-2026-6608",
+        "GO-2026-6609",
+        "GO-2026-6610",
+        "GO-2026-6611",
+        "GO-2026-6612",
+        "GO-2026-6613",
+        "GO-2026-6617",
+        "GO-2026-6629",
+        "GO-2026-6809"
+      ],
+      "packageAdvisories": [
+        "GO-2026-5026",
+        "GO-2026-5932",
+        "GO-2026-5942",
+        "GO-2026-5972",
+        "GO-2026-6061",
+        "GO-2026-6088",
+        "GO-2026-6089",
+        "GO-2026-6090",
+        "GO-2026-6091",
+        "GO-2026-6179",
+        "GO-2026-6180",
+        "GO-2026-6218",
+        "GO-2026-6237",
+        "GO-2026-6303",
+        "GO-2026-6348",
+        "GO-2026-6354",
+        "GO-2026-6355",
+        "GO-2026-6441",
+        "GO-2026-6443",
+        "GO-2026-6599",
+        "GO-2026-6600",
+        "GO-2026-6603",
+        "GO-2026-6605",
+        "GO-2026-6607",
+        "GO-2026-6608",
+        "GO-2026-6609",
+        "GO-2026-6610",
+        "GO-2026-6611",
+        "GO-2026-6612",
+        "GO-2026-6613",
+        "GO-2026-6617",
+        "GO-2026-6629",
+        "GO-2026-6809"
+      ],
+      "symbolAdvisories": [
+        "GO-2026-5026",
+        "GO-2026-5932",
+        "GO-2026-5942",
+        "GO-2026-5972",
+        "GO-2026-6061",
+        "GO-2026-6088",
+        "GO-2026-6089",
+        "GO-2026-6090",
+        "GO-2026-6091",
+        "GO-2026-6179",
+        "GO-2026-6180",
+        "GO-2026-6218",
+        "GO-2026-6237",
+        "GO-2026-6303",
+        "GO-2026-6348",
+        "GO-2026-6354",
+        "GO-2026-6355",
+        "GO-2026-6441",
+        "GO-2026-6443",
+        "GO-2026-6599",
+        "GO-2026-6600",
+        "GO-2026-6603",
+        "GO-2026-6605",
+        "GO-2026-6607",
+        "GO-2026-6608",
+        "GO-2026-6609",
+        "GO-2026-6610",
+        "GO-2026-6611",
+        "GO-2026-6612",
+        "GO-2026-6613",
+        "GO-2026-6617",
+        "GO-2026-6629",
+        "GO-2026-6809"
+      ],
+      "toolVersion": "2.2.0",
+      "binarySHA256": "f19a4fca3875e1017a5285672be4a62699c1e55918fb6a7afce86a14199e10d9"
+    },
+    {
+      "report": "installer-tools/limactl-x86_64.jsonl",
+      "sha256": "60aa7a729856e707516bfdd68746e7ab2f22b1f15d4eb5f2821139446e0bb313",
+      "goVersion": "go1.26.5",
+      "database": {
+        "protocol_version": "v1.0.0",
+        "scanner_name": "govulncheck",
+        "scanner_version": "v1.7.0",
+        "db": "https://vuln.go.dev",
+        "db_last_modified": "2026-10-21T00:27:29Z",
+        "scan_level": "symbol",
+        "scan_mode": "binary"
+      },
+      "moduleAdvisories": [
+        "GO-2026-5026",
+        "GO-2026-5932",
+        "GO-2026-5942",
+        "GO-2026-5972",
+        "GO-2026-6061",
+        "GO-2026-6088",
+        "GO-2026-6089",
+        "GO-2026-6090",
+        "GO-2026-6091",
+        "GO-2026-6179",
+        "GO-2026-6180",
+        "GO-2026-6218",
+        "GO-2026-6237",
+        "GO-2026-6303",
+        "GO-2026-6348",
+        "GO-2026-6354",
+        "GO-2026-6355",
+        "GO-2026-6441",
+        "GO-2026-6443",
+        "GO-2026-6599",
+        "GO-2026-6600",
+        "GO-2026-6603",
+        "GO-2026-6605",
+        "GO-2026-6607",
+        "GO-2026-6608",
+        "GO-2026-6609",
+        "GO-2026-6610",
+        "GO-2026-6611",
+        "GO-2026-6612",
+        "GO-2026-6613",
+        "GO-2026-6617",
+        "GO-2026-6629",
+        "GO-2026-6809"
+      ],
+      "packageAdvisories": [
+        "GO-2026-5026",
+        "GO-2026-5932",
+        "GO-2026-5942",
+        "GO-2026-5972",
+        "GO-2026-6061",
+        "GO-2026-6088",
+        "GO-2026-6089",
+        "GO-2026-6090",
+        "GO-2026-6091",
+        "GO-2026-6179",
+        "GO-2026-6180",
+        "GO-2026-6218",
+        "GO-2026-6237",
+        "GO-2026-6303",
+        "GO-2026-6348",
+        "GO-2026-6354",
+        "GO-2026-6355",
+        "GO-2026-6441",
+        "GO-2026-6443",
+        "GO-2026-6599",
+        "GO-2026-6600",
+        "GO-2026-6603",
+        "GO-2026-6605",
+        "GO-2026-6607",
+        "GO-2026-6608",
+        "GO-2026-6609",
+        "GO-2026-6610",
+        "GO-2026-6611",
+        "GO-2026-6612",
+        "GO-2026-6613",
+        "GO-2026-6617",
+        "GO-2026-6629",
+        "GO-2026-6809"
+      ],
+      "symbolAdvisories": [
+        "GO-2026-5026",
+        "GO-2026-5932",
+        "GO-2026-5942",
+        "GO-2026-5972",
+        "GO-2026-6061",
+        "GO-2026-6088",
+        "GO-2026-6089",
+        "GO-2026-6090",
+        "GO-2026-6091",
+        "GO-2026-6179",
+        "GO-2026-6180",
+        "GO-2026-6218",
+        "GO-2026-6237",
+        "GO-2026-6303",
+        "GO-2026-6348",
+        "GO-2026-6354",
+        "GO-2026-6355",
+        "GO-2026-6441",
+        "GO-2026-6443",
+        "GO-2026-6599",
+        "GO-2026-6600",
+        "GO-2026-6603",
+        "GO-2026-6605",
+        "GO-2026-6607",
+        "GO-2026-6608",
+        "GO-2026-6609",
+        "GO-2026-6610",
+        "GO-2026-6611",
+        "GO-2026-6612",
+        "GO-2026-6613",
+        "GO-2026-6617",
+        "GO-2026-6629",
+        "GO-2026-6809"
+      ],
+      "toolVersion": "2.2.0",
+      "binarySHA256": "a02801d546fe8f3d59fe0a8b7d8831c2e4acec06a0c61cce0badb4e781be3535"
+    },
+    {
+      "report": "goreleaser-binary.jsonl",
+      "sha256": "16017b29e4139153674efa944da9fb76279e4c5b3ed33acbb0d8fc947d3cec06",
+      "goVersion": "go1.27.2",
+      "database": {
+        "protocol_version": "v1.0.0",
+        "scanner_name": "govulncheck",
+        "scanner_version": "v1.7.0",
+        "db": "https://vuln.go.dev",
+        "db_last_modified": "2026-10-21T00:27:29Z",
+        "scan_level": "symbol",
+        "scan_mode": "binary"
+      },
+      "moduleAdvisories": [
+        "GO-2026-5932",
+        "GO-2026-6225",
+        "GO-2026-6603",
+        "GO-2026-6610",
+        "GO-2026-6611",
+        "GO-2026-6612",
+        "GO-2026-6617",
+        "GO-2026-6809"
+      ],
+      "packageAdvisories": [
+        "GO-2026-5932",
+        "GO-2026-6225",
+        "GO-2026-6603",
+        "GO-2026-6610",
+        "GO-2026-6611",
+        "GO-2026-6612",
+        "GO-2026-6617",
+        "GO-2026-6809"
+      ],
+      "symbolAdvisories": [
+        "GO-2026-5932",
+        "GO-2026-6225",
+        "GO-2026-6603",
+        "GO-2026-6610",
+        "GO-2026-6611",
+        "GO-2026-6612",
+        "GO-2026-6617",
+        "GO-2026-6809"
+      ],
+      "toolVersion": "2.18.3 (local Homebrew)",
+      "binarySHA256": "d0929a343679d8e4944fa34163334a3641e806b7b8ec9bc727442001be2334a4"
+    },
+    {
+      "report": "sqlc-binary.jsonl",
+      "sha256": "060f1c3618c8f7181b851da1452412aa450e06d270e6554588acc241e0a41ede",
+      "goVersion": "go1.26.9",
+      "database": {
+        "protocol_version": "v1.0.0",
+        "scanner_name": "govulncheck",
+        "scanner_version": "v1.7.0",
+        "db": "https://vuln.go.dev",
+        "db_last_modified": "2026-10-21T00:27:29Z",
+        "scan_level": "symbol",
+        "scan_mode": "binary"
+      },
+      "moduleAdvisories": [
+        "GO-2025-4116",
+        "GO-2025-4134",
+        "GO-2025-4135",
+        "GO-2026-4440",
+        "GO-2026-4441",
+        "GO-2026-4503",
+        "GO-2026-4762",
+        "GO-2026-4771",
+        "GO-2026-4772",
+        "GO-2026-4918",
+        "GO-2026-5004",
+        "GO-2026-5005",
+        "GO-2026-5006",
+        "GO-2026-5013",
+        "GO-2026-5014",
+        "GO-2026-5015",
+        "GO-2026-5016",
+        "GO-2026-5017",
+        "GO-2026-5018",
+        "GO-2026-5019",
+        "GO-2026-5020",
+        "GO-2026-5021",
+        "GO-2026-5023",
+        "GO-2026-5025",
+        "GO-2026-5026",
+        "GO-2026-5027",
+        "GO-2026-5028",
+        "GO-2026-5029",
+        "GO-2026-5030",
+        "GO-2026-5033",
+        "GO-2026-5932",
+        "GO-2026-5942",
+        "GO-2026-5970",
+        "GO-2026-6061",
+        "GO-2026-6094",
+        "GO-2026-6303",
+        "GO-2026-6348",
+        "GO-2026-6354",
+        "GO-2026-6355",
+        "GO-2026-6441",
+        "GO-2026-6443",
+        "GO-2026-6603",
+        "GO-2026-6610",
+        "GO-2026-6611",
+        "GO-2026-6612",
+        "GO-2026-6617",
+        "GO-2026-6629",
+        "GO-2026-6809"
+      ],
+      "packageAdvisories": [
+        "GO-2026-4503",
+        "GO-2026-4762",
+        "GO-2026-4771",
+        "GO-2026-4772",
+        "GO-2026-4918",
+        "GO-2026-5004",
+        "GO-2026-5026",
+        "GO-2026-5970",
+        "GO-2026-6061",
+        "GO-2026-6094",
+        "GO-2026-6348",
+        "GO-2026-6443",
+        "GO-2026-6603",
+        "GO-2026-6610",
+        "GO-2026-6611",
+        "GO-2026-6612",
+        "GO-2026-6617",
+        "GO-2026-6629",
+        "GO-2026-6809"
+      ],
+      "symbolAdvisories": [
+        "GO-2026-4762",
+        "GO-2026-4771",
+        "GO-2026-5004",
+        "GO-2026-5970",
+        "GO-2026-6061",
+        "GO-2026-6348",
+        "GO-2026-6443",
+        "GO-2026-6603",
+        "GO-2026-6611",
+        "GO-2026-6612",
+        "GO-2026-6617",
+        "GO-2026-6629",
+        "GO-2026-6809"
+      ],
+      "toolVersion": "1.30.0 (local)",
+      "binarySHA256": "49c172fa268e5ba3f4911e2ef000be1fd4a63eabc9efa2ca00a04ed375230761"
+    }
+  ],
+  "imageScans": [
+    {
+      "ref": "alpine:3.22",
+      "scopes": [
+        "examples"
+      ],
+      "source": "examples/file-sharing/web/deploy/Dockerfile",
+      "platform": "linux/amd64",
+      "report": "images/0-linux-amd64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "alpine@sha256:d406446bc05b82480756ce8f1287964d28768c23955fa9480d2a74a2eae7a654"
+      ],
+      "imageID": "sha256:24ab38714e948bd49d24d566e97c1c104b63f85c2e642685e72393b37cfb9862",
+      "os": {
+        "Family": "alpine",
+        "Name": "3.22.7"
+      },
+      "counts": {},
+      "reportSHA256": "d3f4714546c366c7462f1dc14fa4c46d2abd297f2d898486952256278c4bc313",
+      "actualPlatform": "linux/amd64"
+    },
+    {
+      "ref": "alpine:3.22",
+      "scopes": [
+        "examples"
+      ],
+      "source": "examples/file-sharing/web/deploy/Dockerfile",
+      "platform": "linux/arm64",
+      "report": "images/0-linux-arm64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "alpine@sha256:d406446bc05b82480756ce8f1287964d28768c23955fa9480d2a74a2eae7a654"
+      ],
+      "imageID": "sha256:f28fb2fa6085390a967d9b74491b91c53cf00dec45bf1c7defa6aae11a52e519",
+      "os": {
+        "Family": "alpine",
+        "Name": "3.22.7"
+      },
+      "counts": {},
+      "reportSHA256": "65efc1c18a5b73933736b4e42c5f3e0123747e5e26d93b7b3602a8ad465f292a",
+      "actualPlatform": "linux/arm64"
+    },
+    {
+      "ref": "alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6",
+      "scopes": [
+        "build"
+      ],
+      "source": "build/skalid.Dockerfile",
+      "platform": "linux/amd64",
+      "report": "images/1-linux-amd64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "alpine@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6"
+      ],
+      "imageID": "sha256:320994c3b997e2ec6433f717f153e108023c5bec8fefa8d76b83451d16d05ea8",
+      "os": {
+        "Family": "alpine",
+        "Name": "3.24.2"
+      },
+      "counts": {
+        "UNKNOWN": 2,
+        "MEDIUM": 1
+      },
+      "reportSHA256": "6cc28fc1691c4c07e8c70e620d9e9781a12131f993dec3b1b9f2f796a1c41325",
+      "actualPlatform": "linux/amd64"
+    },
+    {
+      "ref": "alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6",
+      "scopes": [
+        "build"
+      ],
+      "source": "build/skalid.Dockerfile",
+      "platform": "linux/arm64",
+      "report": "images/1-linux-arm64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "alpine@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6"
+      ],
+      "imageID": "sha256:33bee74c45f307e3268adc2010c0f55c48e7a6041e12cd12432bb1a46e498e43",
+      "os": {
+        "Family": "alpine",
+        "Name": "3.24.2"
+      },
+      "counts": {
+        "UNKNOWN": 2,
+        "MEDIUM": 1
+      },
+      "reportSHA256": "6ad2630046b615605b95857b23f6c109f2b377fc74b89787483b25d4c34b531b",
+      "actualPlatform": "linux/arm64"
+    },
+    {
+      "ref": "chrislusf/seaweedfs:4.39",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.RequiredImages",
+      "platform": "linux/amd64",
+      "report": "images/2-linux-amd64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "chrislusf/seaweedfs@sha256:c7d6c721b30ae711db766bbbfd40192776e263d4e51e22f57baef7bef93c12c6"
+      ],
+      "imageID": "sha256:7f4cc28771728ed1cc0640638198d3f14cd41119a38a0b83a9d8552c1eb247e3",
+      "os": {
+        "Family": "alpine",
+        "Name": "3.24.1"
+      },
+      "counts": {
+        "MEDIUM": 28,
+        "LOW": 28,
+        "UNKNOWN": 5,
+        "HIGH": 23
+      },
+      "reportSHA256": "77c9db91d2c2cf290b724f2ff5491819a9507528f86281e067fbe834f33e9ba1",
+      "actualPlatform": "linux/amd64"
+    },
+    {
+      "ref": "chrislusf/seaweedfs:4.39",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.RequiredImages",
+      "platform": "linux/arm64",
+      "report": "images/2-linux-arm64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "chrislusf/seaweedfs@sha256:c7d6c721b30ae711db766bbbfd40192776e263d4e51e22f57baef7bef93c12c6"
+      ],
+      "imageID": "sha256:dbc44905880b231eff3adc1f74d3577468b406c7a3414679f9729eaa2385e191",
+      "os": {
+        "Family": "alpine",
+        "Name": "3.24.1"
+      },
+      "counts": {
+        "MEDIUM": 28,
+        "LOW": 28,
+        "UNKNOWN": 5,
+        "HIGH": 23
+      },
+      "reportSHA256": "96867b6b6c6bbb49802a7f42ecd7e4df4bd5995e6257dcf5b3cd33883149ad1b",
+      "actualPlatform": "linux/arm64"
+    },
+    {
+      "ref": "docker.io/library/alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6",
+      "scopes": [
+        "build"
+      ],
+      "source": ".github/mirrored-images.txt (same digests as GHCR copies)",
+      "platform": "linux/amd64",
+      "report": "images/3-linux-amd64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "alpine@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6"
+      ],
+      "imageID": "sha256:320994c3b997e2ec6433f717f153e108023c5bec8fefa8d76b83451d16d05ea8",
+      "os": {
+        "Family": "alpine",
+        "Name": "3.24.2"
+      },
+      "counts": {
+        "UNKNOWN": 2,
+        "MEDIUM": 1
+      },
+      "reportSHA256": "bd91a253b0f0e005cb99ed478409061f283eed6bc560dfe2d6f3f3fd6c28a633",
+      "actualPlatform": "linux/amd64"
+    },
+    {
+      "ref": "docker.io/library/alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6",
+      "scopes": [
+        "build"
+      ],
+      "source": ".github/mirrored-images.txt (same digests as GHCR copies)",
+      "platform": "linux/arm64",
+      "report": "images/3-linux-arm64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "alpine@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6"
+      ],
+      "imageID": "sha256:33bee74c45f307e3268adc2010c0f55c48e7a6041e12cd12432bb1a46e498e43",
+      "os": {
+        "Family": "alpine",
+        "Name": "3.24.2"
+      },
+      "counts": {
+        "UNKNOWN": 2,
+        "MEDIUM": 1
+      },
+      "reportSHA256": "47435cb0b65f67bae215018b1cfd1a7cf6770cf239bc38324e032b6e1fa452d3",
+      "actualPlatform": "linux/arm64"
+    },
+    {
+      "ref": "docker.io/library/postgres:17.11@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3",
+      "scopes": [
+        "build"
+      ],
+      "source": ".github/mirrored-images.txt (same digests as GHCR copies)",
+      "platform": "linux/amd64",
+      "report": "images/4-linux-amd64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "postgres@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3"
+      ],
+      "imageID": "sha256:327daa8fae7178d61f93142f146b098467b345e10997b9eb79f63bd58e5c8f3c",
+      "os": {
+        "Family": "debian",
+        "Name": "13.7"
+      },
+      "counts": {
+        "LOW": 141,
+        "HIGH": 86,
+        "MEDIUM": 140,
+        "UNKNOWN": 9,
+        "CRITICAL": 2
+      },
+      "reportSHA256": "e4c7c63c392c312e0b6efb67fe6e9dc58bef309f054fd5c8537c648ac379140d",
+      "actualPlatform": "linux/amd64"
+    },
+    {
+      "ref": "docker.io/library/postgres:17.11@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3",
+      "scopes": [
+        "build"
+      ],
+      "source": ".github/mirrored-images.txt (same digests as GHCR copies)",
+      "platform": "linux/arm64",
+      "report": "images/4-linux-arm64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "postgres@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3"
+      ],
+      "imageID": "sha256:a470461db3d4079fb4cb545328a6ef7c7d1ffc33e6981f5d3e2cfda1634d297e",
+      "os": {
+        "Family": "debian",
+        "Name": "13.7"
+      },
+      "counts": {
+        "LOW": 141,
+        "HIGH": 86,
+        "MEDIUM": 140,
+        "UNKNOWN": 9,
+        "CRITICAL": 2
+      },
+      "reportSHA256": "0544eb4001eab33423bdf3a8a0b13c0410f9b7e4a3af961590c27ef00725b5d7",
+      "actualPlatform": "linux/arm64"
+    },
+    {
+      "ref": "docker.io/longhornio/backing-image-manager:v1.12.1",
+      "scopes": [
+        "longhorn"
+      ],
+      "source": "vendored Longhorn manifest (including controller-created images)",
+      "platform": "linux/amd64",
+      "report": "images/5-linux-amd64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "longhornio/backing-image-manager@sha256:dfb9452e4190fb80e39c7976a0036ac0ca314c05328b67952f8c165cbb4dabf3"
+      ],
+      "imageID": "sha256:bdcb28a5bd6cbd18fbf8045efe2f10fa134ebdae0aefe296f3339cefdad864cd",
+      "os": {
+        "Family": "sles",
+        "Name": "15.7"
+      },
+      "counts": {
+        "UNKNOWN": 4,
+        "MEDIUM": 30,
+        "HIGH": 37,
+        "CRITICAL": 1,
+        "LOW": 1
+      },
+      "reportSHA256": "96b23b8353dcc5679f7901df97411b11026fb58d2db7352154627a0c200e9345",
+      "actualPlatform": "linux/amd64"
+    },
+    {
+      "ref": "docker.io/longhornio/backing-image-manager:v1.12.1",
+      "scopes": [
+        "longhorn"
+      ],
+      "source": "vendored Longhorn manifest (including controller-created images)",
+      "platform": "linux/arm64",
+      "report": "images/5-linux-arm64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "longhornio/backing-image-manager@sha256:dfb9452e4190fb80e39c7976a0036ac0ca314c05328b67952f8c165cbb4dabf3"
+      ],
+      "imageID": "sha256:2490bb170794b3ddf36cbb4da973f594497b4424bbfbcdceb143565775f18807",
+      "os": {
+        "Family": "sles",
+        "Name": "15.7"
+      },
+      "counts": {
+        "UNKNOWN": 4,
+        "MEDIUM": 30,
+        "HIGH": 37,
+        "CRITICAL": 1,
+        "LOW": 1
+      },
+      "reportSHA256": "0cd9c1b89fde5a2265b432da40d4673edd8aae7b19698ad2dae49f88327cfd5c",
+      "actualPlatform": "linux/arm64"
+    },
+    {
+      "ref": "docker.io/longhornio/csi-attacher:v4.12.0",
+      "scopes": [
+        "longhorn"
+      ],
+      "source": "vendored Longhorn manifest (including controller-created images)",
+      "platform": "linux/amd64",
+      "report": "images/6-linux-amd64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "longhornio/csi-attacher@sha256:a814aa4784197116983ea13e376fc691e000a390de9d0b9fca2bc4a2fb7c4a1f"
+      ],
+      "imageID": "sha256:7272884ab4c3e4b672210d2839d599f38af7977c46b1c30594e81ce568b1967f",
+      "os": {
+        "Family": "debian",
+        "Name": "13.5"
+      },
+      "counts": {
+        "MEDIUM": 26,
+        "LOW": 4,
+        "HIGH": 35,
+        "UNKNOWN": 1
+      },
+      "reportSHA256": "c95362fbd112a2caaef063c97aeeffb21c5695e10287067ebb707252b4be517a",
+      "actualPlatform": "linux/amd64"
+    },
+    {
+      "ref": "docker.io/longhornio/csi-attacher:v4.12.0",
+      "scopes": [
+        "longhorn"
+      ],
+      "source": "vendored Longhorn manifest (including controller-created images)",
+      "platform": "linux/arm64",
+      "report": "images/6-linux-arm64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "longhornio/csi-attacher@sha256:a814aa4784197116983ea13e376fc691e000a390de9d0b9fca2bc4a2fb7c4a1f"
+      ],
+      "imageID": "sha256:350ee4ecfc365de622033f50c3d45ed10341ab3f7e785d840387c986bbde9a1b",
+      "os": {
+        "Family": "debian",
+        "Name": "13.5"
+      },
+      "counts": {
+        "MEDIUM": 26,
+        "LOW": 4,
+        "HIGH": 35,
+        "UNKNOWN": 1
+      },
+      "reportSHA256": "287756fb388372c905cf70eafe5134b33b86ac7c096463e5e8fee0dad15af544",
+      "actualPlatform": "linux/arm64"
+    },
+    {
+      "ref": "docker.io/longhornio/csi-node-driver-registrar:v2.17.0",
+      "scopes": [
+        "longhorn"
+      ],
+      "source": "vendored Longhorn manifest (including controller-created images)",
+      "platform": "linux/amd64",
+      "report": "images/7-linux-amd64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "longhornio/csi-node-driver-registrar@sha256:29f7cfd519008fe8f8dff5e79db43f70d65c43a89c08f1bafbb199ca90df79f0"
+      ],
+      "imageID": "sha256:905ecc40d0b09c1ccfe82596e1996bf8285346ef31be259080e7277429116337",
+      "os": {
+        "Family": "debian",
+        "Name": "13.5"
+      },
+      "counts": {
+        "HIGH": 25,
+        "MEDIUM": 19,
+        "LOW": 1
+      },
+      "reportSHA256": "58fe370fbc9961101010f09c3d3c6c06fe3c12c07511b5989d012617602620cc",
+      "actualPlatform": "linux/amd64"
+    },
+    {
+      "ref": "docker.io/longhornio/csi-node-driver-registrar:v2.17.0",
+      "scopes": [
+        "longhorn"
+      ],
+      "source": "vendored Longhorn manifest (including controller-created images)",
+      "platform": "linux/arm64",
+      "report": "images/7-linux-arm64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "longhornio/csi-node-driver-registrar@sha256:29f7cfd519008fe8f8dff5e79db43f70d65c43a89c08f1bafbb199ca90df79f0"
+      ],
+      "imageID": "sha256:b98ccb75f056aed6106d123450a93b3b89362ff36d8d5fd4a36d84f4f0e20d04",
+      "os": {
+        "Family": "debian",
+        "Name": "13.5"
+      },
+      "counts": {
+        "HIGH": 25,
+        "MEDIUM": 19,
+        "LOW": 1
+      },
+      "reportSHA256": "00e8704ffee8c3af6b51bc2d40dd975acb0c3cddfb9b55d0e387402143a7cc5e",
+      "actualPlatform": "linux/arm64"
+    },
+    {
+      "ref": "docker.io/longhornio/csi-provisioner:v5.3.0",
+      "scopes": [
+        "longhorn"
+      ],
+      "source": "vendored Longhorn manifest (including controller-created images)",
+      "platform": "linux/amd64",
+      "report": "images/8-linux-amd64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "longhornio/csi-provisioner@sha256:1bbb7b11d8087130e722e3249f364d0ab49ee3545e847c2f299e87b7e1ce5c4f"
+      ],
+      "imageID": "sha256:656e8e61e9219130a42109638faec39251f8e9d048107bce4d019ee3ce85b215",
+      "os": {
+        "Family": "debian",
+        "Name": "12.11"
+      },
+      "counts": {
+        "UNKNOWN": 2,
+        "HIGH": 37,
+        "MEDIUM": 45,
+        "CRITICAL": 2,
+        "LOW": 3
+      },
+      "reportSHA256": "244e6fc5b47412887d066b7ee9031fdc59ccb91c576a67da8227acfc9837f350",
+      "actualPlatform": "linux/amd64"
+    },
+    {
+      "ref": "docker.io/longhornio/csi-provisioner:v5.3.0",
+      "scopes": [
+        "longhorn"
+      ],
+      "source": "vendored Longhorn manifest (including controller-created images)",
+      "platform": "linux/arm64",
+      "report": "images/8-linux-arm64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "longhornio/csi-provisioner@sha256:1bbb7b11d8087130e722e3249f364d0ab49ee3545e847c2f299e87b7e1ce5c4f"
+      ],
+      "imageID": "sha256:7ca7eb6f3a56740a332e3e2b4719da845863a3182b0b3a257b2c53942627841f",
+      "os": {
+        "Family": "debian",
+        "Name": "12.11"
+      },
+      "counts": {
+        "UNKNOWN": 2,
+        "HIGH": 37,
+        "MEDIUM": 45,
+        "CRITICAL": 2,
+        "LOW": 3
+      },
+      "reportSHA256": "8365083a228401dd3d627ea4e5376a51f30aad325a2af87bcb8740fba01f4709",
+      "actualPlatform": "linux/arm64"
+    },
+    {
+      "ref": "docker.io/longhornio/csi-resizer:v2.2.1",
+      "scopes": [
+        "longhorn"
+      ],
+      "source": "vendored Longhorn manifest (including controller-created images)",
+      "platform": "linux/amd64",
+      "report": "images/9-linux-amd64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "longhornio/csi-resizer@sha256:63d0aef25114d4a682b25afa6d9623a3cfcc19aca910269124408476bbe2c6fd"
+      ],
+      "imageID": "sha256:e30b98ca11fe0d51eda866e73efe55a547a49b2879f505a090382e4aa9ce430c",
+      "os": {
+        "Family": "debian",
+        "Name": "13.5"
+      },
+      "counts": {
+        "MEDIUM": 19,
+        "LOW": 4,
+        "HIGH": 24,
+        "UNKNOWN": 1
+      },
+      "reportSHA256": "7ec87fb7fed105d2b5db26cae7599238c1db5c21cc128440ec0a1f202217bc3a",
+      "actualPlatform": "linux/amd64"
+    },
+    {
+      "ref": "docker.io/longhornio/csi-resizer:v2.2.1",
+      "scopes": [
+        "longhorn"
+      ],
+      "source": "vendored Longhorn manifest (including controller-created images)",
+      "platform": "linux/arm64",
+      "report": "images/9-linux-arm64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "longhornio/csi-resizer@sha256:63d0aef25114d4a682b25afa6d9623a3cfcc19aca910269124408476bbe2c6fd"
+      ],
+      "imageID": "sha256:8f2146124139d530cd10aaf6c39dfdbbf8fde537d95533c7fe13e1b732223229",
+      "os": {
+        "Family": "debian",
+        "Name": "13.5"
+      },
+      "counts": {
+        "MEDIUM": 19,
+        "LOW": 4,
+        "HIGH": 24,
+        "UNKNOWN": 1
+      },
+      "reportSHA256": "c19436cc791c20d323a84b7a27b280564beb35f9fc1b14199c0e30181806e611",
+      "actualPlatform": "linux/arm64"
+    },
+    {
+      "ref": "docker.io/longhornio/csi-snapshotter:v8.6.0",
+      "scopes": [
+        "longhorn"
+      ],
+      "source": "vendored Longhorn manifest (including controller-created images)",
+      "platform": "linux/amd64",
+      "report": "images/10-linux-amd64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "longhornio/csi-snapshotter@sha256:2bca9ac55170efa61dc50e5cc8d9550373db2e3e5161d82d3fdaac5c25150360"
+      ],
+      "imageID": "sha256:12ee5bdc35931a5d53924f29a2b19db18f7c935b94003668d11cae010148696a",
+      "os": {
+        "Family": "debian",
+        "Name": "13.5"
+      },
+      "counts": {
+        "MEDIUM": 22,
+        "LOW": 4,
+        "HIGH": 26,
+        "UNKNOWN": 1
+      },
+      "reportSHA256": "7b83ce7a005b8cf88f349a4fa32086af970cbe3f7261b4dda34a138707ceaba8",
+      "actualPlatform": "linux/amd64"
+    },
+    {
+      "ref": "docker.io/longhornio/csi-snapshotter:v8.6.0",
+      "scopes": [
+        "longhorn"
+      ],
+      "source": "vendored Longhorn manifest (including controller-created images)",
+      "platform": "linux/arm64",
+      "report": "images/10-linux-arm64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "longhornio/csi-snapshotter@sha256:2bca9ac55170efa61dc50e5cc8d9550373db2e3e5161d82d3fdaac5c25150360"
+      ],
+      "imageID": "sha256:66489b2fbece3e7c32f2a3f65adce8eb6b10e23f33baf9480eea594cb87a2eb1",
+      "os": {
+        "Family": "debian",
+        "Name": "13.5"
+      },
+      "counts": {
+        "MEDIUM": 22,
+        "LOW": 4,
+        "HIGH": 26,
+        "UNKNOWN": 1
+      },
+      "reportSHA256": "a8e1f9201d57a547f7f743da946367132571641c28d2709e0bd1d61ea160cda3",
+      "actualPlatform": "linux/arm64"
+    },
+    {
+      "ref": "docker.io/longhornio/livenessprobe:v2.19.0",
+      "scopes": [
+        "longhorn"
+      ],
+      "source": "vendored Longhorn manifest (including controller-created images)",
+      "platform": "linux/amd64",
+      "report": "images/11-linux-amd64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "longhornio/livenessprobe@sha256:d0cb76b565ba9d36da0dc2b38e2b6a49a0ae4fe067b03086110682f32c600318"
+      ],
+      "imageID": "sha256:b6d35c6d5906de641322e3e440847ce219111a7ad5df72f0b2c6e15562c2ca9b",
+      "os": {
+        "Family": "debian",
+        "Name": "13.5"
+      },
+      "counts": {
+        "HIGH": 25,
+        "MEDIUM": 19,
+        "LOW": 1
+      },
+      "reportSHA256": "20d90baaa9510da74201a211be73e1d9969df1157bb7c9ecfa5cdbd8b52dc33c",
+      "actualPlatform": "linux/amd64"
+    },
+    {
+      "ref": "docker.io/longhornio/livenessprobe:v2.19.0",
+      "scopes": [
+        "longhorn"
+      ],
+      "source": "vendored Longhorn manifest (including controller-created images)",
+      "platform": "linux/arm64",
+      "report": "images/11-linux-arm64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "longhornio/livenessprobe@sha256:d0cb76b565ba9d36da0dc2b38e2b6a49a0ae4fe067b03086110682f32c600318"
+      ],
+      "imageID": "sha256:702feb92f34854bc56800397349124db6c4483fe59c43fe3e45adfd5140b2745",
+      "os": {
+        "Family": "debian",
+        "Name": "13.5"
+      },
+      "counts": {
+        "HIGH": 25,
+        "MEDIUM": 19,
+        "LOW": 1
+      },
+      "reportSHA256": "694eba250ce673e77ead7393be0105dc2c51a02ba3876ec98fd8dbb3e5fbd2fa",
+      "actualPlatform": "linux/arm64"
+    },
+    {
+      "ref": "docker.io/longhornio/longhorn-engine:v1.12.1",
+      "scopes": [
+        "longhorn"
+      ],
+      "source": "vendored Longhorn manifest (including controller-created images)",
+      "platform": "linux/amd64",
+      "report": "images/12-linux-amd64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "longhornio/longhorn-engine@sha256:9b1b720b56df6612c9589cbc156acbca6419fa61de818d05db7226b0722f2868"
+      ],
+      "imageID": "sha256:de209443eb6b86d95ffd3447eb55366f7b48ba01fe416bb5803402fdc2c71889",
+      "os": {
+        "Family": "sles",
+        "Name": "15.7"
+      },
+      "counts": {
+        "UNKNOWN": 4,
+        "MEDIUM": 53,
+        "HIGH": 69,
+        "CRITICAL": 1,
+        "LOW": 3
+      },
+      "reportSHA256": "b9b4152e0dbb1b9d1549830e5083b275282cd6349d3f27f5b5f4db3e8d03269f",
+      "actualPlatform": "linux/amd64"
+    },
+    {
+      "ref": "docker.io/longhornio/longhorn-engine:v1.12.1",
+      "scopes": [
+        "longhorn"
+      ],
+      "source": "vendored Longhorn manifest (including controller-created images)",
+      "platform": "linux/arm64",
+      "report": "images/12-linux-arm64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "longhornio/longhorn-engine@sha256:9b1b720b56df6612c9589cbc156acbca6419fa61de818d05db7226b0722f2868"
+      ],
+      "imageID": "sha256:914e5bcdd3d649c1a0508189f4c4048ea2e52f1f09b9fb60153b0d8a049e66bb",
+      "os": {
+        "Family": "sles",
+        "Name": "15.7"
+      },
+      "counts": {
+        "UNKNOWN": 4,
+        "MEDIUM": 53,
+        "HIGH": 69,
+        "CRITICAL": 1,
+        "LOW": 3
+      },
+      "reportSHA256": "30fe524807e6bc792237ad5a7953df2f24cbb02fa57b921ba95603025d3e7ed2",
+      "actualPlatform": "linux/arm64"
+    },
+    {
+      "ref": "docker.io/longhornio/longhorn-instance-manager:v1.12.1",
+      "scopes": [
+        "longhorn"
+      ],
+      "source": "vendored Longhorn manifest (including controller-created images)",
+      "platform": "linux/amd64",
+      "report": "images/13-linux-amd64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "longhornio/longhorn-instance-manager@sha256:b255f3279dd9d830ea153e9369928646dee519fd853036388926dddb5c66094b"
+      ],
+      "imageID": "sha256:a54b9a6f68163722606be7887c18b77450f54e6dcec04f33b6c1f08dbb8c9010",
+      "os": {
+        "Family": "sles",
+        "Name": "15.7"
+      },
+      "counts": {
+        "UNKNOWN": 4,
+        "MEDIUM": 49,
+        "HIGH": 73,
+        "CRITICAL": 1,
+        "LOW": 3
+      },
+      "reportSHA256": "67516b1580cf88083ace3f957cbb22786f3b37d0852d2999a9cca0cdffd6e7de",
+      "actualPlatform": "linux/amd64"
+    },
+    {
+      "ref": "docker.io/longhornio/longhorn-instance-manager:v1.12.1",
+      "scopes": [
+        "longhorn"
+      ],
+      "source": "vendored Longhorn manifest (including controller-created images)",
+      "platform": "linux/arm64",
+      "report": "images/13-linux-arm64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "longhornio/longhorn-instance-manager@sha256:b255f3279dd9d830ea153e9369928646dee519fd853036388926dddb5c66094b"
+      ],
+      "imageID": "sha256:deebc4b66275e10950485b75e51134cba2a55e52e44f49190df71bcbcf2d2bf1",
+      "os": {
+        "Family": "sles",
+        "Name": "15.7"
+      },
+      "counts": {
+        "UNKNOWN": 4,
+        "MEDIUM": 49,
+        "HIGH": 73,
+        "CRITICAL": 1,
+        "LOW": 3
+      },
+      "reportSHA256": "3dbd2ab7950dfcc582545d943fe505a5faf009bf11f11cf720a0b34c25997920",
+      "actualPlatform": "linux/arm64"
+    },
+    {
+      "ref": "docker.io/longhornio/longhorn-manager:v1.12.1",
+      "scopes": [
+        "longhorn"
+      ],
+      "source": "vendored Longhorn manifest (including controller-created images)",
+      "platform": "linux/amd64",
+      "report": "images/14-linux-amd64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "longhornio/longhorn-manager@sha256:83b79f57043fe1405e68bc0d4c7987accbc6bb512def3e0db12b31966c070801"
+      ],
+      "imageID": "sha256:138e59bee3d1735ab56043b015a3ff2836d90c7321b8cd285b07f53425ba3a81",
+      "os": {
+        "Family": "sles",
+        "Name": "15.7"
+      },
+      "counts": {
+        "HIGH": 39,
+        "UNKNOWN": 4,
+        "MEDIUM": 26,
+        "CRITICAL": 1,
+        "LOW": 1
+      },
+      "reportSHA256": "5f18120b69c5db995ec672a49220c2943bb8b99fc2639297ce404105340ee22b",
+      "actualPlatform": "linux/amd64"
+    },
+    {
+      "ref": "docker.io/longhornio/longhorn-manager:v1.12.1",
+      "scopes": [
+        "longhorn"
+      ],
+      "source": "vendored Longhorn manifest (including controller-created images)",
+      "platform": "linux/arm64",
+      "report": "images/14-linux-arm64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "longhornio/longhorn-manager@sha256:83b79f57043fe1405e68bc0d4c7987accbc6bb512def3e0db12b31966c070801"
+      ],
+      "imageID": "sha256:97695732bca9502cbd9e7e27e0d46b3853b8c426d0dae18b640248ddc12ec8c4",
+      "os": {
+        "Family": "sles",
+        "Name": "15.7"
+      },
+      "counts": {
+        "HIGH": 39,
+        "UNKNOWN": 4,
+        "MEDIUM": 26,
+        "CRITICAL": 1,
+        "LOW": 1
+      },
+      "reportSHA256": "f097a813c4f237f8464f22a1321e2ca3a73af0feba46081acb1ea36bd0086f4d",
+      "actualPlatform": "linux/arm64"
+    },
+    {
+      "ref": "docker.io/longhornio/longhorn-share-manager:v1.12.1",
+      "scopes": [
+        "longhorn"
+      ],
+      "source": "vendored Longhorn manifest (including controller-created images)",
+      "platform": "linux/amd64",
+      "report": "images/15-linux-amd64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "longhornio/longhorn-share-manager@sha256:efaf47aeb4e8615e312f0880df860bf2e5b9fa53006fe075f057c6dd4089f47d"
+      ],
+      "imageID": "sha256:cfcf1d83a6cc0085affb6294864b5eb29d0101063dc8dbd4fed004456b476e81",
+      "os": {
+        "Family": "sles",
+        "Name": "15.7"
+      },
+      "counts": {
+        "UNKNOWN": 3,
+        "MEDIUM": 25,
+        "HIGH": 35,
+        "CRITICAL": 1,
+        "LOW": 1
+      },
+      "reportSHA256": "7323ca9313da6152f23f9b4faf4a353c999eeb07865b05b101334879a315aae2",
+      "actualPlatform": "linux/amd64"
+    },
+    {
+      "ref": "docker.io/longhornio/longhorn-share-manager:v1.12.1",
+      "scopes": [
+        "longhorn"
+      ],
+      "source": "vendored Longhorn manifest (including controller-created images)",
+      "platform": "linux/arm64",
+      "report": "images/15-linux-arm64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "longhornio/longhorn-share-manager@sha256:efaf47aeb4e8615e312f0880df860bf2e5b9fa53006fe075f057c6dd4089f47d"
+      ],
+      "imageID": "sha256:795481ae836bd8ff7ea6077fd5d4f7f7954b2ed813bbdd975e8580abb8af52ea",
+      "os": {
+        "Family": "sles",
+        "Name": "15.7"
+      },
+      "counts": {
+        "UNKNOWN": 3,
+        "MEDIUM": 25,
+        "HIGH": 35,
+        "CRITICAL": 1,
+        "LOW": 1
+      },
+      "reportSHA256": "80527025709a0382e8c4a44773f90773d0b2c8aca99b1a620f0d4543dae203ef",
+      "actualPlatform": "linux/arm64"
+    },
+    {
+      "ref": "docker.io/longhornio/longhorn-ui:v1.12.1",
+      "scopes": [
+        "longhorn"
+      ],
+      "source": "vendored Longhorn manifest (including controller-created images)",
+      "platform": "linux/amd64",
+      "report": "images/16-linux-amd64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "longhornio/longhorn-ui@sha256:03a3ce6673df6e948c261fe978a695adaa8fb190d68bfe5c358af8ee3d3fbef5"
+      ],
+      "imageID": "sha256:555e791fdfa24fa8c3c95401a862f7c0ca0e09bc677f753fb552e7dbd5424332",
+      "os": {
+        "Family": "sles",
+        "Name": "15.7"
+      },
+      "counts": {
+        "UNKNOWN": 3,
+        "MEDIUM": 11,
+        "HIGH": 16,
+        "CRITICAL": 1
+      },
+      "reportSHA256": "1e8138d72f80b9e193630de3aec1be767d551ba69ddb7322048307442c1d7db4",
+      "actualPlatform": "linux/amd64"
+    },
+    {
+      "ref": "docker.io/longhornio/longhorn-ui:v1.12.1",
+      "scopes": [
+        "longhorn"
+      ],
+      "source": "vendored Longhorn manifest (including controller-created images)",
+      "platform": "linux/arm64",
+      "report": "images/16-linux-arm64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "longhornio/longhorn-ui@sha256:03a3ce6673df6e948c261fe978a695adaa8fb190d68bfe5c358af8ee3d3fbef5"
+      ],
+      "imageID": "sha256:548fb4f7b72d4a5da8985bf7cd83345d03867b131623b865cae8961b35edec62",
+      "os": {
+        "Family": "sles",
+        "Name": "15.7"
+      },
+      "counts": {
+        "UNKNOWN": 3,
+        "MEDIUM": 11,
+        "HIGH": 16,
+        "CRITICAL": 1
+      },
+      "reportSHA256": "6904a50ec02fad2efdfe8aaf9592492caa9a7710d36c3e4d9dbeea7a35aa6018",
+      "actualPlatform": "linux/arm64"
+    },
+    {
+      "ref": "docker.io/longhornio/support-bundle-kit:v0.0.92",
+      "scopes": [
+        "longhorn"
+      ],
+      "source": "vendored Longhorn manifest (including controller-created images)",
+      "platform": "linux/amd64",
+      "report": "images/17-linux-amd64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "longhornio/support-bundle-kit@sha256:02baa824d9a4174747ab9db2635ae000b1198d2d5ed3a4c69caf28724224e783"
+      ],
+      "imageID": "sha256:20279bb5f31aecf87eb8ce3fb646968c9600adf2fe7ffc5e16c37baf11795f2f",
+      "os": {
+        "Family": "sles",
+        "Name": "15.7"
+      },
+      "counts": {
+        "MEDIUM": 41,
+        "HIGH": 50,
+        "UNKNOWN": 3,
+        "LOW": 5
+      },
+      "reportSHA256": "a8d72fa73b47e2a0eb94fba74aaa1307c80658d8e9cf02046a851252cd12c657",
+      "actualPlatform": "linux/amd64"
+    },
+    {
+      "ref": "docker.io/longhornio/support-bundle-kit:v0.0.92",
+      "scopes": [
+        "longhorn"
+      ],
+      "source": "vendored Longhorn manifest (including controller-created images)",
+      "platform": "linux/arm64",
+      "report": "images/17-linux-arm64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "longhornio/support-bundle-kit@sha256:02baa824d9a4174747ab9db2635ae000b1198d2d5ed3a4c69caf28724224e783"
+      ],
+      "imageID": "sha256:117210fbe489e53995f7b7da17a4328cc8d9f020cf434305e1cfdef5e8f85c16",
+      "os": {
+        "Family": "sles",
+        "Name": "15.7"
+      },
+      "counts": {
+        "MEDIUM": 41,
+        "HIGH": 50,
+        "UNKNOWN": 3,
+        "LOW": 5
+      },
+      "reportSHA256": "aa52ca249d03cb734bd8152bc835edf7889e0346e3506921d6a3c8885127793c",
+      "actualPlatform": "linux/arm64"
+    },
+    {
+      "ref": "docker.io/moby/buildkit:v0.33.1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea",
+      "scopes": [
+        "build"
+      ],
+      "source": ".github/mirrored-images.txt (same digests as GHCR copies)",
+      "platform": "linux/amd64",
+      "report": "images/18-linux-amd64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "moby/buildkit@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea"
+      ],
+      "imageID": "sha256:27933730df224df80c41f4e5a9b33fa78831a79fd31903df3bb7deb49363422f",
+      "os": {
+        "Family": "alpine",
+        "Name": "3.23.6"
+      },
+      "counts": {
+        "HIGH": 115,
+        "MEDIUM": 119,
+        "UNKNOWN": 9,
+        "LOW": 12
+      },
+      "reportSHA256": "cec1743805d9f76ab31820d80fdfb2a40238fcfee20f6d1bb4c4fae608e0a7b8",
+      "actualPlatform": "linux/amd64"
+    },
+    {
+      "ref": "docker.io/moby/buildkit:v0.33.1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea",
+      "scopes": [
+        "build"
+      ],
+      "source": ".github/mirrored-images.txt (same digests as GHCR copies)",
+      "platform": "linux/arm64",
+      "report": "images/18-linux-arm64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "moby/buildkit@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea"
+      ],
+      "imageID": "sha256:f27f9c00a3aca2c219642d1500610eade3ddcb6b873ea8847852ab156663d32f",
+      "os": {
+        "Family": "alpine",
+        "Name": "3.23.6"
+      },
+      "counts": {
+        "HIGH": 111,
+        "MEDIUM": 115,
+        "UNKNOWN": 9,
+        "LOW": 8
+      },
+      "reportSHA256": "1a27455b57f02fc7dc4a8726afa2f9cec8ec073a5a82581f858f3b9ea7074122",
+      "actualPlatform": "linux/arm64"
+    },
+    {
+      "ref": "docker.io/tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0",
+      "scopes": [
+        "build"
+      ],
+      "source": ".github/mirrored-images.txt (same digests as GHCR copies)",
+      "platform": "linux/amd64",
+      "report": "images/19-linux-amd64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0"
+      ],
+      "imageID": "sha256:15935d0512bf0a8e5afa1df990d971cf97a619ede08fa60f2d5966a62de6d6b7",
+      "counts": {
+        "MEDIUM": 11,
+        "LOW": 2,
+        "UNKNOWN": 1,
+        "HIGH": 13
+      },
+      "reportSHA256": "032db7cd7512a44bef528ea4971df763df2402c907ffabc502d3fd6ceb495c41",
+      "actualPlatform": "linux/amd64"
+    },
+    {
+      "ref": "docker.io/tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0",
+      "scopes": [
+        "build"
+      ],
+      "source": ".github/mirrored-images.txt (same digests as GHCR copies)",
+      "platform": "linux/arm64",
+      "report": "images/19-linux-arm64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0"
+      ],
+      "imageID": "sha256:1e791088fb9dfb63ed7ce0b248acf8b90885a54b70d40d3b8fcb0f96dab31303",
+      "counts": {
+        "MEDIUM": 11,
+        "LOW": 2,
+        "UNKNOWN": 1,
+        "HIGH": 13
+      },
+      "reportSHA256": "dce0be9204d9958a17ec8677ab7286e00feddc151dd3a0b748ca313a63a7ae8c",
+      "actualPlatform": "linux/arm64"
+    },
+    {
+      "ref": "ghcr.io/cloudnative-pg/cloudnative-pg:1.29.2",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.RequiredImages",
+      "platform": "linux/amd64",
+      "report": "images/20-linux-amd64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "ghcr.io/cloudnative-pg/cloudnative-pg@sha256:4710b10a4897a4f888cbe80bce8b279475315590fb9f2cb0ebb516f2f40ebf06"
+      ],
+      "imageID": "sha256:fcce8a772de3643332ccf771a4f8987d466473aba6e15330594c12cd0e04a525",
+      "os": {
+        "Family": "debian",
+        "Name": "12.14"
+      },
+      "counts": {
+        "UNKNOWN": 1,
+        "HIGH": 38,
+        "MEDIUM": 30,
+        "LOW": 2
+      },
+      "reportSHA256": "e0ac4f30c60d59022d446009be355a0854a87e77e2cf94432b66ecd9b346e86d",
+      "actualPlatform": "linux/amd64"
+    },
+    {
+      "ref": "ghcr.io/cloudnative-pg/cloudnative-pg:1.29.2",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.RequiredImages",
+      "platform": "linux/arm64",
+      "report": "images/20-linux-arm64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "ghcr.io/cloudnative-pg/cloudnative-pg@sha256:4710b10a4897a4f888cbe80bce8b279475315590fb9f2cb0ebb516f2f40ebf06"
+      ],
+      "imageID": "sha256:5092be6e0f561a84783e374fc7d47628741d0b8a7fb40bc99fb919838ab6d6ba",
+      "os": {
+        "Family": "debian",
+        "Name": "12.14"
+      },
+      "counts": {
+        "UNKNOWN": 1,
+        "HIGH": 38,
+        "MEDIUM": 30,
+        "LOW": 2
+      },
+      "reportSHA256": "e2c45556f7250d5122e10b17594e2bf3769822596fde6992115cb3327436eaa3",
+      "actualPlatform": "linux/arm64"
+    },
+    {
+      "ref": "ghcr.io/cloudnative-pg/postgresql:17.9-system-trixie",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.RequiredImages",
+      "platform": "linux/amd64",
+      "report": "images/21-linux-amd64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "ghcr.io/cloudnative-pg/postgresql@sha256:8fd8db26090e602458269741849e5c9cd7aff577a22af53c8a402c580fd1e729"
+      ],
+      "imageID": "sha256:9c294c25ee231440445b91ccedbb1683622e8b78a9eac52ccb527ca0e226b6f5",
+      "os": {
+        "Family": "debian",
+        "Name": "13.4"
+      },
+      "counts": {
+        "LOW": 266,
+        "HIGH": 253,
+        "MEDIUM": 437,
+        "UNKNOWN": 7,
+        "CRITICAL": 17
+      },
+      "reportSHA256": "978156c854f447e9def49e69b0fc661266a6eec34adc88d521990ef5e7f9b4a7",
+      "actualPlatform": "linux/amd64"
+    },
+    {
+      "ref": "ghcr.io/cloudnative-pg/postgresql:17.9-system-trixie",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.RequiredImages",
+      "platform": "linux/arm64",
+      "report": "images/21-linux-arm64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "ghcr.io/cloudnative-pg/postgresql@sha256:8fd8db26090e602458269741849e5c9cd7aff577a22af53c8a402c580fd1e729"
+      ],
+      "imageID": "sha256:e5ee599960dcd11baa55b8ed25effd7e748f0f02e374040c1a56efa98c03e5c1",
+      "os": {
+        "Family": "debian",
+        "Name": "13.4"
+      },
+      "counts": {
+        "LOW": 266,
+        "HIGH": 253,
+        "MEDIUM": 437,
+        "UNKNOWN": 7,
+        "CRITICAL": 17
+      },
+      "reportSHA256": "3d7a605f4f3b653d9f21e5f55d2a66d6b1d8a256deae4b495683e81cb4de9ffe",
+      "actualPlatform": "linux/arm64"
+    },
+    {
+      "ref": "ghcr.io/cloudnative-pg/postgresql:18.4-system-trixie",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.RequiredImages",
+      "platform": "linux/amd64",
+      "report": "images/22-linux-amd64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "ghcr.io/cloudnative-pg/postgresql@sha256:42708a75345b7a48fdd9257b071830783a97fd228529196b6313187a7198e185"
+      ],
+      "imageID": "sha256:c90b4f58107ada70a298f009b4f5c723525ce5ea41ce55ca092c113a23eced1e",
+      "os": {
+        "Family": "debian",
+        "Name": "13.6"
+      },
+      "counts": {
+        "LOW": 203,
+        "HIGH": 163,
+        "MEDIUM": 289,
+        "UNKNOWN": 7,
+        "CRITICAL": 15
+      },
+      "reportSHA256": "f7d9d034543825b38c9150672d1d95c613ddf243d22548d055d3eedf0292e36b",
+      "actualPlatform": "linux/amd64"
+    },
+    {
+      "ref": "ghcr.io/cloudnative-pg/postgresql:18.4-system-trixie",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.RequiredImages",
+      "platform": "linux/arm64",
+      "report": "images/22-linux-arm64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "ghcr.io/cloudnative-pg/postgresql@sha256:42708a75345b7a48fdd9257b071830783a97fd228529196b6313187a7198e185"
+      ],
+      "imageID": "sha256:5abb9e6a008e689578b7e3ebe8f8959ab41f5681708b1ba8daa8afcae5c9779a",
+      "os": {
+        "Family": "debian",
+        "Name": "13.6"
+      },
+      "counts": {
+        "LOW": 203,
+        "HIGH": 163,
+        "MEDIUM": 289,
+        "UNKNOWN": 7,
+        "CRITICAL": 15
+      },
+      "reportSHA256": "8d6805ac57cf8eae9df359ff3c6824b96af31ab8714d439af9f46c832e297e0c",
+      "actualPlatform": "linux/arm64"
+    },
+    {
+      "ref": "ghcr.io/hinkolas/mirror/alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6",
+      "scopes": [
+        "build"
+      ],
+      "source": "build/skalid.release.Dockerfile",
+      "platform": "linux/amd64",
+      "report": "images/23-linux-amd64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "ghcr.io/hinkolas/mirror/alpine@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6"
+      ],
+      "imageID": "sha256:320994c3b997e2ec6433f717f153e108023c5bec8fefa8d76b83451d16d05ea8",
+      "os": {
+        "Family": "alpine",
+        "Name": "3.24.2"
+      },
+      "counts": {
+        "UNKNOWN": 2,
+        "MEDIUM": 1
+      },
+      "reportSHA256": "acd1fdb65e9e33a96be07aca6ada4474ab35c22a03a1f1bc3c025630bacc10aa",
+      "actualPlatform": "linux/amd64"
+    },
+    {
+      "ref": "ghcr.io/hinkolas/mirror/alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6",
+      "scopes": [
+        "build"
+      ],
+      "source": "build/skalid.release.Dockerfile",
+      "platform": "linux/arm64",
+      "report": "images/23-linux-arm64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "ghcr.io/hinkolas/mirror/alpine@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6"
+      ],
+      "imageID": "sha256:33bee74c45f307e3268adc2010c0f55c48e7a6041e12cd12432bb1a46e498e43",
+      "os": {
+        "Family": "alpine",
+        "Name": "3.24.2"
+      },
+      "counts": {
+        "UNKNOWN": 2,
+        "MEDIUM": 1
+      },
+      "reportSHA256": "7a1ab1bb66aba08746675c825d9bcf3a555c41528648bd4fbf296d6c8440b284",
+      "actualPlatform": "linux/arm64"
+    },
+    {
+      "ref": "golang:1.26-alpine",
+      "scopes": [
+        "examples"
+      ],
+      "source": "examples/deployment-timing/Dockerfile",
+      "platform": "linux/amd64",
+      "report": "images/24-linux-amd64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "golang@sha256:27f2d3b83cfc5803c8078f8e730af0f7c431bf067afaec8f60a36fb763187cba"
+      ],
+      "imageID": "sha256:51ff61e0d9a205d4435c3a1725d76c639a3a555274bd31a98e9e9bde5ebe278a",
+      "os": {
+        "Family": "alpine",
+        "Name": "3.24.3"
+      },
+      "counts": {},
+      "reportSHA256": "80ce6d565dfac700be6a3894d17a12861de95d1ec114e79d063848db32a74e9e",
+      "actualPlatform": "linux/amd64"
+    },
+    {
+      "ref": "golang:1.26-alpine",
+      "scopes": [
+        "examples"
+      ],
+      "source": "examples/deployment-timing/Dockerfile",
+      "platform": "linux/arm64",
+      "report": "images/24-linux-arm64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "golang@sha256:27f2d3b83cfc5803c8078f8e730af0f7c431bf067afaec8f60a36fb763187cba"
+      ],
+      "imageID": "sha256:5dd60f16840c6cadd85a2a18297af393e37ed94f57f8b7ac786064afec29b8d6",
+      "os": {
+        "Family": "alpine",
+        "Name": "3.24.3"
+      },
+      "counts": {},
+      "reportSHA256": "ffc4201f6d125a5514a67c7c5250bf6899bc6091460dd8f11dc87d6cd1245462",
+      "actualPlatform": "linux/arm64"
+    },
+    {
+      "ref": "golang:1.26.10-alpine",
+      "scopes": [
+        "build"
+      ],
+      "source": "build/skalid.Dockerfile",
+      "platform": "linux/amd64",
+      "report": "images/25-linux-amd64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "golang@sha256:27f2d3b83cfc5803c8078f8e730af0f7c431bf067afaec8f60a36fb763187cba"
+      ],
+      "imageID": "sha256:51ff61e0d9a205d4435c3a1725d76c639a3a555274bd31a98e9e9bde5ebe278a",
+      "os": {
+        "Family": "alpine",
+        "Name": "3.24.3"
+      },
+      "counts": {},
+      "reportSHA256": "bd88877ce26f5814486fac2e382a92744035431a8ef1dc1fadb6a6403be6a541",
+      "actualPlatform": "linux/amd64"
+    },
+    {
+      "ref": "golang:1.26.10-alpine",
+      "scopes": [
+        "build"
+      ],
+      "source": "build/skalid.Dockerfile",
+      "platform": "linux/arm64",
+      "report": "images/25-linux-arm64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "golang@sha256:27f2d3b83cfc5803c8078f8e730af0f7c431bf067afaec8f60a36fb763187cba"
+      ],
+      "imageID": "sha256:5dd60f16840c6cadd85a2a18297af393e37ed94f57f8b7ac786064afec29b8d6",
+      "os": {
+        "Family": "alpine",
+        "Name": "3.24.3"
+      },
+      "counts": {},
+      "reportSHA256": "5bf8460c60a4ecffbd961a919efdac48e6b61e82185a17e9ea56113fd79a6f41",
+      "actualPlatform": "linux/arm64"
+    },
+    {
+      "ref": "node:22-alpine",
+      "scopes": [
+        "build"
+      ],
+      "source": "build/skalid.Dockerfile",
+      "platform": "linux/amd64",
+      "report": "images/26-linux-amd64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "node@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914"
+      ],
+      "imageID": "sha256:ae59e9992c6b3e963dd9dac9c476287048177ad8f90ac646669afb738705f56d",
+      "os": {
+        "Family": "alpine",
+        "Name": "3.24.3"
+      },
+      "counts": {
+        "MEDIUM": 9,
+        "HIGH": 11,
+        "LOW": 1
+      },
+      "reportSHA256": "f0ec742c61b3bd8dbe37caabe764fa8351d1a51e3d60a772bf8dc24a17263b62",
+      "actualPlatform": "linux/amd64"
+    },
+    {
+      "ref": "node:22-alpine",
+      "scopes": [
+        "build"
+      ],
+      "source": "build/skalid.Dockerfile",
+      "platform": "linux/arm64",
+      "report": "images/26-linux-arm64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "node@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914"
+      ],
+      "imageID": "sha256:21487655851bca3d32f31162c9530bf08bd4596e2e5f74851881b8e8d1c33520",
+      "os": {
+        "Family": "alpine",
+        "Name": "3.24.3"
+      },
+      "counts": {
+        "MEDIUM": 9,
+        "HIGH": 11,
+        "LOW": 1
+      },
+      "reportSHA256": "4a86c970f1a37c7bb95e1f39b0c0e3b1a39a9abd9d45cb670058a81714451873",
+      "actualPlatform": "linux/arm64"
+    },
+    {
+      "ref": "python:3.12-alpine",
+      "scopes": [
+        "examples"
+      ],
+      "source": "examples/dev-loop/Dockerfile",
+      "platform": "linux/amd64",
+      "report": "images/27-linux-amd64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "python@sha256:b658b05ce9c4eb97ec6fc19424818a1f31993659c2b505a532f470e83807815d"
+      ],
+      "imageID": "sha256:f4b7b8044a873fcc0f348549a19b9075cd77bd56ead7177192cfec38d85bce4a",
+      "os": {
+        "Family": "alpine",
+        "Name": "3.24.3"
+      },
+      "counts": {
+        "MEDIUM": 5,
+        "LOW": 1
+      },
+      "reportSHA256": "58a65f5b5c34989882f6ba08a71624bc5a4f757856325ee5a12d42d56ee31746",
+      "actualPlatform": "linux/amd64"
+    },
+    {
+      "ref": "python:3.12-alpine",
+      "scopes": [
+        "examples"
+      ],
+      "source": "examples/dev-loop/Dockerfile",
+      "platform": "linux/arm64",
+      "report": "images/27-linux-arm64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "python@sha256:b658b05ce9c4eb97ec6fc19424818a1f31993659c2b505a532f470e83807815d"
+      ],
+      "imageID": "sha256:255f49222a74c70d0448f6ad7ef209c6d76a1160d8fe731c929c1d81c4b9feaf",
+      "os": {
+        "Family": "alpine",
+        "Name": "3.24.3"
+      },
+      "counts": {
+        "MEDIUM": 5,
+        "LOW": 1
+      },
+      "reportSHA256": "f2c01cf4059a5434718239e44bc8c297574735da0d4541e6b038a9355e601a77",
+      "actualPlatform": "linux/arm64"
+    },
+    {
+      "ref": "quay.io/jetstack/cert-manager-acmesolver:v1.21.1",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "vendored cert-manager manifest (including ACME solver)",
+      "platform": "linux/amd64",
+      "report": "images/28-linux-amd64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "quay.io/jetstack/cert-manager-acmesolver@sha256:dbc7cc1354f603918e7c5af7f55a0a620537394452c93a565bde75c6f48e8837"
+      ],
+      "imageID": "sha256:d962182a4de3c90e091667c2657ee0eb7077d370a9b62a36fc1f06ba8c5e37fd",
+      "os": {
+        "Family": "debian",
+        "Name": "13.6"
+      },
+      "counts": {
+        "HIGH": 14,
+        "MEDIUM": 13,
+        "LOW": 1
+      },
+      "reportSHA256": "6aae012cfbe07f39aac28b86502f7122db1bffd5fe0dfd998d50d3b3e0b59e91",
+      "actualPlatform": "linux/amd64"
+    },
+    {
+      "ref": "quay.io/jetstack/cert-manager-acmesolver:v1.21.1",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "vendored cert-manager manifest (including ACME solver)",
+      "platform": "linux/arm64",
+      "report": "images/28-linux-arm64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "quay.io/jetstack/cert-manager-acmesolver@sha256:dbc7cc1354f603918e7c5af7f55a0a620537394452c93a565bde75c6f48e8837"
+      ],
+      "imageID": "sha256:2a02bd5c2be362289b40e0f10227507a55d9e96f35659e1d40895f3d84efca31",
+      "os": {
+        "Family": "debian",
+        "Name": "13.6"
+      },
+      "counts": {
+        "HIGH": 14,
+        "MEDIUM": 13,
+        "LOW": 1
+      },
+      "reportSHA256": "a779076d4fe61c622bc385acb2cfe4baf90dbd0116fe304c52659bbbfc3e42d8",
+      "actualPlatform": "linux/arm64"
+    },
+    {
+      "ref": "quay.io/jetstack/cert-manager-cainjector:v1.21.1",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.RequiredImages",
+      "platform": "linux/amd64",
+      "report": "images/29-linux-amd64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "quay.io/jetstack/cert-manager-cainjector@sha256:ccf6b919ec0500745a47a910118f834f9636d0aac1ff221245cd2557ed8c7c98"
+      ],
+      "imageID": "sha256:3133bbd4dd2783fe7197585d9198c738508b9784c8746bf62e9fac6aad41535a",
+      "os": {
+        "Family": "debian",
+        "Name": "13.6"
+      },
+      "counts": {
+        "HIGH": 15,
+        "MEDIUM": 15,
+        "UNKNOWN": 1,
+        "LOW": 1
+      },
+      "reportSHA256": "a72592af58b45aa49656c163bf81dbbaae69424065af6d63d5800930b28c9313",
+      "actualPlatform": "linux/amd64"
+    },
+    {
+      "ref": "quay.io/jetstack/cert-manager-cainjector:v1.21.1",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.RequiredImages",
+      "platform": "linux/arm64",
+      "report": "images/29-linux-arm64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "quay.io/jetstack/cert-manager-cainjector@sha256:ccf6b919ec0500745a47a910118f834f9636d0aac1ff221245cd2557ed8c7c98"
+      ],
+      "imageID": "sha256:187d7de7d1d04dd40dbc62236b0e75eea4a0ae336b0de824c6e27e28fb102381",
+      "os": {
+        "Family": "debian",
+        "Name": "13.6"
+      },
+      "counts": {
+        "HIGH": 15,
+        "MEDIUM": 15,
+        "UNKNOWN": 1,
+        "LOW": 1
+      },
+      "reportSHA256": "b3c4e6087a090200956c4fac4c499205c14ca6ec29e0db531c4275997917a38a",
+      "actualPlatform": "linux/arm64"
+    },
+    {
+      "ref": "quay.io/jetstack/cert-manager-controller:v1.21.1",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.RequiredImages",
+      "platform": "linux/amd64",
+      "report": "images/30-linux-amd64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "quay.io/jetstack/cert-manager-controller@sha256:416a2d76870d996460e62bd7f521bf14fa017be9e3e904aab92163a331fcb61a"
+      ],
+      "imageID": "sha256:8359cecc5aa6ffd4940996999c15c543821a9949d2b8a3881295c38ef86e0757",
+      "os": {
+        "Family": "debian",
+        "Name": "13.6"
+      },
+      "counts": {
+        "LOW": 4,
+        "HIGH": 17,
+        "MEDIUM": 16,
+        "UNKNOWN": 1
+      },
+      "reportSHA256": "2869d31cb6c61a9aeb431de7e0b6e63c7e9eda28f946c38ef617fd08b7f56ecb",
+      "actualPlatform": "linux/amd64"
+    },
+    {
+      "ref": "quay.io/jetstack/cert-manager-controller:v1.21.1",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.RequiredImages",
+      "platform": "linux/arm64",
+      "report": "images/30-linux-arm64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "quay.io/jetstack/cert-manager-controller@sha256:416a2d76870d996460e62bd7f521bf14fa017be9e3e904aab92163a331fcb61a"
+      ],
+      "imageID": "sha256:5283ffc3ebd6cf46ecf84f5e56730734b3de8d3de456c3a909f0077b5337c55d",
+      "os": {
+        "Family": "debian",
+        "Name": "13.6"
+      },
+      "counts": {
+        "LOW": 4,
+        "HIGH": 17,
+        "MEDIUM": 16,
+        "UNKNOWN": 1
+      },
+      "reportSHA256": "1b84e4186e4bced723ee97d91d8a488dcaa49d3c0b62b752f38124da2e014532",
+      "actualPlatform": "linux/arm64"
+    },
+    {
+      "ref": "quay.io/jetstack/cert-manager-webhook:v1.21.1",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.RequiredImages",
+      "platform": "linux/amd64",
+      "report": "images/31-linux-amd64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "quay.io/jetstack/cert-manager-webhook@sha256:d8b3961b51c8c7320633f8208dc46bf88aa13804d0f7cbe48a096b2c523cee42"
+      ],
+      "imageID": "sha256:6f7f1ce59de1febbc7e423da382eedd0350ba6c8600368e6f42d7fdefa1bb6b9",
+      "os": {
+        "Family": "debian",
+        "Name": "13.6"
+      },
+      "counts": {
+        "LOW": 4,
+        "HIGH": 17,
+        "MEDIUM": 16,
+        "UNKNOWN": 1
+      },
+      "reportSHA256": "944cfc91b44c24e356a50f4aabafa9406578093aeec7324748024ae0432e0611",
+      "actualPlatform": "linux/amd64"
+    },
+    {
+      "ref": "quay.io/jetstack/cert-manager-webhook:v1.21.1",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.RequiredImages",
+      "platform": "linux/arm64",
+      "report": "images/31-linux-arm64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "quay.io/jetstack/cert-manager-webhook@sha256:d8b3961b51c8c7320633f8208dc46bf88aa13804d0f7cbe48a096b2c523cee42"
+      ],
+      "imageID": "sha256:4694bc08f6c866b0820ff7e82d673029b6d48ba0aaf79af528987ca114f426ec",
+      "os": {
+        "Family": "debian",
+        "Name": "13.6"
+      },
+      "counts": {
+        "LOW": 4,
+        "HIGH": 17,
+        "MEDIUM": 16,
+        "UNKNOWN": 1
+      },
+      "reportSHA256": "fd7e88a81aa933746ec40c0aa18f1e1b8280adae82dcb8037dfacb549966774e",
+      "actualPlatform": "linux/arm64"
+    },
+    {
+      "ref": "rancher/k3s:v1.36.3-k3s1",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.K3sImage (managed hosts install the matching k3s binary)",
+      "platform": "linux/amd64",
+      "report": "images/32-linux-amd64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "rancher/k3s@sha256:d0f79175794edd9694b4a12bafc5c52ae1977369a2f7cf256264e7bd2dae0be9"
+      ],
+      "imageID": "sha256:4879527be6b5c4c07443da8e364fd45720cafd4536983408ff2a58cab6fdfc50",
+      "counts": {
+        "HIGH": 87,
+        "MEDIUM": 76,
+        "LOW": 10,
+        "UNKNOWN": 3
+      },
+      "reportSHA256": "3d2af00080b0e8c6dbdbede8725faf6ba691c6ff8741b0a84a193bf4435b8f7c",
+      "actualPlatform": "linux/amd64"
+    },
+    {
+      "ref": "rancher/k3s:v1.36.3-k3s1",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.K3sImage (managed hosts install the matching k3s binary)",
+      "platform": "linux/arm64",
+      "report": "images/32-linux-arm64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "rancher/k3s@sha256:d0f79175794edd9694b4a12bafc5c52ae1977369a2f7cf256264e7bd2dae0be9"
+      ],
+      "imageID": "sha256:4373e5bdcd8226db8736cd281c17a4cb6fc096c0d69df93c8912f80e0a41460c",
+      "counts": {
+        "HIGH": 87,
+        "MEDIUM": 76,
+        "LOW": 10,
+        "UNKNOWN": 3
+      },
+      "reportSHA256": "b225f837bd2a67fb86d42a98a43a1ca520fa4639018cb182dbfe7a1e7df858f5",
+      "actualPlatform": "linux/arm64"
+    },
+    {
+      "ref": "rancher/klipper-helm:v0.13.3-build20260727",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.RequiredImages",
+      "platform": "linux/amd64",
+      "report": "images/33-linux-amd64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "rancher/klipper-helm@sha256:5425a2b4613d2458dbdff99218e8d487ebb59c20e7a941f061c0777070f0aac1"
+      ],
+      "imageID": "sha256:8e0d8d2218ec831bae4293da6ebb77a000dfea7a35fc18175fe9d24bf2a4cb31",
+      "os": {
+        "Family": "alpine",
+        "Name": "3.24.1"
+      },
+      "counts": {
+        "HIGH": 91,
+        "MEDIUM": 80,
+        "UNKNOWN": 5,
+        "LOW": 6
+      },
+      "reportSHA256": "5d81e84751bbb56a6497fd2e1d129929d17d2164a6d77fb2fb4c03c7a1e58f7c",
+      "actualPlatform": "linux/amd64"
+    },
+    {
+      "ref": "rancher/klipper-helm:v0.13.3-build20260727",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.RequiredImages",
+      "platform": "linux/arm64",
+      "report": "images/33-linux-arm64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "rancher/klipper-helm@sha256:5425a2b4613d2458dbdff99218e8d487ebb59c20e7a941f061c0777070f0aac1"
+      ],
+      "imageID": "sha256:913df6f04eb6d37b91f873894b0d7275f7603705b107fa9d08a1b58eb6e815cb",
+      "os": {
+        "Family": "alpine",
+        "Name": "3.24.1"
+      },
+      "counts": {
+        "HIGH": 91,
+        "MEDIUM": 80,
+        "UNKNOWN": 5,
+        "LOW": 6
+      },
+      "reportSHA256": "3f249e4c4993c2db56d40a9c718a338d4ed3e83c5220fd8cfaa4d18f4d0c93c5",
+      "actualPlatform": "linux/arm64"
+    },
+    {
+      "ref": "rancher/klipper-lb:v0.4.17",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.RequiredImages",
+      "platform": "linux/amd64",
+      "report": "images/34-linux-amd64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "rancher/klipper-lb@sha256:910944bb0bd94f060a82a56ca1ea1c577d3e49b3473a093a47a985f32e92d94a"
+      ],
+      "imageID": "sha256:eaa1212a2b4569c811bfa0ad5708428703ad3120a6dbae3b4353ec3cb36f36d2",
+      "os": {
+        "Family": "alpine",
+        "Name": "3.23.4"
+      },
+      "counts": {
+        "UNKNOWN": 2
+      },
+      "reportSHA256": "35ecf02a500444e0e6415ebbfd4af2430f0dadc985ca4c13dfba884f9c757bdf",
+      "actualPlatform": "linux/amd64"
+    },
+    {
+      "ref": "rancher/klipper-lb:v0.4.17",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.RequiredImages",
+      "platform": "linux/arm64",
+      "report": "images/34-linux-arm64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "rancher/klipper-lb@sha256:910944bb0bd94f060a82a56ca1ea1c577d3e49b3473a093a47a985f32e92d94a"
+      ],
+      "imageID": "sha256:1084dac5ea9871ffa6d01fe67150e175df9c28579073cd40d2186c08b37aba50",
+      "os": {
+        "Family": "alpine",
+        "Name": "3.23.4"
+      },
+      "counts": {
+        "UNKNOWN": 2
+      },
+      "reportSHA256": "86ce85c6ffc656362ed89fa3e05c572b824bfbc4873c44d4dc08db6bad9c4c92",
+      "actualPlatform": "linux/arm64"
+    },
+    {
+      "ref": "rancher/local-path-provisioner:v0.0.36",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.RequiredImages",
+      "platform": "linux/amd64",
+      "report": "images/35-linux-amd64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "rancher/local-path-provisioner@sha256:1eba82e9c386038b4af6d69cca7519fac738c28c42735ed48ce70c882ad0d80f"
+      ],
+      "imageID": "sha256:9254fb81aa65831cce153dfdf883805d40157b78ccec0c10fd82c499113fd1de",
+      "os": {
+        "Family": "alpine",
+        "Name": "3.23.4"
+      },
+      "counts": {
+        "HIGH": 178,
+        "MEDIUM": 145,
+        "LOW": 43,
+        "UNKNOWN": 3
+      },
+      "reportSHA256": "de17002e9dbd160312b9cdb77133f8fef3901c27ee495ea1baae8fbb2dcf40cc",
+      "actualPlatform": "linux/amd64"
+    },
+    {
+      "ref": "rancher/local-path-provisioner:v0.0.36",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.RequiredImages",
+      "platform": "linux/arm64",
+      "report": "images/35-linux-arm64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "rancher/local-path-provisioner@sha256:1eba82e9c386038b4af6d69cca7519fac738c28c42735ed48ce70c882ad0d80f"
+      ],
+      "imageID": "sha256:58d078c5467bf37b5bf5230f2a85dcfe40fc7042062ab8823757ec7822aaeb22",
+      "os": {
+        "Family": "alpine",
+        "Name": "3.23.4"
+      },
+      "counts": {
+        "HIGH": 178,
+        "MEDIUM": 145,
+        "LOW": 43,
+        "UNKNOWN": 3
+      },
+      "reportSHA256": "33a40d2bcd587b743e050cfb85e03380dc0928dc51303a4331f476ba236fff11",
+      "actualPlatform": "linux/arm64"
+    },
+    {
+      "ref": "rancher/mirrored-coredns-coredns:1.14.6",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.RequiredImages",
+      "platform": "linux/amd64",
+      "report": "images/36-linux-amd64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "rancher/mirrored-coredns-coredns@sha256:900f9c109f7a33545d3c811516e8376df9019147b750f5ce3e254468769176ea"
+      ],
+      "imageID": "sha256:520212b8b0fcd9309d7362d592f513b72880fa5a4e9e8b91442e7ee3b622c6a9",
+      "os": {
+        "Family": "debian",
+        "Name": "12.14"
+      },
+      "counts": {
+        "UNKNOWN": 2,
+        "HIGH": 33,
+        "MEDIUM": 22,
+        "LOW": 1
+      },
+      "reportSHA256": "c667c65cf1a44f05ab6c2eee318fa3a7d78d25b199ddcf7889a42fbeaab2909f",
+      "actualPlatform": "linux/amd64"
+    },
+    {
+      "ref": "rancher/mirrored-coredns-coredns:1.14.6",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.RequiredImages",
+      "platform": "linux/arm64",
+      "report": "images/36-linux-arm64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "rancher/mirrored-coredns-coredns@sha256:900f9c109f7a33545d3c811516e8376df9019147b750f5ce3e254468769176ea"
+      ],
+      "imageID": "sha256:fbccbf70a429fb9ce1cdb13a40ed96b16272ef763dafe050b2c0d121dd29811b",
+      "os": {
+        "Family": "debian",
+        "Name": "12.14"
+      },
+      "counts": {
+        "UNKNOWN": 2,
+        "HIGH": 33,
+        "MEDIUM": 22,
+        "LOW": 1
+      },
+      "reportSHA256": "faacaf89c822bf26187b210c4004e55769eb1ab29082aef92ec6c586ddfb9a43",
+      "actualPlatform": "linux/arm64"
+    },
+    {
+      "ref": "rancher/mirrored-library-busybox:1.37.0",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.RequiredImages",
+      "platform": "linux/amd64",
+      "report": "images/37-linux-amd64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "rancher/mirrored-library-busybox@sha256:101b4afd76732482eff9b95cae5f94bcf295e521fbec4e01b69c5421f3f3f3e5"
+      ],
+      "imageID": "sha256:ff7a7936e9306ce4a789cf5523922da5e585dc1216e400efb3b6872a5137ee6b",
+      "counts": {},
+      "reportSHA256": "1afba953f27b7a3b3a63b69a4302ca1705a30c8b3bb003b3adb07216f4a16a36",
+      "actualPlatform": "linux/amd64"
+    },
+    {
+      "ref": "rancher/mirrored-library-busybox:1.37.0",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.RequiredImages",
+      "platform": "linux/arm64",
+      "report": "images/37-linux-arm64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "rancher/mirrored-library-busybox@sha256:101b4afd76732482eff9b95cae5f94bcf295e521fbec4e01b69c5421f3f3f3e5"
+      ],
+      "imageID": "sha256:82c58a5c5b738fd9ffc8fe6bcc0a9467360abfab015b7ae70384563e895b68ff",
+      "counts": {},
+      "reportSHA256": "91db6fc26b74f4ddcb2b2c927ab21ef99f97fd94ba992a74a9d6b7cee1196a1e",
+      "actualPlatform": "linux/arm64"
+    },
+    {
+      "ref": "rancher/mirrored-library-traefik:3.7.8",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.RequiredImages",
+      "platform": "linux/amd64",
+      "report": "images/38-linux-amd64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "rancher/mirrored-library-traefik@sha256:4299bbed850421258fc5448c2e0e6ad350981d4d335a68de11b92448aedbefe5"
+      ],
+      "imageID": "sha256:7a652b1846f788b214920ef659ab8c548e56d843decb7a18da737ace32f454de",
+      "os": {
+        "Family": "alpine",
+        "Name": "3.24.1"
+      },
+      "counts": {
+        "HIGH": 30,
+        "MEDIUM": 28,
+        "LOW": 18,
+        "UNKNOWN": 3,
+        "CRITICAL": 1
+      },
+      "reportSHA256": "da8f79c9d79fb1850ca471aa1f806393cdbfbff9abb8ffaa810f7328280e96bf",
+      "actualPlatform": "linux/amd64"
+    },
+    {
+      "ref": "rancher/mirrored-library-traefik:3.7.8",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.RequiredImages",
+      "platform": "linux/arm64",
+      "report": "images/38-linux-arm64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "rancher/mirrored-library-traefik@sha256:4299bbed850421258fc5448c2e0e6ad350981d4d335a68de11b92448aedbefe5"
+      ],
+      "imageID": "sha256:2eb085ca3ba80498cf1a2858ec007927bb21c81a6c6dc722a3cffe68bd78dc07",
+      "os": {
+        "Family": "alpine",
+        "Name": "3.24.1"
+      },
+      "counts": {
+        "HIGH": 30,
+        "MEDIUM": 28,
+        "LOW": 18,
+        "UNKNOWN": 3,
+        "CRITICAL": 1
+      },
+      "reportSHA256": "59f06c3d7547dfeaee78410f11bfd5c6c70c697c3c90e93d94a54d31b76161d6",
+      "actualPlatform": "linux/arm64"
+    },
+    {
+      "ref": "rancher/mirrored-metrics-server:v0.9.0",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.RequiredImages",
+      "platform": "linux/amd64",
+      "report": "images/39-linux-amd64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "rancher/mirrored-metrics-server@sha256:d9862115e7c7881280d3d75ca26bda8ffc0fc213315979575bf23ce9826205c0"
+      ],
+      "imageID": "sha256:d7b01abacd67fcd2cd2f61b87cb46c850c4f090e77d3d5ae0878b9894e0fcd0f",
+      "os": {
+        "Family": "debian",
+        "Name": "13.5"
+      },
+      "counts": {
+        "MEDIUM": 18,
+        "LOW": 4,
+        "HIGH": 20,
+        "UNKNOWN": 1
+      },
+      "reportSHA256": "8848a6516ecf49d394fb4cc29f28200aba138c9d3f1ad7cafbe4844a77b6bc79",
+      "actualPlatform": "linux/amd64"
+    },
+    {
+      "ref": "rancher/mirrored-metrics-server:v0.9.0",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.RequiredImages",
+      "platform": "linux/arm64",
+      "report": "images/39-linux-arm64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "rancher/mirrored-metrics-server@sha256:d9862115e7c7881280d3d75ca26bda8ffc0fc213315979575bf23ce9826205c0"
+      ],
+      "imageID": "sha256:37ceda8805d2e3bca331bcdd659d9cf8d3b4075a68b288054c88e62232d52883",
+      "os": {
+        "Family": "debian",
+        "Name": "13.5"
+      },
+      "counts": {
+        "MEDIUM": 18,
+        "LOW": 4,
+        "HIGH": 20,
+        "UNKNOWN": 1
+      },
+      "reportSHA256": "1a756cebe8a4a4b3a9813901c4f348d79f1457335474034eae716797d08745c9",
+      "actualPlatform": "linux/arm64"
+    },
+    {
+      "ref": "rancher/mirrored-pause:3.10.2",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.RequiredImages",
+      "platform": "linux/amd64",
+      "report": "images/40-linux-amd64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "rancher/mirrored-pause@sha256:f548e0e8e3dc1896ca956272154dde3314e8cc4fde0a57577ee9fa1c63f5baf4"
+      ],
+      "imageID": "sha256:4a83b15d3ecfe0d916b2d0a7991bc2854a629b8097017c2ee1ff65b30ae4c07c",
+      "counts": {},
+      "reportSHA256": "5fb2e44f66f4f737f43a31b1a14d8e8d11b08f344c8ff3b5263319072a9bb241",
+      "actualPlatform": "linux/amd64"
+    },
+    {
+      "ref": "rancher/mirrored-pause:3.10.2",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.RequiredImages",
+      "platform": "linux/arm64",
+      "report": "images/40-linux-arm64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "rancher/mirrored-pause@sha256:f548e0e8e3dc1896ca956272154dde3314e8cc4fde0a57577ee9fa1c63f5baf4"
+      ],
+      "imageID": "sha256:3884a337192318652b28de0de1aeb07f446a14f220feb5066f03e93f23ea3b60",
+      "counts": {},
+      "reportSHA256": "24dac88d1350da571a9178834e3c674f7afbbadc15dfa7242fd77827732ac748",
+      "actualPlatform": "linux/arm64"
+    },
+    {
+      "ref": "registry:2.8.3",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.RequiredImages",
+      "platform": "linux/amd64",
+      "report": "images/41-linux-amd64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "registry@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373"
+      ],
+      "imageID": "sha256:26b2eb03618e749084668eaff68cff8f81dda12d06ac641be7a6398b82a6f25b",
+      "os": {
+        "Family": "alpine",
+        "Name": "3.18.12",
+        "EOSL": true
+      },
+      "counts": {
+        "CRITICAL": 2,
+        "HIGH": 29,
+        "MEDIUM": 50,
+        "LOW": 4
+      },
+      "reportSHA256": "d0e02a7d8c7190a034563183cf3d2ac71fbc3a13c5d49f816275aee66711305e",
+      "actualPlatform": "linux/amd64"
+    },
+    {
+      "ref": "registry:2.8.3",
+      "scopes": [
+        "runtime"
+      ],
+      "source": "internal/localdev.RequiredImages",
+      "platform": "linux/arm64",
+      "report": "images/41-linux-arm64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "registry@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373"
+      ],
+      "imageID": "sha256:33eeff39e0aaabe61ca826fd7502396183462451be0783133e1a8fa944fc7350",
+      "os": {
+        "Family": "alpine",
+        "Name": "3.18.12",
+        "EOSL": true
+      },
+      "counts": {
+        "CRITICAL": 2,
+        "HIGH": 29,
+        "MEDIUM": 50,
+        "LOW": 4
+      },
+      "reportSHA256": "745326cff7106360b2c6b4db3735352a22962306cfbb32e49622f6694b62533a",
+      "actualPlatform": "linux/arm64"
+    },
+    {
+      "ref": "skali-dependency-review:184-amd64",
+      "scopes": [
+        "candidate"
+      ],
+      "source": "AUDIT_EXTRA_IMAGES",
+      "platform": "linux/amd64",
+      "report": "candidate-scan-amd64/0-linux-amd64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "skali-dependency-review@sha256:ad00212b2c0f2d6b11569df674d3e5a92c21f7e2bcd7a6f326f1319baaf89d71"
+      ],
+      "imageID": "sha256:ad00212b2c0f2d6b11569df674d3e5a92c21f7e2bcd7a6f326f1319baaf89d71",
+      "os": {
+        "Family": "alpine",
+        "Name": "3.24.2"
+      },
+      "counts": {
+        "UNKNOWN": 3,
+        "MEDIUM": 1
+      },
+      "reportSHA256": "4953e978515e06f2c71da0b7ed860dfed4bf44e818dc46aae9175ba6bef05a3a",
+      "actualPlatform": "linux/amd64"
+    },
+    {
+      "ref": "skali-dependency-review:184-arm64",
+      "scopes": [
+        "candidate"
+      ],
+      "source": "AUDIT_EXTRA_IMAGES",
+      "platform": "linux/arm64",
+      "report": "candidate-scan-arm64/0-linux-arm64.json",
+      "status": "scanned",
+      "code": 0,
+      "digests": [
+        "skali-dependency-review@sha256:c957eb406462948cc73f6c18d9bde857e560fec92835173fa78b20b998306ee4"
+      ],
+      "imageID": "sha256:c957eb406462948cc73f6c18d9bde857e560fec92835173fa78b20b998306ee4",
+      "os": {
+        "Family": "alpine",
+        "Name": "3.24.2"
+      },
+      "counts": {
+        "UNKNOWN": 3,
+        "MEDIUM": 1
+      },
+      "reportSHA256": "51e5e5f275fc1133c2085c16723c19bbcc0dc5def44cc67ef28023a1df4c49fa",
+      "actualPlatform": "linux/arm64"
+    }
+  ],
+  "npmAudits": {
+    "studioBefore": {
+      "vulnerabilities": {
+        "info": 0,
+        "low": 0,
+        "moderate": 2,
+        "high": 0,
+        "critical": 0,
+        "total": 2
+      },
+      "dependencies": {
+        "prod": 26,
+        "dev": 221,
+        "optional": 56,
+        "peer": 0,
+        "peerOptional": 0,
+        "total": 246
+      }
+    },
+    "studioAfter": {
+      "vulnerabilities": {
+        "info": 0,
+        "low": 0,
+        "moderate": 0,
+        "high": 0,
+        "critical": 0,
+        "total": 0
+      },
+      "dependencies": {
+        "prod": 26,
+        "dev": 220,
+        "optional": 56,
+        "peer": 0,
+        "peerOptional": 0,
+        "total": 245
+      }
+    },
+    "website": {
+      "vulnerabilities": {
+        "info": 0,
+        "low": 0,
+        "moderate": 0,
+        "high": 0,
+        "critical": 0,
+        "total": 0
+      },
+      "dependencies": {
+        "prod": 24,
+        "dev": 207,
+        "optional": 50,
+        "peer": 0,
+        "peerOptional": 0,
+        "total": 230
+      }
+    }
+  }
+}
