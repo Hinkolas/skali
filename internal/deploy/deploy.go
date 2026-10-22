@@ -68,6 +68,9 @@ type Service struct {
 	version   string
 	enqueuer  Enqueuer
 	feed      *feed.Projects
+	// bucketUsage measures buckets for quota reductions (transitions.go);
+	// nil refuses every reduction as unmeasurable.
+	bucketUsage BucketUsage
 	// lifetimeCtx is the daemon's context for work that outlives the
 	// request that started it (deployment completion). nil means
 	// context.Background(), which is what tests want. Its cancellation is
@@ -359,6 +362,11 @@ func (s *Service) Promote(ctx context.Context, p *Prepared) error {
 	if err != nil {
 		return err
 	}
+	// Open checked the stateful transitions before the builds; the claims
+	// and bucket usage may have moved since, so check them again last.
+	if err := s.checkTransitions(ctx, p.EnvironmentID, p.Revision.Definition); err != nil {
+		return err
+	}
 	unlock, err := s.st.LockEnvironmentWithin(ctx, p.EnvironmentID, s.promotionWait)
 	if err != nil {
 		return err
@@ -496,6 +504,16 @@ func (s *Service) Rollback(ctx context.Context, in RollbackInput) (*RollbackResu
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("deploy: check in-flight deployment: %w", err)
 	}
+	// An older revision can name another database version or a smaller
+	// bucket quota than what is live now; a rollback must not ask for
+	// what a deploy may not.
+	rev, err := revision.Decode(row.Document)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.checkTransitions(ctx, in.EnvironmentID, rev.Definition); err != nil {
+		return nil, err
+	}
 
 	run, err := in.Journal.BeginRun(ctx, journal.RunInput{
 		Kind:          "rollback",
@@ -514,10 +532,6 @@ func (s *Service) Rollback(ctx context.Context, in RollbackInput) (*RollbackResu
 	ctx, cancel := detached(ctx)
 	defer cancel()
 
-	rev, err := s.GetRevision(ctx, in.RevisionID)
-	if err != nil {
-		return nil, finishRunFailed(ctx, in.Journal, run.ID, err)
-	}
 	// The run says what the rollback reverses: the target it moves away
 	// from. Explanatory only, like the deployment's.
 	if err := s.recordRollback(ctx, in.Journal, run.ID, target.TargetRevisionID, rev); err != nil {

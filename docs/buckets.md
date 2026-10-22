@@ -95,6 +95,19 @@ ignored. Its guarantees, exactly:
   the count is an upper bound on objects, not an object count. The store's
   disk footprint (deleted bytes included until compaction) is tracked
   separately and never charged.
+- **Lowering it.** A deploy, promotion or rollback that lowers the quota,
+  or sets one on a bucket that had none, measures the bucket's usage at
+  that moment and is refused when the usage is at or above the new quota,
+  since the bucket would refuse uploads as soon as it applied. The error
+  names the bucket, its usage and the requested quota: delete objects
+  until it stores less, or choose a larger quota. A refused change leaves
+  the quota, the bucket and its objects as they are. When the usage cannot
+  be measured (the object store is unreachable), the reduction is refused
+  too, never guessed; raising or keeping the quota is never measured.
+  The plan preview and the open measure, and promotion measures again
+  after the builds. Uploads keep landing after that last measurement until
+  the new quota reaches upkeep, so a bucket can still end up over it; it
+  then refuses uploads as above until space is freed.
 
 ## Endpoints
 

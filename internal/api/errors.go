@@ -59,6 +59,17 @@ const (
 	codeEnvironmentProtected    = "environment_protected"
 	codeProjectDeleting         = "project_deleting"
 
+	// codeUnsupportedTransition: the change would move a live database or
+	// bucket (engine, version, isolation, visibility, versioning), which
+	// no confirmation allows.
+	codeUnsupportedTransition = "unsupported_transition"
+	// codeQuotaBelowUsage: a bucket quota would drop to or below what the
+	// bucket stores now.
+	codeQuotaBelowUsage = "quota_below_usage"
+	// codeUsageUnavailable: a quota reduction could not be checked because
+	// the bucket's usage could not be measured; nothing changed.
+	codeUsageUnavailable = "usage_unavailable"
+
 	// Backups.
 	codeBackupInFlight           = "backup_in_flight"
 	codeBackupTargetUnconfigured = "backup_target_unconfigured"

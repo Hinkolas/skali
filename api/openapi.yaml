@@ -1630,6 +1630,25 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: |
+            The revision asks for what a deployment may not:
+            `unsupported_transition`: the definition changes a live
+            database's engine, version, or isolation, or a live bucket's
+            visibility or versioning; no confirmation allows it.
+            `quota_below_usage`: a bucket's storage quota would drop to or
+            below what the bucket stores now.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: |
+            `usage_unavailable`: a bucket quota reduction could not be
+            checked because the bucket's usage could not be measured;
+            nothing changed and a retry may succeed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /v1/environments/{id}/runs:
     parameters:
@@ -3461,6 +3480,19 @@ paths:
           description: |
             `invalid_values`: the environment's values do not satisfy the
             definition (for example a missing required value).
+            `unsupported_transition`: the definition changes a live
+            database's engine, version, or isolation, or a live bucket's
+            visibility or versioning; no confirmation allows it.
+            `quota_below_usage`: a bucket's storage quota would drop to or
+            below what the bucket stores now.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: |
+            `usage_unavailable`: a bucket quota reduction could not be
+            checked because the bucket's usage could not be measured;
+            nothing changed and a retry may succeed.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -3539,11 +3571,19 @@ paths:
             `unsupported_capabilities`: the definition needs more than this
             installation declares. `invalid_values`: the environment's
             values do not satisfy the definition.
+            `unsupported_transition`: the definition changes a live
+            database's engine, version, or isolation, or a live bucket's
+            visibility or versioning; no confirmation allows it.
+            `quota_below_usage`: a bucket's storage quota would drop to or
+            below what the bucket stores now.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "503":
-          description: "`registry_disabled`: artifact work needs a managed registry."
+          description: |
+            `registry_disabled`: artifact work needs a managed registry.
+            `usage_unavailable`: a bucket quota reduction could not be
+            checked because the bucket's usage could not be measured.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
