@@ -38,7 +38,12 @@ applications:
 // compiled manifest exactly as the renderer composes it.
 func aliasCertName(t *testing.T) string {
 	t.Helper()
-	document, err := manifest.Parse([]byte(aliasManifest), "skali.yml")
+	return manifestAliasCertName(t, aliasManifest)
+}
+
+func manifestAliasCertName(t *testing.T, source string) string {
+	t.Helper()
+	document, err := manifest.Parse([]byte(source), "skali.yml")
 	require.NoError(t, err)
 	result, err := compiler.Compile(document)
 	require.NoError(t, err)
@@ -166,4 +171,72 @@ func TestRouteAliasReachableGates(t *testing.T) {
 	_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
 	require.NoError(t, err)
 	require.NotNil(t, f.target(t).ActiveRevisionID)
+}
+
+// ownVariableAliasManifest gives the alias a variable no route domain
+// references, as a retired brand domain usually is.
+const ownVariableAliasManifest = `name: demo
+applications:
+  web:
+    image: ghcr.io/example/web:1.0.0
+    ports:
+      http:
+        port: 8080
+        protocol: http
+    routes:
+      public:
+        domain: "${APP_DOMAIN}"
+        port: http
+        aliases:
+          - "${OLD_DOMAIN}"
+    environment:
+      SESSION_SECRET: "${SESSION_SECRET}"
+`
+
+// An alias's own variable is as public as a route domain's: the deferred
+// checkpoint names the hostname instead of redacting it, and status and
+// the route probe resolve it.
+func TestRouteAliasOwnVariableResolves(t *testing.T) {
+	t.Parallel()
+	f := certFixture(t, Config{RolloutDeadline: time.Hour})
+	ctx := context.Background()
+	aliasCert := manifestAliasCertName(t, ownVariableAliasManifest)
+	f.kernel.deps.ProbeDomain = probeByDomain("demo.example.com")
+
+	result := f.executeDeploymentValues(t, ownVariableAliasManifest, map[string]string{
+		"APP_DOMAIN":     "demo.example.com",
+		"OLD_DOMAIN":     "old-brand.example.net",
+		"SESSION_SECRET": "kernel-plant-value",
+	})
+	f.fake.SetFresh()
+	_, err := f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	f.markHealthy(t)
+	f.fake.SetCertificate(f.environmentID, f.namespace, certName, "web",
+		module.CertificateStatus{Ready: true, NotAfter: time.Now().Add(60 * 24 * time.Hour)})
+	f.fake.SetCertificate(f.environmentID, f.namespace, aliasCert, "web",
+		module.CertificateStatus{Issuing: true, Reason: "Pending", Message: "waiting for the ACME challenge"})
+	_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	require.NotNil(t, f.target(t).ActiveRevisionID)
+
+	aliasStep, found, err := f.kernel.deps.Journal.FindStep(ctx, result.RunID, "tls:"+aliasCert)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, "skipped", aliasStep.Status)
+	message, err := f.kernel.deps.Journal.LatestStepMessage(ctx, aliasStep.ID)
+	require.NoError(t, err)
+	require.Contains(t, message, "TLS deferred · old-brand.example.net does not reach this installation yet")
+
+	status, err := f.kernel.Status(ctx, f.environmentID)
+	require.NoError(t, err)
+	require.Len(t, status.Services[0].Routes, 1)
+	require.Len(t, status.Services[0].Routes[0].Aliases, 1)
+	require.Equal(t, "old-brand.example.net", status.Services[0].Routes[0].Aliases[0].Domain)
+
+	probes, err := f.kernel.ProbeRoutes(ctx, f.environmentID)
+	require.NoError(t, err)
+	require.Len(t, probes, 2)
+	require.Equal(t, "old-brand.example.net", probes[1].Domain)
+	require.True(t, probes[1].Alias)
 }
