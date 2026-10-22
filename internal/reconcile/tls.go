@@ -75,7 +75,7 @@ type arrivalNote struct {
 // (prepareEdgeVerdicts, on the cadence interval); under the lock this only
 // reads the cache. A domain without a verdict counts as unknown and the
 // pass requeues quickly so the next pre-lock phase probes it.
-func (k *Kernel) reconcileTLS(ctx context.Context, a *runAttachment, target store.EnvironmentTarget, rev *revision.Revision, desired *desiredSet, snapshot observe.Snapshot, interval time.Duration) tlsOutcome {
+func (k *Kernel) reconcileTLS(ctx context.Context, a *runAttachment, target store.EnvironmentTarget, rev *revision.Revision, desired *desiredSet, snapshot observe.Snapshot, interval time.Duration, deadline time.Time) tlsOutcome {
 	var out tlsOutcome
 	if !k.cfg.Certificates {
 		return out
@@ -87,7 +87,6 @@ func (k *Kernel) reconcileTLS(ctx context.Context, a *runAttachment, target stor
 		return out
 	}
 	now := time.Now()
-	deadline := target.UpdatedAt.Add(rolloutBudget(rev.Definition, k.cfg.RolloutDeadline) + releaseBudget(rev.Definition))
 	refs := make([]kube.ObjectRef, 0)
 	for _, ref := range desired.refs {
 		if ref.GVK == edge.CertificateGVK {
@@ -191,9 +190,9 @@ func (k *Kernel) reconcileTLS(ctx context.Context, a *runAttachment, target stor
 
 		var arrival *arrivalNote
 		if cert != nil && !(valid && covered) {
-			if !pending && rollout && k.deps.RetryCertificate != nil && !cert.Issuing && !cert.LastFailureTime.IsZero() && cert.LastFailureTime.Before(target.UpdatedAt.Truncate(time.Second)) && now.Before(deadline) {
+			if !pending && rollout && k.deps.RetryCertificate != nil && !cert.Issuing && !cert.LastFailureTime.IsZero() && cert.LastFailureTime.Before(target.RolloutStartedAt.Truncate(time.Second)) && now.Before(deadline) {
 				retryCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-				changed, err := k.deps.RetryCertificate(retryCtx, ref, target.UpdatedAt)
+				changed, err := k.deps.RetryCertificate(retryCtx, ref, target.RolloutStartedAt)
 				cancel()
 				if err != nil {
 					fields["recovery_error"] = err.Error()
@@ -343,7 +342,7 @@ func (k *Kernel) reconcileTLS(ctx context.Context, a *runAttachment, target stor
 			out.blocked = true
 			// Only a failure of this promotion can fail early. A pre-existing
 			// failure gets its recovery opportunity, including controller/API lag.
-			hopeless := readOK && cert != nil && !cert.Issuing && !cert.LastFailureTime.Before(target.UpdatedAt.Truncate(time.Second)) && cert.NextRetryTime.After(deadline)
+			hopeless := readOK && cert != nil && !cert.Issuing && !cert.LastFailureTime.Before(target.RolloutStartedAt.Truncate(time.Second)) && cert.NextRetryTime.After(deadline)
 			if now.After(deadline) || hopeless {
 				state = journal.StepFailed
 				level = "error"

@@ -385,7 +385,11 @@ or reach its timeout instead of stopping it halfway.
 
 `maxUnavailable` and `maxSurge` are errors under any other strategy.
 `timeout` applies to every strategy: when the new version is not ready in
-time the deployment fails and the previous revision stays active.
+time the deployment fails and the previous revision stays active. The
+clock starts at the deployment; a release command gets its own `timeout`
+from when it starts, and the rollout `timeout` again after it. Traffic
+that just switched to the new version gets one more check before a
+deadline that passed moves it back.
 Replicas receive SIGTERM and have the grace period to finish before being
 killed.
 

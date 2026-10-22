@@ -70,7 +70,7 @@ func (q *Queries) FallbackEnvironmentTarget(ctx context.Context, arg FallbackEnv
 }
 
 const getEnvironmentPass = `-- name: GetEnvironmentPass :one
-SELECT environments.id, environments.project_id, environments.name, environments.created_at, environments.updated_at, environments.max_role, environments.deploy_policy, environments.promote_from, environments.priority, environments.backup_schedule, environments.backup_retention_seconds, environments.backup_strategy, environments.previous_names, environments.backup_namespace, environment_targets.environment_id, environment_targets.target_revision_id, environment_targets.active_revision_id, environment_targets.updated_at, environment_targets.state, environment_targets.restarted_at, environment_targets.incomplete_restore_id, environment_targets.incomplete_restore_components, environment_targets.promoted_at,
+SELECT environments.id, environments.project_id, environments.name, environments.created_at, environments.updated_at, environments.max_role, environments.deploy_policy, environments.promote_from, environments.priority, environments.backup_schedule, environments.backup_retention_seconds, environments.backup_strategy, environments.previous_names, environments.backup_namespace, environment_targets.environment_id, environment_targets.target_revision_id, environment_targets.active_revision_id, environment_targets.updated_at, environment_targets.state, environment_targets.restarted_at, environment_targets.incomplete_restore_id, environment_targets.incomplete_restore_components, environment_targets.promoted_at, environment_targets.rollout_started_at,
        runs.id AS run_id, runs.kind AS run_kind, runs.rollout_revision_id AS run_rollout_revision_id,
        (SELECT jsonb_object_agg(environment_intercepts.application_key, environment_intercepts.ports)
         FROM environment_intercepts
@@ -130,6 +130,7 @@ func (q *Queries) GetEnvironmentPass(ctx context.Context, id uuid.UUID) (GetEnvi
 		&i.EnvironmentTarget.IncompleteRestoreID,
 		&i.EnvironmentTarget.IncompleteRestoreComponents,
 		&i.EnvironmentTarget.PromotedAt,
+		&i.EnvironmentTarget.RolloutStartedAt,
 		&i.RunID,
 		&i.RunKind,
 		&i.RunRolloutRevisionID,
@@ -141,7 +142,7 @@ func (q *Queries) GetEnvironmentPass(ctx context.Context, id uuid.UUID) (GetEnvi
 }
 
 const getEnvironmentTarget = `-- name: GetEnvironmentTarget :one
-SELECT environment_id, target_revision_id, active_revision_id, updated_at, state, restarted_at, incomplete_restore_id, incomplete_restore_components, promoted_at FROM environment_targets WHERE environment_id = $1
+SELECT environment_id, target_revision_id, active_revision_id, updated_at, state, restarted_at, incomplete_restore_id, incomplete_restore_components, promoted_at, rollout_started_at FROM environment_targets WHERE environment_id = $1
 `
 
 func (q *Queries) GetEnvironmentTarget(ctx context.Context, environmentID uuid.UUID) (EnvironmentTarget, error) {
@@ -157,12 +158,13 @@ func (q *Queries) GetEnvironmentTarget(ctx context.Context, environmentID uuid.U
 		&i.IncompleteRestoreID,
 		&i.IncompleteRestoreComponents,
 		&i.PromotedAt,
+		&i.RolloutStartedAt,
 	)
 	return i, err
 }
 
 const listEnvironmentTargets = `-- name: ListEnvironmentTargets :many
-SELECT environment_id, target_revision_id, active_revision_id, updated_at, state, restarted_at, incomplete_restore_id, incomplete_restore_components, promoted_at FROM environment_targets
+SELECT environment_id, target_revision_id, active_revision_id, updated_at, state, restarted_at, incomplete_restore_id, incomplete_restore_components, promoted_at, rollout_started_at FROM environment_targets
 `
 
 func (q *Queries) ListEnvironmentTargets(ctx context.Context) ([]EnvironmentTarget, error) {
@@ -184,6 +186,7 @@ func (q *Queries) ListEnvironmentTargets(ctx context.Context) ([]EnvironmentTarg
 			&i.IncompleteRestoreID,
 			&i.IncompleteRestoreComponents,
 			&i.PromotedAt,
+			&i.RolloutStartedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -196,7 +199,7 @@ func (q *Queries) ListEnvironmentTargets(ctx context.Context) ([]EnvironmentTarg
 }
 
 const listEnvironmentsOutOfSync = `-- name: ListEnvironmentsOutOfSync :many
-SELECT environment_id, target_revision_id, active_revision_id, updated_at, state, restarted_at, incomplete_restore_id, incomplete_restore_components, promoted_at FROM environment_targets
+SELECT environment_id, target_revision_id, active_revision_id, updated_at, state, restarted_at, incomplete_restore_id, incomplete_restore_components, promoted_at, rollout_started_at FROM environment_targets
 WHERE target_revision_id IS DISTINCT FROM active_revision_id
 `
 
@@ -221,6 +224,7 @@ func (q *Queries) ListEnvironmentsOutOfSync(ctx context.Context) ([]EnvironmentT
 			&i.IncompleteRestoreID,
 			&i.IncompleteRestoreComponents,
 			&i.PromotedAt,
+			&i.RolloutStartedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -298,7 +302,7 @@ const resumeRestoredEnvironment = `-- name: ResumeRestoredEnvironment :execrows
 UPDATE environment_targets
 SET target_revision_id = $1::uuid, state = 'active',
     incomplete_restore_id = NULL, incomplete_restore_components = '{}',
-    updated_at = now(), promoted_at = now()
+    updated_at = now(), promoted_at = now(), rollout_started_at = now()
 WHERE environment_targets.environment_id = $2
   AND environment_targets.state <> 'releasing'
   AND environment_targets.incomplete_restore_id = $3::uuid
@@ -351,7 +355,7 @@ func (q *Queries) SetEnvironmentActiveRevision(ctx context.Context, arg SetEnvir
 const setEnvironmentTarget = `-- name: SetEnvironmentTarget :execrows
 UPDATE environment_targets
 SET target_revision_id = $1, state = 'active', updated_at = now(),
-    promoted_at = now(),
+    promoted_at = now(), rollout_started_at = now(),
     restarted_at = CASE WHEN $2::boolean THEN now() ELSE restarted_at END
 WHERE environment_id = $3 AND state <> 'releasing'
   AND incomplete_restore_id IS NULL
@@ -372,7 +376,8 @@ type SetEnvironmentTargetParams struct {
 // (ClearIncompleteRestore) lifts the hold. With restart set, the same
 // write stamps a workload restart (a forced deployment). Every call is a
 // new promotion, a forced redeploy of the same revision included, so it
-// stamps promoted_at, which binds the promotion's release Jobs.
+// stamps promoted_at, which binds the promotion's release Jobs, and starts
+// the rollout-deadline clock.
 func (q *Queries) SetEnvironmentTarget(ctx context.Context, arg SetEnvironmentTargetParams) (int64, error) {
 	result, err := q.db.Exec(ctx, setEnvironmentTarget, arg.TargetRevisionID, arg.Restart, arg.EnvironmentID)
 	if err != nil {
@@ -383,14 +388,15 @@ func (q *Queries) SetEnvironmentTarget(ctx context.Context, arg SetEnvironmentTa
 
 const stampEnvironmentRestart = `-- name: StampEnvironmentRestart :execrows
 UPDATE environment_targets
-SET restarted_at = now(), updated_at = now()
+SET restarted_at = now(), updated_at = now(), rollout_started_at = now()
 WHERE environment_id = $1 AND state <> 'releasing'
 `
 
-// Force redeployments stamp a restart inside the promotion transaction; the
-// reconciler renders the stamp as a pod-template annotation so every
-// application workload rolls even when the revision is unchanged. Stateful
-// services never read it.
+// An environment-wide restart stamps the restart the forced deployment
+// stamps inside its promotion; the reconciler renders the stamp as a
+// pod-template annotation so every application workload rolls even when
+// the revision is unchanged. Stateful services never read it. The restart
+// is a rollout, so it starts the rollout-deadline clock.
 func (q *Queries) StampEnvironmentRestart(ctx context.Context, environmentID uuid.UUID) (int64, error) {
 	result, err := q.db.Exec(ctx, stampEnvironmentRestart, environmentID)
 	if err != nil {
@@ -399,17 +405,17 @@ func (q *Queries) StampEnvironmentRestart(ctx context.Context, environmentID uui
 	return result.RowsAffected(), nil
 }
 
-const touchEnvironmentTarget = `-- name: TouchEnvironmentTarget :execrows
+const startEnvironmentRollout = `-- name: StartEnvironmentRollout :execrows
 UPDATE environment_targets
-SET updated_at = now()
+SET updated_at = now(), rollout_started_at = now()
 WHERE environment_id = $1 AND state <> 'releasing'
 `
 
-// A service restart begins a rollout without moving the target; touching
-// updated_at restarts the rollout-deadline clock for the adopted restart
-// run, exactly like a promotion does through SetEnvironmentTarget.
-func (q *Queries) TouchEnvironmentTarget(ctx context.Context, environmentID uuid.UUID) (int64, error) {
-	result, err := q.db.Exec(ctx, touchEnvironmentTarget, environmentID)
+// A service restart begins a rollout without moving the target; it starts
+// the rollout-deadline clock exactly like a promotion does through
+// SetEnvironmentTarget.
+func (q *Queries) StartEnvironmentRollout(ctx context.Context, environmentID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, startEnvironmentRollout, environmentID)
 	if err != nil {
 		return 0, err
 	}

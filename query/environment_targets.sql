@@ -36,11 +36,12 @@ WHERE environments.id = $1;
 -- (ClearIncompleteRestore) lifts the hold. With restart set, the same
 -- write stamps a workload restart (a forced deployment). Every call is a
 -- new promotion, a forced redeploy of the same revision included, so it
--- stamps promoted_at, which binds the promotion's release Jobs.
+-- stamps promoted_at, which binds the promotion's release Jobs, and starts
+-- the rollout-deadline clock.
 -- name: SetEnvironmentTarget :execrows
 UPDATE environment_targets
 SET target_revision_id = sqlc.narg(target_revision_id), state = 'active', updated_at = now(),
-    promoted_at = now(),
+    promoted_at = now(), rollout_started_at = now(),
     restarted_at = CASE WHEN sqlc.arg(restart)::boolean THEN now() ELSE restarted_at END
 WHERE environment_id = sqlc.arg(environment_id) AND state <> 'releasing'
   AND incomplete_restore_id IS NULL;
@@ -53,21 +54,22 @@ UPDATE environment_targets
 SET active_revision_id = $2, updated_at = now()
 WHERE environment_id = $1 AND target_revision_id = $2;
 
--- Force redeployments stamp a restart inside the promotion transaction; the
--- reconciler renders the stamp as a pod-template annotation so every
--- application workload rolls even when the revision is unchanged. Stateful
--- services never read it.
+-- An environment-wide restart stamps the restart the forced deployment
+-- stamps inside its promotion; the reconciler renders the stamp as a
+-- pod-template annotation so every application workload rolls even when
+-- the revision is unchanged. Stateful services never read it. The restart
+-- is a rollout, so it starts the rollout-deadline clock.
 -- name: StampEnvironmentRestart :execrows
 UPDATE environment_targets
-SET restarted_at = now(), updated_at = now()
+SET restarted_at = now(), updated_at = now(), rollout_started_at = now()
 WHERE environment_id = $1 AND state <> 'releasing';
 
--- A service restart begins a rollout without moving the target; touching
--- updated_at restarts the rollout-deadline clock for the adopted restart
--- run, exactly like a promotion does through SetEnvironmentTarget.
--- name: TouchEnvironmentTarget :execrows
+-- A service restart begins a rollout without moving the target; it starts
+-- the rollout-deadline clock exactly like a promotion does through
+-- SetEnvironmentTarget.
+-- name: StartEnvironmentRollout :execrows
 UPDATE environment_targets
-SET updated_at = now()
+SET updated_at = now(), rollout_started_at = now()
 WHERE environment_id = $1 AND state <> 'releasing';
 
 -- name: ListEnvironmentTargets :many
@@ -112,7 +114,7 @@ WHERE environment_id = sqlc.arg(environment_id) AND state <> 'releasing';
 UPDATE environment_targets
 SET target_revision_id = sqlc.arg(target_revision_id)::uuid, state = 'active',
     incomplete_restore_id = NULL, incomplete_restore_components = '{}',
-    updated_at = now(), promoted_at = now()
+    updated_at = now(), promoted_at = now(), rollout_started_at = now()
 WHERE environment_targets.environment_id = sqlc.arg(environment_id)
   AND environment_targets.state <> 'releasing'
   AND environment_targets.incomplete_restore_id = sqlc.arg(restore_id)::uuid

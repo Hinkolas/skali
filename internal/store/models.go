@@ -339,6 +339,7 @@ type EnvironmentTarget struct {
 	IncompleteRestoreID         *uuid.UUID
 	IncompleteRestoreComponents []string
 	PromotedAt                  time.Time
+	RolloutStartedAt            time.Time
 }
 
 type HostnameClaim struct {

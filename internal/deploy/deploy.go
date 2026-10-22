@@ -661,8 +661,8 @@ func (s *Service) Restart(ctx context.Context, in RestartInput) (*RestartResult,
 	// for the revision it restarts once the restart exists to roll out.
 	err = s.st.WithTx(ctx, func(q *store.Queries) error {
 		if in.ApplicationKey == "" {
-			// The environment-wide stamp also touches updated_at itself, so
-			// the rollout-deadline clock restarts with it.
+			// The environment-wide stamp starts the rollout-deadline clock
+			// itself.
 			if _, err := q.StampEnvironmentRestart(ctx, in.EnvironmentID); err != nil {
 				return fmt.Errorf("deploy: stamp restart: %w", err)
 			}
@@ -673,11 +673,10 @@ func (s *Service) Restart(ctx context.Context, in RestartInput) (*RestartResult,
 			}); err != nil {
 				return fmt.Errorf("deploy: stamp restart: %w", err)
 			}
-			// The stamp begins a rollout without moving the target; touching
-			// the target row restarts the rollout-deadline clock for the
-			// adopted run.
-			if _, err := q.TouchEnvironmentTarget(ctx, in.EnvironmentID); err != nil {
-				return fmt.Errorf("deploy: touch target: %w", err)
+			// The stamp begins a rollout without moving the target; the
+			// rollout-deadline clock starts with it.
+			if _, err := q.StartEnvironmentRollout(ctx, in.EnvironmentID); err != nil {
+				return fmt.Errorf("deploy: start rollout: %w", err)
 			}
 		}
 		return handOff(ctx, q, run.ID, *target.TargetRevisionID)
