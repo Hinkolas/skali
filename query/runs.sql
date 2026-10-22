@@ -19,6 +19,15 @@ RETURNING *;
 UPDATE runs SET deployment = $2 WHERE id = $1
 RETURNING environment_id;
 
+-- HandOffRun binds a running rollout run to the revision it rolls out
+-- (see the column's migration). It runs in the transaction that moves the
+-- target or stamps the restart, so the kernel never sees one without the
+-- other. A run that no longer runs is left alone: the journal explains and
+-- never drives, so the change goes ahead without it.
+-- name: HandOffRun :execrows
+UPDATE runs SET rollout_revision_id = sqlc.arg(rollout_revision_id)::uuid
+WHERE id = sqlc.arg(id)::uuid AND status = 'running';
+
 -- name: GetRunByID :one
 SELECT * FROM runs WHERE id = $1;
 

@@ -163,6 +163,10 @@ func (s *Service) runStages(ctx context.Context, runID uuid.UUID, in ExecuteInpu
 	}
 	prepared.Restart = in.Restart
 	prepared.DeploymentID = in.DeploymentID
+	if s.enqueuer != nil {
+		// Only a kernel adopts the run; without one it concludes here.
+		prepared.RunID = runID
+	}
 	var promoteLog []journal.LogEntry
 	if in.Restart {
 		promoteLog = append(promoteLog, info("forced deployment: application workloads will restart"))

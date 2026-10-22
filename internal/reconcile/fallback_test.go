@@ -103,12 +103,15 @@ func TestPreparingDeploymentRunNotAdopted(t *testing.T) {
 		"a pass with no run to journal into strands none: the row could never "+
 			"start, nothing would finish it, and retention reclaims only terminal runs")
 
-	// Promote flips the boundary: the same run is adopted and the stale
-	// unhealthy target now fails it under the deadline.
+	// The handoff flips the boundary: promotion binds the same run to the
+	// target it moved, the run is adopted, and the unhealthy target now
+	// fails it under the deadline.
 	_, err = f.st.MoveDeployment(ctx, store.MoveDeploymentParams{
 		ID: deployment.ID, Status: string(deploy.DeploymentPromoted),
 		FromStatuses: []string{string(deploy.DeploymentPreparing)},
 	})
+	require.NoError(t, err)
+	_, err = f.st.HandOffRun(ctx, store.HandOffRunParams{ID: clientRun.ID, RolloutRevisionID: first.RevisionID})
 	require.NoError(t, err)
 	_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
 	require.NoError(t, err)
@@ -322,6 +325,8 @@ func TestRollbackRunAdoptedAndActivates(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "rollback", run.Kind)
 	require.Equal(t, "running", run.Status)
+	require.Equal(t, &first.RevisionID, run.RolloutRevisionID,
+		"the rollback hands its run off for the revision it moved the target to")
 
 	// The kernel adopts the run, re-applies revision A, and activation on
 	// health concludes it.

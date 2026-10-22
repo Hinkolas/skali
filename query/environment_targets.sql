@@ -6,15 +6,14 @@ VALUES ($1);
 SELECT * FROM environment_targets WHERE environment_id = $1;
 
 -- GetEnvironmentPass reads what a reconcile pass starts from in one round
--- trip: the environment, its target pointers, and its running run with,
--- for a deployment run, the status of its deployment, which are NULL when
--- nothing runs. intercepts maps each intercepted application to its host
+-- trip: the environment, its target pointers, and its running run with the
+-- revision it was handed off for, which are NULL when nothing runs. intercepts maps each intercepted application to its host
 -- ports and restarts each restarted application to its stamp; both are
 -- NULL when empty. claims_hostnames reports whether the environment holds
 -- any hostname claim.
 -- name: GetEnvironmentPass :one
 SELECT sqlc.embed(environments), sqlc.embed(environment_targets),
-       runs.id AS run_id, runs.kind AS run_kind, deployments.status AS deployment_status,
+       runs.id AS run_id, runs.kind AS run_kind, runs.rollout_revision_id AS run_rollout_revision_id,
        (SELECT jsonb_object_agg(environment_intercepts.application_key, environment_intercepts.ports)
         FROM environment_intercepts
         WHERE environment_intercepts.environment_id = environments.id)::jsonb AS intercepts,
@@ -26,8 +25,6 @@ SELECT sqlc.embed(environments), sqlc.embed(environment_targets),
 FROM environments
 JOIN environment_targets ON environment_targets.environment_id = environments.id
 LEFT JOIN runs ON runs.environment_id = environments.id AND runs.status = 'running'
-LEFT JOIN deployments ON runs.kind = 'deployment'
-    AND deployments.environment_id = environments.id AND deployments.run_id = runs.id
 WHERE environments.id = $1;
 
 -- The single writer of the target pointer; runs only inside the deploy

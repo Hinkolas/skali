@@ -59,10 +59,16 @@ type runAttachment struct {
 	steps map[string]journal.StepState
 }
 
-// attachedRun is the run a pass journals under.
+// attachedRun is the run a pass journals under. Revision is the revision a
+// rollout run was handed off for; nil for every other kind.
 type attachedRun struct {
-	ID   uuid.UUID
-	Kind string
+	ID       uuid.UUID
+	Kind     string
+	Revision *uuid.UUID
+}
+
+func sameRevision(id *uuid.UUID, want uuid.UUID) bool {
+	return id != nil && *id == want
 }
 
 // adoptableRun is the environment's running run that attachRun would
@@ -82,14 +88,15 @@ func adoptableRun(state store.GetEnvironmentPassRow) (*attachedRun, bool) {
 		// environment's running-run race in ensure, journaling nothing.
 		return nil, false
 	}
-	if state.DeploymentStatus != nil && *state.DeploymentStatus == string(deploy.DeploymentPreparing) {
-		// A deployment run in its artifact window still belongs to the build
-		// client: rollout journaling and the rollout deadline begin at
-		// promote. Adopting earlier lets a stale unhealthy target fail a run
-		// whose deployment is still preparing.
+	if rolloutRun(*state.RunKind) && state.RunRolloutRevisionID == nil {
+		// A rollout run not yet handed off still belongs to its opener: a
+		// deployment in its artifact window, or one between beginning its
+		// run and promoting. Rollout journaling begins at the handoff;
+		// adopting earlier lets a pass that read the previous target
+		// conclude a run whose work has not started.
 		return nil, false
 	}
-	return &attachedRun{ID: *state.RunID, Kind: *state.RunKind}, true
+	return &attachedRun{ID: *state.RunID, Kind: *state.RunKind, Revision: state.RunRolloutRevisionID}, true
 }
 
 // attachRun adopts the environment's running run when one exists.
@@ -107,6 +114,14 @@ func (k *Kernel) attachRun(ctx context.Context, state store.GetEnvironmentPassRo
 		return attachment
 	}
 	attachment.run = run
+	if run.Revision != nil && !sameRevision(state.EnvironmentTarget.TargetRevisionID, *run.Revision) {
+		// The target left the run's revision without concluding it (a
+		// fallback whose journal write failed): its rollout is over. The
+		// run is the kernel's since the handoff, so it concludes here and
+		// the pass journals as if none were running.
+		attachment.finish(ctx, journal.RunFailed, "the target moved off the run's revision before it activated")
+		return attachment
+	}
 	steps, err := attachment.journal.StepStates(ctx, run.ID)
 	if err != nil {
 		// Without the view every record goes to the journal, which

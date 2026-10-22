@@ -173,7 +173,7 @@ const MaxFailureBytes = 512
 
 // FinishRun moves the run to a terminal status and forces every non-terminal
 // step and attempt terminal in the same statement: running work adopts the
-// run's outcome (failed or cancelled), unstarted steps are skipped. It then
+// run's outcome, unstarted steps are skipped. It then
 // applies the retention caps. A run finished failed through this path
 // records no reason; FailRun is the path that knows one.
 func (s *Service) FinishRun(ctx context.Context, id uuid.UUID, to RunStatus) error {
@@ -245,10 +245,13 @@ func finishParams(id uuid.UUID, to RunStatus, failure *string) (store.FinishRunP
 	if !Runs.Terminal(to) {
 		return store.FinishRunParams{}, fmt.Errorf("%w: finish requires a terminal status, got %s", ErrInvalidTransition, to)
 	}
-	closeStatus := "cancelled"
-	if to == RunFailed {
-		closeStatus = "failed"
-	} else {
+	// Running work adopts the run's outcome. A run concludes succeeded only
+	// once its work did, so a step still running then belongs to a writer
+	// whose own record has not landed yet (the deploy service closing its
+	// promote step while the kernel already activated), never to work that
+	// stopped short.
+	closeStatus := string(to)
+	if to != RunFailed {
 		failure = nil // a reason only explains a failure
 	}
 	return store.FinishRunParams{

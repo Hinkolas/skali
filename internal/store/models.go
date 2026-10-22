@@ -480,18 +480,19 @@ type Revision struct {
 }
 
 type Run struct {
-	ID               uuid.UUID
-	Kind             string
-	ProjectID        *uuid.UUID
-	EnvironmentID    *uuid.UUID
-	Actor            string
-	Status           string
-	CreatedAt        time.Time
-	StartedAt        *time.Time
-	FinishedAt       *time.Time
-	BypassProtection bool
-	Failure          *string
-	Deployment       []byte
+	ID                uuid.UUID
+	Kind              string
+	ProjectID         *uuid.UUID
+	EnvironmentID     *uuid.UUID
+	Actor             string
+	Status            string
+	CreatedAt         time.Time
+	StartedAt         *time.Time
+	FinishedAt        *time.Time
+	BypassProtection  bool
+	Failure           *string
+	Deployment        []byte
+	RolloutRevisionID *uuid.UUID
 }
 
 type RunLog struct {
