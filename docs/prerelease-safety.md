@@ -57,9 +57,13 @@ one. Every automatic backup is off after upgrading to a release with this
 setting (snapshots earlier manifest policies took are kept as manual ones);
 turn it on again per environment where it matters. Nothing runs until an
 admin sets the backup target. A failed scheduled run is recorded like any
-other run and the schedule moves on to its next fire; check the environment's
-runs, the Studio's Backups tab, or `skali backup list`. A successful deploy
-is not evidence of a successful backup. Manual snapshots (`skali backup
+other run and retried for the same fire: five minutes after it failed, and
+once more thirty minutes after the retry failed, each time only while the
+schedule's next fire is at least that far away. After that the schedule
+moves on to its next fire. A cancelled scheduled run is not retried, and
+nothing ever retries a restore. Check the environment's runs, the Studio's
+Backups tab, or `skali backup list`. A successful deploy is not evidence of
+a successful backup. Manual snapshots (`skali backup
 create`) are kept until removed with `skali backup remove`. One backup runs
 at a time per installation, so environments due in the same minute are
 snapshotted one after another.

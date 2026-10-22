@@ -339,3 +339,186 @@ func TestSchedulerSkipsEnvironmentWithNothingToBackUp(t *testing.T) {
 	require.Len(t, rows, 1)
 	require.Nil(t, rows[0].LastBackupID)
 }
+
+// finishScheduled ends the environment's one unfinished backup with
+// status at the given time, run included, the way its worker would.
+func (f *serviceFixture) finishScheduled(t *testing.T, status string, at time.Time) store.Backup {
+	t.Helper()
+	ctx := context.Background()
+	unfinished, err := f.st.ListUnfinishedBackups(ctx)
+	require.NoError(t, err)
+	require.Len(t, unfinished, 1)
+	row := unfinished[0]
+	_, err = f.st.Pool.Exec(ctx, "UPDATE backups SET status = $2, finished_at = $3 WHERE id = $1", row.ID, status, at)
+	require.NoError(t, err)
+	runStatus := journal.RunFailed
+	if status == StatusCancelled {
+		runStatus = journal.RunCancelled
+	}
+	require.NoError(t, f.journal.FinishRun(ctx, *row.RunID, runStatus))
+	return row
+}
+
+func (f *serviceFixture) schedule(t *testing.T) store.ListBackupSchedulesRow {
+	t.Helper()
+	rows, err := f.st.ListBackupSchedules(context.Background())
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	return rows[0]
+}
+
+func (f *serviceFixture) unfinished(t *testing.T) []store.Backup {
+	t.Helper()
+	rows, err := f.st.ListUnfinishedBackups(context.Background())
+	require.NoError(t, err)
+	return rows
+}
+
+// A failed scheduled backup is retried after a delay, a bounded number of
+// times, for the same fire; the next fire starts counting afresh.
+func TestSchedulerRetriesFailedBackupWithinItsWindow(t *testing.T) {
+	f := newServiceFixture(t)
+	ctx := context.Background()
+	f.configureTarget(t)
+	f.activate(t, databaseDefinition())
+	f.setSchedule(t, "0 3 * * *", week)
+	now := time.Date(2026, 9, 16, 2, 0, 0, 0, time.UTC)
+	s := newTestScheduler(f, &now)
+	require.NoError(t, s.Tick(ctx))
+	fire := time.Date(2026, 9, 16, 3, 0, 0, 0, time.UTC)
+
+	now = fire.Add(time.Minute)
+	require.NoError(t, s.Tick(ctx))
+	require.EqualValues(t, 1, f.schedule(t).Attempts)
+	first := f.finishScheduled(t, StatusFailed, fire.Add(2*time.Minute))
+
+	// Within the first delay: nothing yet.
+	now = fire.Add(6 * time.Minute)
+	require.NoError(t, s.Tick(ctx))
+	require.Empty(t, f.unfinished(t))
+
+	// Past it: a second backup for the same fire.
+	now = fire.Add(7 * time.Minute)
+	require.NoError(t, s.Tick(ctx))
+	retried := f.unfinished(t)
+	require.Len(t, retried, 1)
+	require.NotEqual(t, first.ID, retried[0].ID)
+	require.Equal(t, TriggerScheduled, retried[0].Trigger)
+	state := f.schedule(t)
+	require.True(t, fire.Equal(state.LastFireAt), "a retry does not advance the fire")
+	require.EqualValues(t, 2, state.Attempts)
+	require.Equal(t, retried[0].ID, *state.LastBackupID)
+
+	// The second failure waits out the longer delay.
+	f.finishScheduled(t, StatusFailed, fire.Add(10*time.Minute))
+	now = fire.Add(39 * time.Minute)
+	require.NoError(t, s.Tick(ctx))
+	require.Empty(t, f.unfinished(t))
+	now = fire.Add(40 * time.Minute)
+	require.NoError(t, s.Tick(ctx))
+	require.Len(t, f.unfinished(t), 1)
+	require.EqualValues(t, 3, f.schedule(t).Attempts)
+
+	// Out of retries: the fire is given up.
+	f.finishScheduled(t, StatusFailed, fire.Add(45*time.Minute))
+	for _, later := range []time.Duration{2 * time.Hour, 12 * time.Hour, 23 * time.Hour} {
+		now = fire.Add(later)
+		require.NoError(t, s.Tick(ctx))
+		require.Empty(t, f.unfinished(t))
+	}
+
+	// The next fire runs as usual and has its own retries.
+	now = fire.Add(24*time.Hour + time.Minute)
+	require.NoError(t, s.Tick(ctx))
+	require.Len(t, f.unfinished(t), 1)
+	state = f.schedule(t)
+	require.True(t, fire.Add(24*time.Hour).Equal(state.LastFireAt))
+	require.EqualValues(t, 1, state.Attempts)
+}
+
+// A cancelled scheduled backup was stopped on purpose and is not retried;
+// neither is a succeeded one.
+func TestSchedulerDoesNotRetryCancelledOrSucceededBackups(t *testing.T) {
+	for _, status := range []string{StatusCancelled, StatusSucceeded} {
+		t.Run(status, func(t *testing.T) {
+			f := newServiceFixture(t)
+			ctx := context.Background()
+			f.configureTarget(t)
+			f.activate(t, databaseDefinition())
+			f.setSchedule(t, "0 3 * * *", week)
+			now := time.Date(2026, 9, 16, 2, 0, 0, 0, time.UTC)
+			s := newTestScheduler(f, &now)
+			require.NoError(t, s.Tick(ctx))
+			fire := time.Date(2026, 9, 16, 3, 0, 0, 0, time.UTC)
+			now = fire.Add(time.Minute)
+			require.NoError(t, s.Tick(ctx))
+			f.finishScheduled(t, status, fire.Add(2*time.Minute))
+
+			now = fire.Add(time.Hour)
+			require.NoError(t, s.Tick(ctx))
+			require.Empty(t, f.unfinished(t))
+			require.EqualValues(t, 1, f.schedule(t).Attempts)
+		})
+	}
+}
+
+// A retry never crowds the next fire: once the next fire is closer than
+// the retry's delay, the schedule waits for it instead.
+func TestSchedulerRetryLeavesRoomForTheNextFire(t *testing.T) {
+	f := newServiceFixture(t)
+	ctx := context.Background()
+	f.configureTarget(t)
+	f.activate(t, databaseDefinition())
+	f.setSchedule(t, "*/10 * * * *", week)
+	now := time.Date(2026, 9, 16, 2, 55, 0, 0, time.UTC)
+	s := newTestScheduler(f, &now)
+	require.NoError(t, s.Tick(ctx))
+	fire := time.Date(2026, 9, 16, 3, 0, 0, 0, time.UTC)
+	now = fire
+	require.NoError(t, s.Tick(ctx))
+	failed := f.finishScheduled(t, StatusFailed, fire.Add(time.Minute))
+
+	// Five minutes after the failure the next fire is four minutes away.
+	now = fire.Add(6 * time.Minute)
+	require.NoError(t, s.Tick(ctx))
+	require.Empty(t, f.unfinished(t))
+	require.Equal(t, failed.ID, *f.schedule(t).LastBackupID)
+
+	now = fire.Add(10 * time.Minute)
+	require.NoError(t, s.Tick(ctx))
+	require.Len(t, f.unfinished(t), 1)
+	require.True(t, fire.Add(10*time.Minute).Equal(f.schedule(t).LastFireAt))
+}
+
+// A retry the environment cannot take yet is asked for again on the next
+// tick, without spending an attempt.
+func TestSchedulerRetryWaitsForABusyEnvironment(t *testing.T) {
+	f := newServiceFixture(t)
+	ctx := context.Background()
+	f.configureTarget(t)
+	f.activate(t, databaseDefinition())
+	f.setSchedule(t, "0 3 * * *", week)
+	now := time.Date(2026, 9, 16, 2, 0, 0, 0, time.UTC)
+	s := newTestScheduler(f, &now)
+	require.NoError(t, s.Tick(ctx))
+	fire := time.Date(2026, 9, 16, 3, 0, 0, 0, time.UTC)
+	now = fire.Add(time.Minute)
+	require.NoError(t, s.Tick(ctx))
+	f.finishScheduled(t, StatusFailed, fire.Add(2*time.Minute))
+
+	deployment, err := f.journal.CreateRun(ctx, journal.RunInput{
+		Kind: "deployment", ProjectID: f.projectID, EnvironmentID: f.environmentID, Actor: "tester",
+	})
+	require.NoError(t, err)
+	require.NoError(t, f.journal.StartRun(ctx, deployment.ID))
+	now = fire.Add(10 * time.Minute)
+	require.NoError(t, s.Tick(ctx))
+	require.Empty(t, f.unfinished(t))
+	require.EqualValues(t, 1, f.schedule(t).Attempts)
+
+	require.NoError(t, f.journal.FinishRun(ctx, deployment.ID, journal.RunSucceeded))
+	now = now.Add(time.Minute)
+	require.NoError(t, s.Tick(ctx))
+	require.Len(t, f.unfinished(t), 1)
+	require.EqualValues(t, 2, f.schedule(t).Attempts)
+}

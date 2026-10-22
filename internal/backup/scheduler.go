@@ -20,6 +20,15 @@ const (
 	schedulerTickBudget = 50 * time.Second
 )
 
+// scheduledRetryDelays is how long the scheduler waits after a failed
+// scheduled backup before it starts another for the same fire, one entry
+// per retry: a fire gets at most len+1 backups. A retry starts only while
+// the schedule's next fire is still at least its delay away, so it never
+// crowds the next fire, and a schedule whose fires come faster than that
+// simply moves on to the next one. A cancelled backup is the operator's
+// decision and is never retried; restores are never retried at all.
+var scheduledRetryDelays = []time.Duration{5 * time.Minute, 30 * time.Minute}
+
 // revisionLoader is the slice of deploy.Service the controller reads.
 type revisionLoader interface {
 	GetRevision(ctx context.Context, id uuid.UUID) (*revision.Revision, error)
@@ -27,7 +36,8 @@ type revisionLoader interface {
 
 // Scheduler turns environment backup schedules into scheduled backup runs.
 // Once a minute it walks every active environment and creates a backup for
-// each one whose schedule fired since the scheduler last acted on it.
+// each one whose schedule fired since the scheduler last acted on it, or
+// whose last scheduled backup failed and is due for a retry.
 // Due-ness is persisted in backup_schedules, so a restart neither re-fires
 // nor drifts; a schedule seen for the first time, or a changed expression,
 // is seeded to fire at its next cron time rather than immediately.
@@ -122,7 +132,7 @@ func (s *Scheduler) Tick(ctx context.Context) error {
 	// no longer active or whose schedule is off; they are dropped so a
 	// schedule that comes back later is seeded afresh instead of catching
 	// up on fires it missed while off.
-	state := make(map[uuid.UUID]store.BackupSchedule, len(rows))
+	state := make(map[uuid.UUID]store.ListBackupSchedulesRow, len(rows))
 	for _, row := range rows {
 		state[row.EnvironmentID] = row
 	}
@@ -158,39 +168,26 @@ func (s *Scheduler) Tick(ctx context.Context) error {
 		}
 		fire, due := nextDue(schedule, row.LastFireAt, now)
 		if !due {
+			if retryDue(schedule, row, now) {
+				if err := s.retry(ctx, environment, row); err != nil {
+					return err
+				}
+			}
 			continue
 		}
-		result, err := s.controller.CreateBackup(ctx, BackupInput{
-			EnvironmentID: environment.EnvironmentID,
-			Actor:         ScheduleActor,
-			Trigger:       TriggerScheduled,
-		})
+		result, err := s.create(ctx, environment)
+		if errors.Is(err, ErrTargetNotFound) {
+			return nil
+		}
 		if err != nil {
 			// Nothing advances: the fire is retried on the next tick
 			// until the environment is free or the reason clears.
-			switch {
-			case errors.Is(err, ErrBackupInFlight):
-				s.log().DebugContext(ctx, "backup scheduler: environment busy, retrying next minute",
-					"environment", environment.Name)
-			case errors.Is(err, ErrObjectStorageNotReady):
-				s.log().DebugContext(ctx, "backup scheduler: object storage not ready, retrying next minute",
-					"environment", environment.Name, "reason", err)
-			case errors.Is(err, ErrEnvironmentNotActive), errors.Is(err, ErrEnvironmentNotFound),
-				errors.Is(err, ErrScheduleNotSet), errors.Is(err, ErrNothingToBackUp):
-				s.log().DebugContext(ctx, "backup scheduler: skipped",
-					"environment", environment.Name, "reason", err)
-			case errors.Is(err, ErrTargetNotFound):
-				return nil
-			default:
-				s.log().WarnContext(ctx, "backup scheduler: create backup",
-					"environment", environment.Name, "err", err)
-			}
 			continue
 		}
 		backupID := result.BackupID
 		if err := s.st.UpsertBackupSchedule(ctx, store.UpsertBackupScheduleParams{
 			EnvironmentID: environment.EnvironmentID, Schedule: environment.BackupSchedule,
-			LastFireAt: fire, LastBackupID: &backupID,
+			LastFireAt: fire, LastBackupID: &backupID, Attempts: 1,
 		}); err != nil {
 			return fmt.Errorf("advance backup schedule: %w", err)
 		}
@@ -203,6 +200,71 @@ func (s *Scheduler) Tick(ctx context.Context) error {
 			return fmt.Errorf("drop backup schedule: %w", err)
 		}
 	}
+	return nil
+}
+
+// create starts one scheduled backup of the environment. A refusal is
+// logged by its kind and returned; the caller leaves the schedule as it is
+// so the next tick asks again.
+func (s *Scheduler) create(ctx context.Context, environment store.ListActiveEnvironmentRevisionsRow) (*CreateResult, error) {
+	result, err := s.controller.CreateBackup(ctx, BackupInput{
+		EnvironmentID: environment.EnvironmentID,
+		Actor:         ScheduleActor,
+		Trigger:       TriggerScheduled,
+	})
+	switch {
+	case err == nil, errors.Is(err, ErrTargetNotFound):
+	case errors.Is(err, ErrBackupInFlight):
+		s.log().DebugContext(ctx, "backup scheduler: environment busy, retrying next minute",
+			"environment", environment.Name)
+	case errors.Is(err, ErrObjectStorageNotReady):
+		s.log().DebugContext(ctx, "backup scheduler: object storage not ready, retrying next minute",
+			"environment", environment.Name, "reason", err)
+	case errors.Is(err, ErrEnvironmentNotActive), errors.Is(err, ErrEnvironmentNotFound),
+		errors.Is(err, ErrScheduleNotSet), errors.Is(err, ErrNothingToBackUp):
+		s.log().DebugContext(ctx, "backup scheduler: skipped",
+			"environment", environment.Name, "reason", err)
+	default:
+		s.log().WarnContext(ctx, "backup scheduler: create backup",
+			"environment", environment.Name, "err", err)
+	}
+	return result, err
+}
+
+// retryDue reports whether the fire's last backup failed long enough ago
+// for its next retry, with retries left and the schedule's next fire still
+// at least the retry's delay away.
+func retryDue(schedule *cron.Schedule, row store.ListBackupSchedulesRow, now time.Time) bool {
+	if row.LastBackupID == nil || row.LastBackupStatus == nil || *row.LastBackupStatus != StatusFailed ||
+		row.LastBackupFinishedAt == nil {
+		return false
+	}
+	retry := int(row.Attempts) - 1
+	if retry < 0 || retry >= len(scheduledRetryDelays) {
+		return false
+	}
+	delay := scheduledRetryDelays[retry]
+	next := schedule.Next(row.LastFireAt)
+	return !now.Before(row.LastBackupFinishedAt.Add(delay)) && (next.IsZero() || !now.Add(delay).After(next))
+}
+
+// retry starts another backup for the fire whose last backup failed. A
+// refusal leaves the count as it is, so the next tick asks again while
+// the retry is still due.
+func (s *Scheduler) retry(ctx context.Context, environment store.ListActiveEnvironmentRevisionsRow,
+	row store.ListBackupSchedulesRow) error {
+	result, err := s.create(ctx, environment)
+	if err != nil {
+		return nil
+	}
+	if err := s.st.RetryBackupSchedule(ctx, store.RetryBackupScheduleParams{
+		EnvironmentID: environment.EnvironmentID, LastBackupID: &result.BackupID,
+	}); err != nil {
+		return fmt.Errorf("record backup retry: %w", err)
+	}
+	s.log().InfoContext(ctx, "scheduled backup retried",
+		"environment", environment.Name, "run", result.RunID, "failed", *row.LastBackupID,
+		"attempt", row.Attempts+1, "of", len(scheduledRetryDelays)+1)
 	return nil
 }
 

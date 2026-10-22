@@ -306,7 +306,9 @@ func (c *Controller) backupComponent(ctx context.Context, scope *journal.Scope, 
 	case ComponentBucket:
 		title := "Back up bucket " + component.ServiceKey
 		return scope.Step(ctx, label, title, func(ctx context.Context, log *journal.StepLog) error {
-			return c.backupBucket(ctx, log, bctx, component)
+			return c.withinCopyTimeout(ctx, "the bucket backup", func(ctx context.Context) error {
+				return c.backupBucket(ctx, log, bctx, component)
+			})
 		})
 	case ComponentDatabase:
 		title := "Back up database " + component.ServiceKey

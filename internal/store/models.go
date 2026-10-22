@@ -84,6 +84,7 @@ type BackupSchedule struct {
 	LastBackupID  *uuid.UUID
 	UpdatedAt     time.Time
 	Schedule      string
+	Attempts      int32
 }
 
 type BackupTarget struct {
