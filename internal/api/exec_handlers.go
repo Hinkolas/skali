@@ -17,6 +17,7 @@ import (
 	"github.com/Hinkolas/skali/internal/auth"
 	"github.com/Hinkolas/skali/internal/execproto"
 	"github.com/Hinkolas/skali/internal/podexec"
+	"github.com/Hinkolas/skali/internal/sqlsession"
 )
 
 // ExecService is the resolve-and-stream surface the exec handler needs:
@@ -45,16 +46,18 @@ type execHandlers struct {
 }
 
 func newExecHandlers(exec ExecService, auth *auth.Service) *execHandlers {
-	return &execHandlers{
-		exec: exec,
-		auth: auth,
-		upgrader: websocket.Upgrader{
-			ReadBufferSize:  32 * 1024,
-			WriteBufferSize: 32 * 1024,
-			// Cookie requests are checked before Resolve below. CLI bearer
-			// clients do not need an Origin header.
-			CheckOrigin: func(r *http.Request) bool { return !cookieAuthFrom(r) || sameOrigin(r) },
-		},
+	return &execHandlers{exec: exec, auth: auth, upgrader: sessionUpgrader()}
+}
+
+// sessionUpgrader is the WebSocket upgrader of every execproto session
+// (exec and SQL).
+func sessionUpgrader() websocket.Upgrader {
+	return websocket.Upgrader{
+		ReadBufferSize:  32 * 1024,
+		WriteBufferSize: 32 * 1024,
+		// Cookie requests are checked before resolution in the handlers.
+		// CLI bearer clients do not need an Origin header.
+		CheckOrigin: func(r *http.Request) bool { return !cookieAuthFrom(r) || sameOrigin(r) },
 	}
 }
 
@@ -89,15 +92,8 @@ func (h *execHandlers) open(w http.ResponseWriter, r *http.Request) {
 		TTY:       tty,
 	}
 
-	// A shell in the container can change what the deploy policy protects,
-	// so a promote-only environment asks for sudo mode here; a direct one
-	// is covered by the maintain role alone.
-	if envGrant := environmentGrantFrom(r.Context()); envGrant != nil && envGrant.Protected() {
-		if sess := SessionFrom(r.Context()); sess == nil || !h.auth.IsSessionFresh(sess) {
-			writeError(w, http.StatusForbidden, codeReauthRequired,
-				"recent authentication required: environment "+envGrant.Name+" is promote-only")
-			return
-		}
+	if !requireFreshWhenProtected(w, r, h.auth) {
+		return
 	}
 
 	session, err := h.exec.Resolve(r.Context(), id, opts)
@@ -106,24 +102,16 @@ func (h *execHandlers) open(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// gorilla composes the 101 itself and drops whatever middleware put on
-	// w.Header(); carry the platform headers over explicitly so instance
-	// pinning covers the handshake response too.
-	responseHeader := http.Header{}
-	for _, name := range []string{InstanceHeader, VersionHeader, "Set-Cookie"} {
-		if value := w.Header().Get(name); value != "" {
-			responseHeader.Set(name, value)
-		}
-	}
-	conn, err := h.upgrader.Upgrade(w, r, responseHeader)
-	if err != nil {
-		// Upgrade already wrote the HTTP error.
+	conn, ok := upgradeSession(w, r, &h.upgrader)
+	if !ok {
 		return
 	}
 	defer conn.Close()
 
 	start := time.Now()
-	streamErr := h.bridge(r.Context(), conn, session)
+	streamErr := bridgeSession(r.Context(), conn, session.TTY, func(ctx context.Context, streams podexec.Streams) error {
+		return h.exec.Stream(ctx, session, streams)
+	})
 
 	code := 0
 	if exit, ok := errors.AsType[kexec.CodeExitError](streamErr); ok {
@@ -146,6 +134,41 @@ func (h *execHandlers) open(w http.ResponseWriter, r *http.Request) {
 	)
 }
 
+// requireFreshWhenProtected is the sudo gate of a session that can change
+// what the deploy policy protects (a shell in a container, SQL against a
+// database): a promote-only environment asks for sudo mode, a direct one is
+// covered by the maintain role alone. It writes the refusal and reports
+// whether the request may continue.
+func requireFreshWhenProtected(w http.ResponseWriter, r *http.Request, authSvc *auth.Service) bool {
+	if envGrant := environmentGrantFrom(r.Context()); envGrant != nil && envGrant.Protected() {
+		if sess := SessionFrom(r.Context()); sess == nil || !authSvc.IsSessionFresh(sess) {
+			writeError(w, http.StatusForbidden, codeReauthRequired,
+				"recent authentication required: environment "+envGrant.Name+" is promote-only")
+			return false
+		}
+	}
+	return true
+}
+
+// upgradeSession answers the WebSocket handshake. gorilla composes the 101
+// itself and drops whatever middleware put on w.Header(); the platform
+// headers are carried over explicitly so instance pinning covers the
+// handshake response too. On failure Upgrade has already written the HTTP
+// error.
+func upgradeSession(w http.ResponseWriter, r *http.Request, upgrader *websocket.Upgrader) (*websocket.Conn, bool) {
+	responseHeader := http.Header{}
+	for _, name := range []string{InstanceHeader, VersionHeader, "Set-Cookie"} {
+		if value := w.Header().Get(name); value != "" {
+			responseHeader.Set(name, value)
+		}
+	}
+	conn, err := upgrader.Upgrade(w, r, responseHeader)
+	if err != nil {
+		return nil, false
+	}
+	return conn, true
+}
+
 func (h *execHandlers) writeResolveError(ctx context.Context, w http.ResponseWriter, err error) {
 	var noReady *podexec.NoReadyPodError
 	switch {
@@ -163,12 +186,15 @@ func (h *execHandlers) writeResolveError(ctx context.Context, w http.ResponseWri
 	}
 }
 
-// bridge pumps one established WebSocket against the kubelet exec stream
-// and returns the exec outcome (nil, *kexec.CodeExitError, or an
-// infrastructure error). It owns the session teardown: the terminal control
-// frame, the close handshake, and cancelling the upstream exec when the
-// client vanishes.
-func (h *execHandlers) bridge(ctx context.Context, conn *websocket.Conn, session *podexec.Session) error {
+// bridgeSession pumps one established WebSocket against a session's
+// process, which run drives over the given streams, and returns the
+// outcome (nil, *kexec.CodeExitError, or an infrastructure error). It owns
+// the session teardown: the terminal control frame, the close handshake,
+// and cancelling the upstream process when the client vanishes. The
+// connection is live (pinged, read) before run starts, so a run that first
+// starts its target (an SQL client pod) keeps the client attached.
+func bridgeSession(ctx context.Context, conn *websocket.Conn, tty bool,
+	run func(ctx context.Context, streams podexec.Streams) error) error {
 	execCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -215,14 +241,14 @@ func (h *execHandlers) bridge(ctx context.Context, conn *websocket.Conn, session
 		Stderr: &execChannelWriter{channel: execproto.ChannelStderr, outbound: outbound, done: execCtx.Done()},
 	}
 	var resize chan remotecommand.TerminalSize
-	if session.TTY {
+	if tty {
 		resize = make(chan remotecommand.TerminalSize, 4)
 		streams.Resize = &execSizeQueue{sizes: resize, done: execCtx.Done()}
 	}
 
 	execDone := make(chan error, 1)
 	go func() {
-		execDone <- h.exec.Stream(execCtx, session, streams)
+		execDone <- run(execCtx, streams)
 	}()
 
 	// Read loop: stdin and control frames in, until the peer closes or the
@@ -248,8 +274,12 @@ func (h *execHandlers) bridge(ctx context.Context, conn *websocket.Conn, session
 			switch channel {
 			case execproto.ChannelStdin:
 				// A write error means the remote closed stdin; keep
-				// draining so control frames still flow.
+				// draining so control frames still flow. The write blocks
+				// until the process reads (or, for an SQL session, until
+				// its client has started); the peer was alive when the
+				// frame arrived, so the wait does not count against it.
 				_, _ = stdinWriter.Write(payload)
+				refresh()
 			case execproto.ChannelControl:
 				control, err := execproto.ParseControl(payload)
 				if err != nil {
@@ -279,6 +309,12 @@ func (h *execHandlers) bridge(ctx context.Context, conn *websocket.Conn, session
 	terminal := execproto.Control{Type: execproto.ControlExit}
 	if exit, ok := errors.AsType[kexec.CodeExitError](streamErr); ok {
 		terminal.Code = exit.Code
+	} else if startErr, ok := errors.AsType[*sqlsession.StartError](streamErr); ok {
+		terminal = execproto.Control{
+			Type:    execproto.ControlError,
+			ErrCode: execproto.ErrCodeStartFailed,
+			Message: startErr.Error(),
+		}
 	} else if streamErr != nil {
 		terminal = execproto.Control{
 			Type:    execproto.ControlError,

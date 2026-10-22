@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -1049,6 +1050,120 @@ ENTRYPOINT ["/hello-build"]
 	require.Contains(t, out, "no running pod")
 
 	h.run(false, "", "dev", "down")
+}
+
+// runSplit executes the CLI like runExit but keeps stdout and stderr
+// apart, for commands whose stdout is a machine-readable result (sql).
+func (h *e2eHarness) runSplit(stdin string, args ...string) (string, string, int) {
+	h.t.Helper()
+	command := exec.Command(h.binary, args...)
+	command.Dir = h.projectDir
+	command.Env = h.env
+	if stdin != "" {
+		command.Stdin = strings.NewReader(stdin)
+	}
+	var stdout, stderr bytes.Buffer
+	command.Stdout = &stdout
+	command.Stderr = &stderr
+	err := command.Run()
+	if err == nil {
+		return stdout.String(), stderr.String(), 0
+	}
+	var exit *exec.ExitError
+	require.ErrorAs(h.t, err, &exit, "skali %s did not run:\n%s%s", strings.Join(args, " "), stdout.String(), stderr.String())
+	return stdout.String(), stderr.String(), exit.ExitCode()
+}
+
+// TestDevSQL drives skali dev sql end to end against the guestbook's
+// database: every format through the full edge path into a short-lived
+// client pod, psql's exit statuses, the read-only guard, both timeouts,
+// and a session with no application running at all.
+func TestDevSQL(t *testing.T) {
+	h := newE2EHarnessFor(t, "guestbook", "guestbook.localhost")
+	h.run(false, "", "dev", "-d", "--skalid-image", "skalid:dev")
+	h.waitRoute("visits: ", 10*time.Minute)
+
+	// JSON: one document on stdout, typed values. The database argument is
+	// omitted on purpose: the guestbook declares exactly one.
+	stdout, stderr, code := h.runSplit("", "dev", "sql", "--format", "json",
+		"-c", "SELECT count(*) AS visits, true AS ok FROM visits")
+	require.Zero(t, code, "sql failed:\n%s%s", stdout, stderr)
+	var doc struct {
+		Results []struct {
+			Columns []struct {
+				Name string `json:"name"`
+				Type string `json:"type"`
+			} `json:"columns"`
+			Rows    [][]any `json:"rows"`
+			Command string  `json:"command"`
+		} `json:"results"`
+		Error *struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(stdout), &doc), "stdout must be exactly the document: %q", stdout)
+	require.Len(t, doc.Results, 1)
+	require.Equal(t, "int8", doc.Results[0].Columns[0].Type)
+	require.Greater(t, doc.Results[0].Rows[0][0], float64(0), "the guestbook has counted visits")
+	require.Equal(t, true, doc.Results[0].Rows[0][1])
+	require.Equal(t, "SELECT 1", doc.Results[0].Command)
+
+	// psql's own output, meta-commands included.
+	stdout, stderr, code = h.runSplit("", "dev", "sql", "data", "-c", `\d visits`)
+	require.Zero(t, code, "sql failed:\n%s%s", stdout, stderr)
+	require.Contains(t, stdout, `Table "public.visits"`)
+
+	// The script on stdin, CSV without command tags.
+	stdout, stderr, code = h.runSplit("CREATE TEMP TABLE e2e (n int);\nINSERT INTO e2e VALUES (41), (42);\nSELECT max(n) AS answer FROM e2e;\n",
+		"dev", "sql", "--format", "csv")
+	require.Zero(t, code, "sql failed:\n%s%s", stdout, stderr)
+	require.Equal(t, "answer\n42\n", stdout)
+
+	// A failing script exits 3 in every format, with the error on stderr
+	// (and in the document for json).
+	stdout, stderr, code = h.runSplit("", "dev", "sql", "-c", "SELECT * FROM missing_table")
+	require.Equal(t, 3, code, "output:\n%s%s", stdout, stderr)
+	require.Contains(t, stderr, `relation "missing_table" does not exist`)
+	require.NotContains(t, stderr, "error:", "the client's status passes through without an error line")
+	stdout, _, code = h.runSplit("", "dev", "sql", "--format", "json", "-c", "SELECT * FROM missing_table")
+	require.Equal(t, 3, code)
+	require.NoError(t, json.Unmarshal([]byte(stdout), &doc))
+	require.Equal(t, "42P01", doc.Error.Code)
+
+	// The read-only guard refuses writes.
+	_, stderr, code = h.runSplit("", "dev", "sql", "--read-only", "-c", "CREATE TABLE e2e_ro (n int)")
+	require.Equal(t, 3, code)
+	require.Contains(t, stderr, "read-only transaction")
+
+	// The server cancels a statement past --statement-timeout; the client
+	// cuts the whole session at --timeout with status 124.
+	_, stderr, code = h.runSplit("", "dev", "sql", "--statement-timeout", "500ms", "-c", "SELECT pg_sleep(10)")
+	require.Equal(t, 3, code)
+	require.Contains(t, stderr, "statement timeout")
+	started := time.Now()
+	_, stderr, code = h.runSplit("", "dev", "sql", "--timeout", "15s", "-c", "SELECT pg_sleep(120)")
+	require.Equal(t, 124, code, "stderr:\n%s", stderr)
+	require.Contains(t, stderr, "session timed out after 15s")
+	require.Less(t, time.Since(started), time.Minute)
+
+	// No application has to run: after down the database is still there.
+	h.run(false, "", "dev", "down")
+	stdout, stderr, code = h.runSplit("", "dev", "sql", "--format", "csv", "-c", "SELECT 'still here' AS state")
+	require.Zero(t, code, "sql after down failed:\n%s%s", stdout, stderr)
+	require.Equal(t, "state\nstill here\n", stdout)
+
+	// An unknown database is refused before any client starts.
+	_, stderr, code = h.runSplit("", "dev", "sql", "nope", "-c", "SELECT 1")
+	require.Equal(t, 1, code)
+	require.Contains(t, stderr, `no database "nope" in this environment`)
+
+	// Every session removed its client.
+	kubeconfig := h.kubeconfig()
+	require.Eventually(t, func() bool {
+		out, err := exec.Command("kubectl", "--kubeconfig", kubeconfig, "get", "jobs,pods", "-A",
+			"-l", "skali.dev/sql-session", "--no-headers").Output()
+		return err == nil && strings.TrimSpace(string(out)) == ""
+	}, time.Minute, 2*time.Second, "sql clients must not outlive their sessions")
 }
 
 // TestDevLocalDev drives local dev mode end to end: a dev-block application

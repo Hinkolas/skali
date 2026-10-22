@@ -74,6 +74,10 @@ can remove them. Invalid YAML diagnostics identify the configuration file to edi
   so seeds and migrations just work.
 - `skali dev exec [app]` opens a shell inside the running container
   instead; `skali run` manages journal runs, not project commands.
+- `skali dev sql [database]` runs SQL against a database of the local
+  platform, exactly like `skali sql` (see Databases) without the target
+  flags. It needs no running application and no local psql, so it keeps
+  working after `skali dev down`.
 - When `skali dev` runs on a remote machine and the browser on a laptop,
   `skali dev proxy <host> --ca sha256:…` on the laptop opens the remote
   platform at the same `https://*.localhost` origins. `skali dev expose
@@ -146,6 +150,33 @@ can remove them. Invalid YAML diagnostics identify the configuration file to edi
   the window retires the older login role at once.
 - `skali database list`, `show <pool>` and `set <pool>` inspect and tune
   the database pools (admin only).
+- `skali sql [database] [--environment <name>]` runs SQL against
+  `databases.<database>` (the manifest's sole database when omitted) with
+  that database's own credentials, in a short-lived client the platform
+  starts for the session (a few seconds); no application has to run and
+  nothing is installed locally. In a terminal without `-c` or `-f` it is
+  an interactive psql. `-c '<sql>'`, `-f <file>` (`-` for stdin) or piped
+  stdin run a script: results on stdout, errors and notices on stderr,
+  and psql's exit statuses in every format (0 success, 1 client failure,
+  2 database unreachable, 3 the script failed; it stops at the first
+  error). `--format psql` (default) understands meta-commands such as
+  `\d <table>`; `--format csv` drops command tags; `--format json` prints
+  one document `{"results": [{"columns": [{"name", "type", "type_oid"}],
+  "rows": [[...]], "command", "rows_affected"}], "error": {"code",
+  "message", ...}}` with rows as arrays aligned with the columns and runs
+  the script as one query (one implicit transaction, no meta-commands).
+  `--read-only` guards against accidental writes (not a permission),
+  `--statement-timeout 30s` cancels slow statements on the server, and
+  `--timeout 5m` ends the whole session with status 124. Needs `maintain`
+  on the environment, plus a recent login on a promote-only one.
+- `skali exec [app] -- <command>...` runs a command in a running
+  application container (an interactive shell without one). Without a
+  terminal it pipes stdin, stdout and stderr and exits with the remote
+  status; `--no-stdin` sends no input, `--timeout` ends the session with
+  status 124, and an interrupted session exits 130. Neither exec nor sql
+  ever reads a piped stdin to confirm a login: when a promote-only
+  environment needs a recent login, confirm in a terminal first
+  (`skali remote login`).
 
 ## Routes
 

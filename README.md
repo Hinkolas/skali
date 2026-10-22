@@ -228,6 +228,7 @@ URLs of your routes.
 skali plan                        # what a deploy would change
 skali logs web                    # live logs of an application
 skali exec web -- sh              # a shell in a running container
+skali sql data -c 'SELECT 1'      # SQL against a database, no local psql needed
 skali rollback                    # back to the previous revision
 skali deploy --from staging       # promote staging's revision here
 skali backup create               # snapshot databases, buckets, and volumes

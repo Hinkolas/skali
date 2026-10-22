@@ -145,6 +145,44 @@ and measured size. The exporter figures are the primary's view: replica
 reads are not observed. `skali database show <name>` prints the same
 instances and databases.
 
+## SQL access
+
+`skali sql [database]` runs SQL against one database of an environment,
+and `skali dev sql` against the local platform's, without a local psql and
+without any application running. For each session skalid starts a Job in
+the environment's namespace, the namespace the pool's access policy
+already admits, with one container that idles until the session execs
+into it: the pool's own pinned image (so psql matches the server's major
+version) for the psql and csv formats, the skalid image's SQL runner for
+`--format json`. The container's environment is the standard `PG*` set
+taken from the database's connection Secret, the same mirror the
+environment's applications consume; it mounts no other Secret and no
+service account token, runs as nobody without privileges, and on a
+managed cluster lands on an application node. The session streams over
+the exec protocol (`GET .../databases/{key}/sql`), so authorization,
+the promote-only sudo gate, the WebSocket edge path, and exit-status
+passthrough are exec's.
+
+The database's server pod is never a target. Several environments'
+databases share a pool, and a shell there (psql's `\!` included) would
+reach all of them; inside the client pod the same escape reaches only
+what the session already has, this database's credentials. A batch
+session's script travels as the session's stdin, never in the URL or the
+command line, so SQL text is in no access log, process listing, or the
+`sql session` audit line, which records the user, environment, database,
+format, client pod, duration, and exit status.
+
+The Job is deleted when the session ends. A daemon that goes away first
+leaves it to its own bounds: an 8-hour active deadline (the longest a
+session can run) and a TTL that removes it a minute after it ends. Clients
+carry `skali.dev/sql-session` and none of the managed labels, so
+observation, status, exec, and pruning never see them.
+
+`--read-only` sets `default_transaction_read_only` and `--statement-timeout`
+sets `statement_timeout`, both through `PGOPTIONS` at connect time. The
+first is a guard against accidents, not a permission: the database's role
+may `SET` it back.
+
 ## Credential rotation
 
 `skali database rotate <key>` (or the database's "Rotate credentials"

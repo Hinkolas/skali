@@ -44,8 +44,14 @@ const (
 	ControlError = "error"
 )
 
-// ErrCodeExecFailed is the machine code carried by ControlError frames.
-const ErrCodeExecFailed = "exec_failed"
+// Machine codes carried by ControlError frames.
+const (
+	// ErrCodeExecFailed: the process could not run or its stream broke.
+	ErrCodeExecFailed = "exec_failed"
+	// ErrCodeStartFailed: the session's target never came up (an SQL
+	// session's client pod); nothing ran.
+	ErrCodeStartFailed = "start_failed"
+)
 
 // Control is the single JSON message shape of the control channel; Type
 // discriminates which of the remaining fields are meaningful.

@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/pem"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -265,4 +266,66 @@ func TestExecAfterRequestOnHTTP2Edge(t *testing.T) {
 	require.NoError(t, err)
 	defer session.Close()
 	require.NoError(t, session.Run(context.Background(), nil, nil, nil, nil))
+}
+
+func TestSQLSessionShapeAndScript(t *testing.T) {
+	srv := execTestServer(t, func(t *testing.T, r *http.Request, conn *websocket.Conn) {
+		require.Equal(t, "/v1/environments/env-1/databases/data/sql", r.URL.Path)
+		query := r.URL.Query()
+		require.Equal(t, "json", query.Get("format"))
+		require.Equal(t, "true", query.Get("read_only"))
+		require.Equal(t, "2500", query.Get("statement_timeout"))
+		require.Empty(t, query.Get("tty"))
+		require.Len(t, query, 3, "the script never rides the URL")
+
+		// The script arrives on stdin, then the half-close.
+		var script strings.Builder
+		for {
+			_, message, err := conn.ReadMessage()
+			require.NoError(t, err)
+			channel, payload, err := execproto.Decode(message)
+			require.NoError(t, err)
+			if channel == execproto.ChannelStdin {
+				script.Write(payload)
+				continue
+			}
+			control, err := execproto.ParseControl(payload)
+			require.NoError(t, err)
+			require.Equal(t, execproto.ControlStdinEOF, control.Type)
+			break
+		}
+		require.Equal(t, "SELECT 1", script.String())
+		require.NoError(t, conn.WriteMessage(websocket.BinaryMessage,
+			execproto.EncodeData(execproto.ChannelStdout, []byte(`{"results":[]}`))))
+		sendControl(t, conn, execproto.Control{Type: execproto.ControlExit, Code: 3})
+	})
+
+	c := New(srv.URL, "tok", Caller{UserAgent: "test-agent"})
+	session, err := c.SQL(context.Background(), "env-1", "data", SQLOptions{
+		Format: "json", ReadOnly: true, StatementTimeout: 2500 * time.Millisecond,
+	})
+	require.NoError(t, err)
+	defer session.Close()
+
+	var stdout strings.Builder
+	err = session.Run(context.Background(), strings.NewReader("SELECT 1"), &stdout, nil, nil)
+	exit, ok := errors.AsType[*ExecExitError](err)
+	require.True(t, ok, "%v", err)
+	require.Equal(t, 3, exit.Code)
+	require.Equal(t, `{"results":[]}`, stdout.String())
+}
+
+func TestSessionStartFailedMessage(t *testing.T) {
+	srv := execTestServer(t, func(t *testing.T, _ *http.Request, conn *websocket.Conn) {
+		sendControl(t, conn, execproto.Control{
+			Type: execproto.ControlError, ErrCode: execproto.ErrCodeStartFailed,
+			Message: "start the database client: ImagePullBackOff",
+		})
+	})
+	c := New(srv.URL, "tok", Caller{})
+	session, err := c.SQL(context.Background(), "env-1", "data", SQLOptions{})
+	require.NoError(t, err)
+	defer session.Close()
+	err = session.Run(context.Background(), nil, nil, nil, nil)
+	require.EqualError(t, err, "start the database client: ImagePullBackOff", "no exec failed prefix")
 }

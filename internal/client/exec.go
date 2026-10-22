@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -60,24 +61,21 @@ type ExecSession struct {
 	writeMu sync.Mutex
 }
 
+// SQLOptions is one SQL session's shape. The script itself is not part of
+// it: a batch session sends it as the session's stdin.
+type SQLOptions struct {
+	Format   string // psql (default), csv, or json
+	TTY      bool   // interactive psql
+	ReadOnly bool
+	// StatementTimeout sets statement_timeout; zero keeps the server's.
+	StatementTimeout time.Duration
+}
+
 // Exec opens an interactive exec session against one environment. Handshake
 // failures decode the normal error envelope, so callers branch on *APIError
 // codes (reauth_required, no_ready_pod, not_found) exactly like any other
 // endpoint.
 func (c *Client) Exec(ctx context.Context, environmentID string, opts ExecOptions) (*ExecSession, error) {
-	target, err := url.Parse(c.base)
-	if err != nil {
-		return nil, fmt.Errorf("client: parse master url: %w", err)
-	}
-	switch target.Scheme {
-	case "http":
-		target.Scheme = "ws"
-	case "https":
-		target.Scheme = "wss"
-	default:
-		return nil, fmt.Errorf("client: master %s has no websocket scheme", c.base)
-	}
-
 	query := url.Values{}
 	if opts.Service != "" {
 		query.Set("service", opts.Service)
@@ -93,6 +91,46 @@ func (c *Client) Exec(ctx context.Context, environmentID string, opts ExecOption
 	}
 	for _, argument := range opts.Command {
 		query.Add("cmd", argument)
+	}
+	return c.dialSession(ctx, "/v1/environments/"+url.PathEscape(environmentID)+"/exec", query)
+}
+
+// SQL opens an SQL session against one database service of an environment.
+// It speaks the exec protocol, so the returned session runs exactly like an
+// exec session; the server starts the database client after the handshake.
+// Handshake failures decode the normal error envelope (not_found for an
+// unknown database, conflict while it provisions, reauth_required).
+func (c *Client) SQL(ctx context.Context, environmentID, database string, opts SQLOptions) (*ExecSession, error) {
+	query := url.Values{}
+	if opts.Format != "" {
+		query.Set("format", opts.Format)
+	}
+	if opts.TTY {
+		query.Set("tty", "true")
+	}
+	if opts.ReadOnly {
+		query.Set("read_only", "true")
+	}
+	if opts.StatementTimeout > 0 {
+		query.Set("statement_timeout", strconv.FormatInt(opts.StatementTimeout.Milliseconds(), 10))
+	}
+	return c.dialSession(ctx, "/v1/environments/"+url.PathEscape(environmentID)+
+		"/databases/"+url.PathEscape(database)+"/sql", query)
+}
+
+// dialSession opens one execproto WebSocket at path.
+func (c *Client) dialSession(ctx context.Context, path string, query url.Values) (*ExecSession, error) {
+	target, err := url.Parse(c.base)
+	if err != nil {
+		return nil, fmt.Errorf("client: parse master url: %w", err)
+	}
+	switch target.Scheme {
+	case "http":
+		target.Scheme = "ws"
+	case "https":
+		target.Scheme = "wss"
+	default:
+		return nil, fmt.Errorf("client: master %s has no websocket scheme", c.base)
 	}
 
 	header := http.Header{}
@@ -115,7 +153,7 @@ func (c *Client) Exec(ctx context.Context, environmentID string, opts ExecOption
 		ReadBufferSize:   32 * 1024,
 		WriteBufferSize:  32 * 1024,
 	}
-	wsURL := target.String() + "/v1/environments/" + url.PathEscape(environmentID) + "/exec?" + query.Encode()
+	wsURL := target.String() + path + "?" + query.Encode()
 	conn, res, err := dialer.DialContext(ctx, wsURL, header)
 	if res != nil {
 		// Instance pinning covers the handshake response, 101 or error: an
@@ -261,7 +299,12 @@ func (s *ExecSession) Run(ctx context.Context, stdin io.Reader, stdout, stderr i
 				}
 				return nil
 			case execproto.ControlError:
-				return fmt.Errorf("exec failed: %s", strings.TrimSpace(control.Message))
+				message := strings.TrimSpace(control.Message)
+				if control.ErrCode == execproto.ErrCodeExecFailed || control.ErrCode == "" {
+					return fmt.Errorf("exec failed: %s", message)
+				}
+				// Other codes carry a self-describing message.
+				return errors.New(message)
 			}
 		}
 	}
