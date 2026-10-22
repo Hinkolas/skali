@@ -129,9 +129,10 @@ var prunableKinds = map[schema.GroupKind]bool{
 	{Group: "traefik.io", Kind: "Middleware"}:       true,
 	{Group: "cert-manager.io", Kind: "Certificate"}: true,
 	{Group: "networking.k8s.io", Kind: "Ingress"}:   true,
-	// Completed release Jobs of superseded revisions; the current revision's
+	// Finished release Jobs of superseded revisions; the current revision's
 	// Job is always in the desired set, so a finished release is never
-	// pruned into a re-run.
+	// pruned into a re-run. A release Job still running is never pruned
+	// (see planPrune).
 	{Group: "batch", Kind: "Job"}: true,
 	// Intercept EndpointSlices: desired exactly while their application is
 	// intercepted, pruned as soon as the intercept clears so the Service's
@@ -145,7 +146,10 @@ var prunableKinds = map[schema.GroupKind]bool{
 // built: absence caused by a compiler error never prunes anything.
 // protected names Deployments that outlive the desired set on purpose: the
 // blue-green color still carrying traffic and every retiring color inside
-// its drain window.
+// its drain window. A release Job outlives it while it runs: when a
+// fallback or cancellation drops its revision, a migration killed halfway
+// is worse than one left to finish, and its own deadline bounds the wait.
+// It is pruned once it reaches a terminal state.
 func planPrune(observed []observe.Object, desired []kube.ObjectRef, protected map[retireKey]bool) []kube.ObjectRef {
 	type refKey struct {
 		group, kind, namespace, name string
@@ -172,6 +176,9 @@ func planPrune(observed []observe.Object, desired []kube.ObjectRef, protected ma
 			continue
 		}
 		if gk.Kind == "Deployment" && protected[retireKey{obj.Ref.Namespace, obj.Ref.Name}] {
+			continue
+		}
+		if obj.Kind == observe.KindReleaseJob && obj.Job != nil && !obj.Job.Succeeded && !obj.Job.Failed {
 			continue
 		}
 		prune = append(prune, obj.Ref)

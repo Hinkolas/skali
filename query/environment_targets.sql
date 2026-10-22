@@ -37,10 +37,13 @@ WHERE environments.id = $1;
 -- incomplete restore holds: its data may be partial, and only a restore
 -- that completes (ResumeRestoredEnvironment) or an explicit acceptance
 -- (ClearIncompleteRestore) lifts the hold. With restart set, the same
--- write stamps a workload restart (a forced deployment).
+-- write stamps a workload restart (a forced deployment). Every call is a
+-- new promotion, a forced redeploy of the same revision included, so it
+-- stamps promoted_at, which binds the promotion's release Jobs.
 -- name: SetEnvironmentTarget :execrows
 UPDATE environment_targets
 SET target_revision_id = sqlc.narg(target_revision_id), state = 'active', updated_at = now(),
+    promoted_at = now(),
     restarted_at = CASE WHEN sqlc.arg(restart)::boolean THEN now() ELSE restarted_at END
 WHERE environment_id = sqlc.arg(environment_id) AND state <> 'releasing'
   AND incomplete_restore_id IS NULL;
@@ -106,12 +109,13 @@ WHERE environment_id = sqlc.arg(environment_id) AND state <> 'releasing';
 -- the same write. Only the restore holding the environment resumes it, and
 -- only while its run still runs: a teardown cancels the run before it takes
 -- the environment down, and a restore finishing its last component must
--- not undo that.
+-- not undo that. Resuming promotes the target again, so the restored
+-- revision's release runs as a new promotion.
 -- name: ResumeRestoredEnvironment :execrows
 UPDATE environment_targets
 SET target_revision_id = sqlc.arg(target_revision_id)::uuid, state = 'active',
     incomplete_restore_id = NULL, incomplete_restore_components = '{}',
-    updated_at = now()
+    updated_at = now(), promoted_at = now()
 WHERE environment_targets.environment_id = sqlc.arg(environment_id)
   AND environment_targets.state <> 'releasing'
   AND environment_targets.incomplete_restore_id = sqlc.arg(restore_id)::uuid

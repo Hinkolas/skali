@@ -813,6 +813,7 @@ func convertJob(raw any) (Object, bool) {
 	status := &JobStatus{
 		Succeeded: job.Status.Succeeded > 0,
 		Created:   job.CreationTimestamp.Time,
+		Promotion: job.Labels[rendering.LabelPromotion],
 	}
 	for _, condition := range job.Status.Conditions {
 		if condition.Status != corev1.ConditionTrue {

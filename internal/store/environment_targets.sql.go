@@ -70,7 +70,7 @@ func (q *Queries) FallbackEnvironmentTarget(ctx context.Context, arg FallbackEnv
 }
 
 const getEnvironmentPass = `-- name: GetEnvironmentPass :one
-SELECT environments.id, environments.project_id, environments.name, environments.created_at, environments.updated_at, environments.max_role, environments.deploy_policy, environments.promote_from, environments.priority, environments.backup_schedule, environments.backup_retention_seconds, environments.backup_strategy, environments.previous_names, environments.backup_namespace, environment_targets.environment_id, environment_targets.target_revision_id, environment_targets.active_revision_id, environment_targets.updated_at, environment_targets.state, environment_targets.restarted_at, environment_targets.incomplete_restore_id, environment_targets.incomplete_restore_components,
+SELECT environments.id, environments.project_id, environments.name, environments.created_at, environments.updated_at, environments.max_role, environments.deploy_policy, environments.promote_from, environments.priority, environments.backup_schedule, environments.backup_retention_seconds, environments.backup_strategy, environments.previous_names, environments.backup_namespace, environment_targets.environment_id, environment_targets.target_revision_id, environment_targets.active_revision_id, environment_targets.updated_at, environment_targets.state, environment_targets.restarted_at, environment_targets.incomplete_restore_id, environment_targets.incomplete_restore_components, environment_targets.promoted_at,
        runs.id AS run_id, runs.kind AS run_kind, deployments.status AS deployment_status,
        (SELECT jsonb_object_agg(environment_intercepts.application_key, environment_intercepts.ports)
         FROM environment_intercepts
@@ -132,6 +132,7 @@ func (q *Queries) GetEnvironmentPass(ctx context.Context, id uuid.UUID) (GetEnvi
 		&i.EnvironmentTarget.RestartedAt,
 		&i.EnvironmentTarget.IncompleteRestoreID,
 		&i.EnvironmentTarget.IncompleteRestoreComponents,
+		&i.EnvironmentTarget.PromotedAt,
 		&i.RunID,
 		&i.RunKind,
 		&i.DeploymentStatus,
@@ -143,7 +144,7 @@ func (q *Queries) GetEnvironmentPass(ctx context.Context, id uuid.UUID) (GetEnvi
 }
 
 const getEnvironmentTarget = `-- name: GetEnvironmentTarget :one
-SELECT environment_id, target_revision_id, active_revision_id, updated_at, state, restarted_at, incomplete_restore_id, incomplete_restore_components FROM environment_targets WHERE environment_id = $1
+SELECT environment_id, target_revision_id, active_revision_id, updated_at, state, restarted_at, incomplete_restore_id, incomplete_restore_components, promoted_at FROM environment_targets WHERE environment_id = $1
 `
 
 func (q *Queries) GetEnvironmentTarget(ctx context.Context, environmentID uuid.UUID) (EnvironmentTarget, error) {
@@ -158,12 +159,13 @@ func (q *Queries) GetEnvironmentTarget(ctx context.Context, environmentID uuid.U
 		&i.RestartedAt,
 		&i.IncompleteRestoreID,
 		&i.IncompleteRestoreComponents,
+		&i.PromotedAt,
 	)
 	return i, err
 }
 
 const listEnvironmentTargets = `-- name: ListEnvironmentTargets :many
-SELECT environment_id, target_revision_id, active_revision_id, updated_at, state, restarted_at, incomplete_restore_id, incomplete_restore_components FROM environment_targets
+SELECT environment_id, target_revision_id, active_revision_id, updated_at, state, restarted_at, incomplete_restore_id, incomplete_restore_components, promoted_at FROM environment_targets
 `
 
 func (q *Queries) ListEnvironmentTargets(ctx context.Context) ([]EnvironmentTarget, error) {
@@ -184,6 +186,7 @@ func (q *Queries) ListEnvironmentTargets(ctx context.Context) ([]EnvironmentTarg
 			&i.RestartedAt,
 			&i.IncompleteRestoreID,
 			&i.IncompleteRestoreComponents,
+			&i.PromotedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -196,7 +199,7 @@ func (q *Queries) ListEnvironmentTargets(ctx context.Context) ([]EnvironmentTarg
 }
 
 const listEnvironmentsOutOfSync = `-- name: ListEnvironmentsOutOfSync :many
-SELECT environment_id, target_revision_id, active_revision_id, updated_at, state, restarted_at, incomplete_restore_id, incomplete_restore_components FROM environment_targets
+SELECT environment_id, target_revision_id, active_revision_id, updated_at, state, restarted_at, incomplete_restore_id, incomplete_restore_components, promoted_at FROM environment_targets
 WHERE target_revision_id IS DISTINCT FROM active_revision_id
 `
 
@@ -220,6 +223,7 @@ func (q *Queries) ListEnvironmentsOutOfSync(ctx context.Context) ([]EnvironmentT
 			&i.RestartedAt,
 			&i.IncompleteRestoreID,
 			&i.IncompleteRestoreComponents,
+			&i.PromotedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -297,7 +301,7 @@ const resumeRestoredEnvironment = `-- name: ResumeRestoredEnvironment :execrows
 UPDATE environment_targets
 SET target_revision_id = $1::uuid, state = 'active',
     incomplete_restore_id = NULL, incomplete_restore_components = '{}',
-    updated_at = now()
+    updated_at = now(), promoted_at = now()
 WHERE environment_targets.environment_id = $2
   AND environment_targets.state <> 'releasing'
   AND environment_targets.incomplete_restore_id = $3::uuid
@@ -315,7 +319,8 @@ type ResumeRestoredEnvironmentParams struct {
 // the same write. Only the restore holding the environment resumes it, and
 // only while its run still runs: a teardown cancels the run before it takes
 // the environment down, and a restore finishing its last component must
-// not undo that.
+// not undo that. Resuming promotes the target again, so the restored
+// revision's release runs as a new promotion.
 func (q *Queries) ResumeRestoredEnvironment(ctx context.Context, arg ResumeRestoredEnvironmentParams) (int64, error) {
 	result, err := q.db.Exec(ctx, resumeRestoredEnvironment, arg.TargetRevisionID, arg.EnvironmentID, arg.RestoreID)
 	if err != nil {
@@ -349,6 +354,7 @@ func (q *Queries) SetEnvironmentActiveRevision(ctx context.Context, arg SetEnvir
 const setEnvironmentTarget = `-- name: SetEnvironmentTarget :execrows
 UPDATE environment_targets
 SET target_revision_id = $1, state = 'active', updated_at = now(),
+    promoted_at = now(),
     restarted_at = CASE WHEN $2::boolean THEN now() ELSE restarted_at END
 WHERE environment_id = $3 AND state <> 'releasing'
   AND incomplete_restore_id IS NULL
@@ -367,7 +373,9 @@ type SetEnvironmentTargetParams struct {
 // incomplete restore holds: its data may be partial, and only a restore
 // that completes (ResumeRestoredEnvironment) or an explicit acceptance
 // (ClearIncompleteRestore) lifts the hold. With restart set, the same
-// write stamps a workload restart (a forced deployment).
+// write stamps a workload restart (a forced deployment). Every call is a
+// new promotion, a forced redeploy of the same revision included, so it
+// stamps promoted_at, which binds the promotion's release Jobs.
 func (q *Queries) SetEnvironmentTarget(ctx context.Context, arg SetEnvironmentTargetParams) (int64, error) {
 	result, err := q.db.Exec(ctx, setEnvironmentTarget, arg.TargetRevisionID, arg.Restart, arg.EnvironmentID)
 	if err != nil {

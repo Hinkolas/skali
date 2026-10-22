@@ -160,6 +160,30 @@ func TestPlanPruneNeverTouchesStatefulKinds(t *testing.T) {
 	}
 }
 
+// A release Job dropped from the desired set (its revision fell back) is
+// pruned only once terminal: a running migration finishes or reaches its
+// own deadline first.
+func TestPlanPruneKeepsRunningReleaseJobs(t *testing.T) {
+	t.Parallel()
+	envID := uuid.New()
+	job := func(name string, status observe.JobStatus) observe.Object {
+		return observe.Object{
+			Environment: envID, Kind: observe.KindReleaseJob, Name: name, Job: &status,
+			Ref: kube.ObjectRef{GVK: schema.GroupVersionKind{Group: "batch", Version: "v1", Kind: "Job"}, Namespace: "ns", Name: name},
+		}
+	}
+	observed := []observe.Object{
+		job("running", observe.JobStatus{}),
+		job("succeeded", observe.JobStatus{Succeeded: true}),
+		job("failed", observe.JobStatus{Failed: true}),
+	}
+	var names []string
+	for _, ref := range planPrune(observed, nil, nil) {
+		names = append(names, ref.Name)
+	}
+	require.Equal(t, []string{"failed", "succeeded"}, names)
+}
+
 func TestPlanBatchesOrdersDatabasesBeforeDependents(t *testing.T) {
 	t.Parallel()
 	document, err := manifest.Parse([]byte(`name: demo

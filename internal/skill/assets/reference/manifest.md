@@ -352,6 +352,10 @@ starts once the databases and buckets the application references accept
 connections (waiting up to a minute), so it needs no connect-retry loop of
 its own. Its `timeout` (default 10m) bounds the run; a failed or timed-out
 release command fails the deployment before users see anything change.
+It runs once per deployment: a failed command is never retried on its own,
+only by the next deployment (`--force` redeploys the same revision). A
+deployment cancelled or falling back while the command runs lets it finish
+or reach its timeout instead of stopping it halfway.
 
 `strategy` decides how the new version replaces the old one:
 
