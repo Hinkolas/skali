@@ -263,8 +263,9 @@ func (k *Kernel) desiredColors(ctx context.Context, state store.GetEnvironmentPa
 }
 
 // routeVariables loads the plaintexts of exactly the project variables the
-// revision's route domains reference, so the status projection can show
-// each route's resolved public hostname instead of its ${NAME} placeholder.
+// revision's route domains and aliases reference, so the status projection
+// and the route probe can show each resolved public hostname instead of
+// its ${NAME} placeholder.
 // A hostname is public by construction, so nothing beyond what the edge
 // already serves leaves the store; every other value stays untouched.
 func (k *Kernel) routeVariables(ctx context.Context, environmentID uuid.UUID,

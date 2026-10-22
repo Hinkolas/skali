@@ -1046,7 +1046,7 @@ func (k *Kernel) claimsChecked(environmentID uuid.UUID, attachment *runAttachmen
 // redactor covers the environment's current values plus, when a revision is
 // given, the exact versions it pinned (a tombstoned value is no longer
 // current but still resolvable by an old revision). Values a route domain
-// references are exempt: a hostname the edge serves is public by
+// or alias references are exempt: a hostname the edge serves is public by
 // construction (the status projection resolves it for the same reason),
 // and the TLS checkpoints must be able to name it. Kernel log lines carry
 // no other values, so this is defense in depth, not the only barrier. The
@@ -1073,8 +1073,8 @@ func (k *Kernel) redactor(ctx context.Context, environmentID uuid.UUID, rev *rev
 	return redactor.Without(routeVariableNames(rev))
 }
 
-// routeVariableNames lists the project variables any route domain of the
-// revision references.
+// routeVariableNames lists the project variables any route domain or alias
+// of the revision references.
 func routeVariableNames(rev *revision.Revision) map[string]bool {
 	names := map[string]bool{}
 	for _, domain := range routeDomainExpressions(rev.Definition) {
@@ -1088,12 +1088,14 @@ func routeVariableNames(rev *revision.Revision) map[string]bool {
 }
 
 // routeDomainExpressions lists every hostname expression the edge serves
-// for the definition: application routes and bucket routes alike.
+// for the definition: application routes with their aliases, and bucket
+// routes.
 func routeDomainExpressions(definition compiler.ProjectDefinition) []compiler.Expression {
 	var domains []compiler.Expression
 	for _, application := range definition.Applications {
 		for _, route := range application.Routes {
 			domains = append(domains, route.Domain)
+			domains = append(domains, route.Aliases...)
 		}
 	}
 	for _, bucket := range definition.Buckets {
