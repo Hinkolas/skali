@@ -12,6 +12,10 @@ spec:
       metrics:
         expose:
           default: true
+      websecure:
+        transport:
+          respondingTimeouts:
+            readTimeout: 30m
     providers:
       kubernetesCRD:
         allowCrossNamespace: true

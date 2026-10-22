@@ -644,6 +644,15 @@ spec:
 `
 }
 
+// EdgeReadTimeout bounds how long the HTTPS edge reads one request,
+// body included. Traefik's 60-second default cut off registry pushes from
+// slow connections: a layer goes up as a single PATCH, so the limit caps
+// layer size by bandwidth, not inactivity. Thirty minutes carries a
+// 790 MB layer at 440 KB/s, the rate it was observed failing at. Traefik
+// sets this per entrypoint, not per route, so every HTTPS route shares it:
+// a client dripping a request holds its connection open this long.
+const EdgeReadTimeout = "30m"
+
 // edgeTraefikYAML overlays the k3s Traefik chart (helm-controller merges a
 // HelmChartConfig's values into the chart it ships). Metrics: per-router
 // Prometheus series and the metrics port exposed, for the skalid edge
@@ -653,9 +662,10 @@ spec:
 // IngressRoutes (tenants hold no cluster access), so the global toggle
 // widens nothing a manifest can reach. skali owns this object;
 // operator-authored traefik HelmChartConfigs are unsupported. Both
-// profiles: the local k3d edge is the same Traefik.
+// profiles: the local k3d edge is the same Traefik. Request read time:
+// see EdgeReadTimeout.
 func edgeTraefikYAML() string {
-	return `apiVersion: helm.cattle.io/v1
+	return fmt.Sprintf(`apiVersion: helm.cattle.io/v1
 kind: HelmChartConfig
 metadata:
   name: traefik
@@ -669,10 +679,14 @@ spec:
       metrics:
         expose:
           default: true
+      websecure:
+        transport:
+          respondingTimeouts:
+            readTimeout: %s
     providers:
       kubernetesCRD:
         allowCrossNamespace: true
-`
+`, EdgeReadTimeout)
 }
 
 func databaseYAML(profile Profile) string {
