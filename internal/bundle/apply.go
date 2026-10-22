@@ -10,6 +10,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/Hinkolas/skali/internal/kube"
 )
@@ -57,12 +58,27 @@ func (a *Applier) ApplyObjects(ctx context.Context, objects []unstructured.Unstr
 // the finished job from the previous release: the API server rejects it
 // as invalid. The bundle's jobs are idempotent by contract, so the
 // finished job is deleted and the new one created in its place.
+//
+// A Deployment that moves to the Recreate strategy (skalid, on upgrade
+// from a release that rolled it) keeps the rollingUpdate parameters the
+// API server defaulted: no field manager owns them, so server-side apply
+// cannot drop them, and the API server rejects Recreate beside them. The
+// strategy is switched with a merge patch first, which leaves the pod
+// template and so the running pod alone, and the apply then succeeds.
 func (a *Applier) applyObject(ctx context.Context, object *unstructured.Unstructured) error {
 	_, err := a.Client.ApplyAs(ctx, object, kube.FieldManagerInstaller, true)
-	if err == nil || !jobTemplateConflict(object, err) {
-		return err
-	}
-	if err := a.deleteJob(ctx, object.GetNamespace(), object.GetName()); err != nil {
+	switch {
+	case err == nil:
+		return nil
+	case jobTemplateConflict(object, err):
+		if err := a.deleteJob(ctx, object.GetNamespace(), object.GetName()); err != nil {
+			return err
+		}
+	case recreateStrategyConflict(object, err):
+		if err := a.switchToRecreate(ctx, object.GetNamespace(), object.GetName()); err != nil {
+			return err
+		}
+	default:
 		return err
 	}
 	_, err = a.Client.ApplyAs(ctx, object, kube.FieldManagerInstaller, true)
@@ -74,6 +90,28 @@ func (a *Applier) applyObject(ctx context.Context, object *unstructured.Unstruct
 func jobTemplateConflict(object *unstructured.Unstructured, err error) bool {
 	return object.GetKind() == "Job" && errors.IsInvalid(err) &&
 		strings.Contains(err.Error(), "field is immutable")
+}
+
+// recreateStrategyConflict recognizes the API server refusing a Recreate
+// strategy beside a live object's defaulted rollingUpdate parameters.
+func recreateStrategyConflict(object *unstructured.Unstructured, err error) bool {
+	if object.GetKind() != "Deployment" || !errors.IsInvalid(err) {
+		return false
+	}
+	strategy, _, _ := unstructured.NestedString(object.Object, "spec", "strategy", "type")
+	return strategy == "Recreate" && strings.Contains(err.Error(), "spec.strategy.rollingUpdate")
+}
+
+// switchToRecreate moves a live Deployment to the Recreate strategy and
+// drops its rollingUpdate parameters in one merge patch.
+func (a *Applier) switchToRecreate(ctx context.Context, namespace, name string) error {
+	patch := []byte(`{"spec":{"strategy":{"type":"Recreate","rollingUpdate":null}}}`)
+	_, err := a.Client.Clientset.AppsV1().Deployments(namespace).Patch(ctx, name, types.MergePatchType,
+		patch, metav1.PatchOptions{FieldManager: kube.FieldManagerInstaller})
+	if err != nil {
+		return fmt.Errorf("switch to the recreate strategy: %w", err)
+	}
+	return nil
 }
 
 // deleteJob removes a job and its pods and waits until the name is free

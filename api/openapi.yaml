@@ -3767,6 +3767,13 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: |
+            `shutting_down`: the daemon is draining for an upgrade or
+            restart and started nothing; retry once it is back.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /v1/deployments/{id}/fail:
     parameters:
@@ -4698,6 +4705,7 @@ components:
             - registry_disabled
             - registry_unavailable
             - cli_version_mismatch
+            - shutting_down
             - internal
         message:
           type: string

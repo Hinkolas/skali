@@ -166,7 +166,7 @@ tasks:
     cmds:
       - task: _test:live
         vars:
-          PACKAGES: './internal/kube/... ./internal/observe/... ./internal/reconcile/... ./internal/substrate/... ./internal/backup/...'
+          PACKAGES: './internal/kube/... ./internal/bundle/... ./internal/observe/... ./internal/reconcile/... ./internal/substrate/... ./internal/backup/...'
           RUN: '^TestLive'
           LIVE_TIMEOUT: '{{.TIMEOUT | default "90m"}}'
 
@@ -175,7 +175,7 @@ tasks:
     cmds:
       - task: _test:live
         vars:
-          PACKAGES: './internal/kube/...'
+          PACKAGES: './internal/kube/... ./internal/bundle/...'
           RUN: '^TestLive'
           LIVE_TIMEOUT: '{{.TIMEOUT | default "30m"}}'
 

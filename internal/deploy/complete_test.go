@@ -239,22 +239,13 @@ func TestCloseDeploymentSurvivesCancelledContext(t *testing.T) {
 	require.Equal(t, "failed", tree.Run.Status)
 }
 
-// A daemon that dies mid-completion leaves a preparing deployment whose
-// artifacts step already succeeded; boot recovery fails exactly those.
-func TestRecoverOnBootFailsServerOwnedDeployments(t *testing.T) {
-	t.Parallel()
-	f := newFixture(t)
+// serverOwned closes the artifacts step of a deployment's run the way
+// Complete does, without starting the completion: the state a daemon that
+// died right after the hand-off leaves behind.
+func (f *fixture) serverOwned(t *testing.T, jsvc *journal.Service, deployment *store.Deployment) {
+	t.Helper()
 	ctx := context.Background()
-	jsvc := journal.NewService(f.st, "executor-1")
-
-	staging, err := f.projects.CreateEnvironment(ctx, f.projectID, "staging", project.EnvironmentOptions{})
-	require.NoError(t, err)
-	definitionVersion := f.submit(t, testManifest, 0)
-	owned := f.openForComplete(t, jsvc, f.environmentID, definitionVersion, "owned-plant-value")
-	clientSide := f.openForComplete(t, jsvc, staging.ID, definitionVersion, "client-plant-value")
-
-	// The owned deployment's client finished: its artifacts step closed.
-	tree, err := jsvc.RunTree(ctx, *owned.RunID)
+	tree, err := jsvc.RunTree(ctx, *deployment.RunID)
 	require.NoError(t, err)
 	var artifactsStep *store.Step
 	for _, step := range tree.Steps {
@@ -267,36 +258,195 @@ func TestRecoverOnBootFailsServerOwnedDeployments(t *testing.T) {
 		require.NoError(t, jsvc.SetStepStatus(ctx, artifactsStep.ID, journal.StepRunning))
 	}
 	require.NoError(t, jsvc.SetStepStatus(ctx, artifactsStep.ID, journal.StepSucceeded))
+}
 
-	recovered, err := f.deploy.RecoverOnBoot(ctx, journal.NewService(f.st, "executor-2"))
+// stepKeys lists the keys of a run's steps.
+func stepKeys(t *testing.T, jsvc *journal.Service, runID uuid.UUID) []string {
+	t.Helper()
+	tree, err := jsvc.RunTree(context.Background(), runID)
 	require.NoError(t, err)
-	require.Equal(t, 1, recovered)
-
-	row, err := f.deploy.GetDeployment(ctx, owned.ID)
-	require.NoError(t, err)
-	require.Equal(t, string(DeploymentFailed), row.Status)
-	tree, err = jsvc.RunTree(ctx, *owned.RunID)
-	require.NoError(t, err)
-	require.Equal(t, "failed", tree.Run.Status)
 	var keys []string
 	for _, step := range tree.Steps {
 		keys = append(keys, step.Step.Key)
 	}
-	require.Contains(t, keys, "restart")
-	var explained int
-	require.NoError(t, f.st.Pool.QueryRow(ctx,
-		"SELECT count(*) FROM run_logs WHERE message LIKE '%daemon restarted%'").Scan(&explained))
-	require.Equal(t, 1, explained)
+	return keys
+}
+
+// A daemon that dies mid-completion leaves a preparing deployment whose
+// artifacts step already succeeded; boot recovery resumes exactly those,
+// and the resumed completion promotes as the first one would have.
+func TestRecoverOnBootResumesServerOwnedDeployments(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	ctx := context.Background()
+	jsvc := journal.NewService(f.st, "executor-1")
+
+	staging, err := f.projects.CreateEnvironment(ctx, f.projectID, "staging", project.EnvironmentOptions{})
+	require.NoError(t, err)
+	definitionVersion := f.submit(t, testManifest, 0)
+	owned := f.openForComplete(t, jsvc, f.environmentID, definitionVersion, "owned-plant-value")
+	clientSide := f.openForComplete(t, jsvc, staging.ID, definitionVersion, "client-plant-value")
+	f.serverOwned(t, jsvc, owned)
+
+	next := journal.NewService(f.st, "executor-2")
+	_, err = next.RecoverOnBoot(ctx)
+	require.NoError(t, err)
+	resumed, failed, err := f.deploy.RecoverOnBoot(ctx, next)
+	require.NoError(t, err)
+	require.Equal(t, 1, resumed)
+	require.Zero(t, failed)
+
+	require.Equal(t, string(DeploymentPromoted), f.awaitDeploymentStatus(t, owned.ID))
+	require.Equal(t, "succeeded", f.awaitRunStatus(t, next, *owned.RunID), "no kernel wired: promotion concludes the run")
+	row, err := f.deploy.GetDeployment(ctx, owned.ID)
+	require.NoError(t, err)
+	target, err := f.deploy.Target(ctx, f.environmentID)
+	require.NoError(t, err)
+	require.Equal(t, *row.RevisionID, *target.TargetRevisionID)
+	require.Contains(t, stepKeys(t, next, *owned.RunID), resumeStepKey)
+	require.NotContains(t, stepKeys(t, next, *owned.RunID), "restart")
 
 	// The client-side window is untouched: its client may still be building.
 	row, err = f.deploy.GetDeployment(ctx, clientSide.ID)
 	require.NoError(t, err)
 	require.Equal(t, string(DeploymentPreparing), row.Status)
-	tree, err = jsvc.RunTree(ctx, *clientSide.RunID)
+	tree, err := jsvc.RunTree(ctx, *clientSide.RunID)
 	require.NoError(t, err)
 	require.Equal(t, "running", tree.Run.Status)
 
-	recovered, err = f.deploy.RecoverOnBoot(ctx, jsvc)
+	resumed, failed, err = f.deploy.RecoverOnBoot(ctx, next)
 	require.NoError(t, err)
-	require.Zero(t, recovered)
+	require.Zero(t, resumed+failed)
+}
+
+// Shutdown that outlasts the drain stops a completion between stages
+// without failing anything; the next daemon resumes it to promotion.
+func TestCompletionInterruptedByShutdownResumesOnBoot(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	ctx := context.Background()
+	lifetime, shutdown := context.WithCancel(ctx)
+	defer shutdown()
+	f.deploy.SetLifetime(lifetime)
+	jsvc := journal.NewService(f.st, "executor-1")
+	definitionVersion := f.submit(t, testManifest, 0)
+	deployment := f.openForComplete(t, jsvc, f.environmentID, definitionVersion, "interrupted-plant-value")
+
+	// Promotion waits on a lock the kernel holds when shutdown begins.
+	unlock, err := f.st.LockEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	_, err = f.deploy.Complete(ctx, deployment.ID, jsvc)
+	require.NoError(t, err)
+
+	drainCtx, cancelDrain := context.WithTimeout(ctx, 300*time.Millisecond)
+	defer cancelDrain()
+	require.ErrorIs(t, f.deploy.Drain(drainCtx), context.DeadlineExceeded)
+	_, err = f.deploy.Complete(ctx, deployment.ID, jsvc)
+	require.ErrorIs(t, err, ErrShuttingDown, "a draining daemon starts no completion")
+	shutdown()
+	require.NoError(t, f.deploy.Drain(ctx), "the interrupted completion returns")
+	unlock()
+
+	row, err := f.deploy.GetDeployment(ctx, deployment.ID)
+	require.NoError(t, err)
+	require.Equal(t, string(DeploymentPreparing), row.Status, "interrupted, not failed")
+	tree, err := jsvc.RunTree(ctx, *deployment.RunID)
+	require.NoError(t, err)
+	require.Equal(t, "running", tree.Run.Status)
+	var staged int
+	require.NoError(t, f.st.Pool.QueryRow(ctx,
+		"SELECT count(*) FROM environment_secrets WHERE state = 'staged'").Scan(&staged))
+	require.NotZero(t, staged, "the staged candidate survives for the resume")
+
+	// The next daemon: a fresh service and executor over the same rows.
+	next := New(f.st, f.values, f.artifacts, "test")
+	nextJournal := journal.NewService(f.st, "executor-2")
+	_, err = nextJournal.RecoverOnBoot(ctx)
+	require.NoError(t, err)
+	resumed, failed, err := next.RecoverOnBoot(ctx, nextJournal)
+	require.NoError(t, err)
+	require.Equal(t, 1, resumed)
+	require.Zero(t, failed)
+	require.Equal(t, string(DeploymentPromoted), f.awaitDeploymentStatus(t, deployment.ID))
+	require.Equal(t, "succeeded", f.awaitRunStatus(t, nextJournal, *deployment.RunID))
+}
+
+// Drain waits for a running completion to finish on its own.
+func TestDrainWaitsForRunningCompletion(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	ctx := context.Background()
+	jsvc := journal.NewService(f.st, "executor-1")
+	definitionVersion := f.submit(t, testManifest, 0)
+	deployment := f.openForComplete(t, jsvc, f.environmentID, definitionVersion, "drain-plant-value")
+
+	unlock, err := f.st.LockEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	_, err = f.deploy.Complete(ctx, deployment.ID, jsvc)
+	require.NoError(t, err)
+	time.AfterFunc(200*time.Millisecond, unlock)
+
+	drainCtx, cancelDrain := context.WithTimeout(ctx, 10*time.Second)
+	defer cancelDrain()
+	require.NoError(t, f.deploy.Drain(drainCtx))
+	row, err := f.deploy.GetDeployment(ctx, deployment.ID)
+	require.NoError(t, err)
+	require.Equal(t, string(DeploymentPromoted), row.Status, "drained after promotion, not before")
+}
+
+// A completion is resumed once: a run that already carries the resume step
+// was interrupted again, and boot recovery fails it instead of looping.
+func TestRecoverOnBootFailsSecondInterruption(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	ctx := context.Background()
+	jsvc := journal.NewService(f.st, "executor-1")
+	definitionVersion := f.submit(t, testManifest, 0)
+	deployment := f.openForComplete(t, jsvc, f.environmentID, definitionVersion, "twice-plant-value")
+	f.serverOwned(t, jsvc, deployment)
+	require.NoError(t, f.deploy.instantStep(ctx, jsvc, *deployment.RunID, nil, resumeStepKey, "Daemon restarted", "resuming"))
+
+	resumed, failed, err := f.deploy.RecoverOnBoot(ctx, journal.NewService(f.st, "executor-2"))
+	require.NoError(t, err)
+	require.Zero(t, resumed)
+	require.Equal(t, 1, failed)
+
+	row, err := f.deploy.GetDeployment(ctx, deployment.ID)
+	require.NoError(t, err)
+	require.Equal(t, string(DeploymentFailed), row.Status)
+	tree, err := jsvc.RunTree(ctx, *deployment.RunID)
+	require.NoError(t, err)
+	require.Equal(t, "failed", tree.Run.Status)
+	require.NotNil(t, tree.Run.Failure)
+	require.Contains(t, *tree.Run.Failure, "restarted twice")
+	require.Contains(t, stepKeys(t, jsvc, *deployment.RunID), "restart")
+	target, err := f.deploy.Target(ctx, f.environmentID)
+	require.NoError(t, err)
+	require.Nil(t, target.TargetRevisionID, "nothing promoted")
+}
+
+// A deployment whose artifacts are gone by the time the daemon is back
+// cannot resume; boot recovery fails it and names them.
+func TestRecoverOnBootFailsWithoutVerifiedArtifacts(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	ctx := context.Background()
+	jsvc := journal.NewService(f.st, "executor-1")
+	definitionVersion := f.submit(t, testManifest, 0)
+	deployment := f.openForComplete(t, jsvc, f.environmentID, definitionVersion, "evicted-plant-value")
+	f.serverOwned(t, jsvc, deployment)
+	_, err := f.st.Pool.Exec(ctx, "UPDATE artifacts SET phase = 'evicted'")
+	require.NoError(t, err)
+
+	resumed, failed, err := f.deploy.RecoverOnBoot(ctx, journal.NewService(f.st, "executor-2"))
+	require.NoError(t, err)
+	require.Zero(t, resumed)
+	require.Equal(t, 1, failed)
+	row, err := f.deploy.GetDeployment(ctx, deployment.ID)
+	require.NoError(t, err)
+	require.Equal(t, string(DeploymentFailed), row.Status)
+	tree, err := jsvc.RunTree(ctx, *deployment.RunID)
+	require.NoError(t, err)
+	require.NotNil(t, tree.Run.Failure)
+	require.Contains(t, *tree.Run.Failure, "no longer verified")
 }

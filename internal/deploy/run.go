@@ -50,6 +50,14 @@ type ExecuteInput struct {
 	// redactor is the one a deployment's completion already built; without
 	// it the stages build their own.
 	redactor *redact.Redactor
+	// resumable marks a daemon-owned completion: the service lifetime
+	// ending (shutdown) leaves the deployment preparing for the next boot
+	// to resume instead of failing it.
+	resumable bool
+	// settled lists the steps a resumed completion's interrupted first
+	// attempt already concluded; the stage runs again, but its records are
+	// not repeated.
+	settled map[string]bool
 }
 
 type ExecuteResult struct {
@@ -102,6 +110,9 @@ func (s *Service) runStages(ctx context.Context, runID uuid.UUID, in ExecuteInpu
 	info := func(message string) journal.LogEntry { return journal.LogEntry{Level: "info", Message: message} }
 	warn := func(message string) journal.LogEntry { return journal.LogEntry{Level: "warn", Message: message} }
 	step := func(ctx context.Context, key, title string, to journal.StepStatus, entries []journal.LogEntry) error {
+		if in.settled[key] {
+			return nil
+		}
 		_, err := in.Journal.RecordStep(ctx, journal.StepRecord{RunID: runID, Key: key, Title: title,
 			To: to, Entries: entries}, redactor)
 		return err
@@ -123,6 +134,9 @@ func (s *Service) runStages(ctx context.Context, runID uuid.UUID, in ExecuteInpu
 		ActionPlatforms:     in.ActionPlatforms,
 	})
 	if err != nil {
+		if s.interrupted(in) {
+			return result, fmt.Errorf("%w: %w", errInterrupted, err)
+		}
 		// The diagnostic must land even when ctx is what failed.
 		cctx, cancel := detached(ctx)
 		defer cancel()
@@ -157,6 +171,9 @@ func (s *Service) runStages(ctx context.Context, runID uuid.UUID, in ExecuteInpu
 		promoteLog = append(promoteLog, info("pruning stored values not referenced by this definition: "+strings.Join(prepared.Pruned, ", ")))
 	}
 	if err := s.Promote(ctx, prepared); err != nil {
+		if s.interrupted(in) {
+			return result, fmt.Errorf("%w: %w", errInterrupted, err)
+		}
 		cctx, cancel := detached(ctx)
 		defer cancel()
 		_ = step(cctx, promoteKey, promoteTitle, journal.StepFailed,
@@ -199,8 +216,13 @@ func (s *Service) runStages(ctx context.Context, runID uuid.UUID, in ExecuteInpu
 // terminal. The reason passes through redactor (nil before one exists)
 // because a prepare or promote error can echo staged secrets. It runs
 // detached from ctx's cancellation: the cause may well be that ctx died,
-// and a run that stays running would wedge the environment.
+// and a run that stays running would wedge the environment. The exception
+// is a resumable completion interrupted by shutdown, which keeps its
+// candidate and run for the next boot.
 func (s *Service) fail(ctx context.Context, in ExecuteInput, runID uuid.UUID, redactor *redact.Redactor, cause error) error {
+	if s.interrupted(in) {
+		return fmt.Errorf("%w: %w", errInterrupted, cause)
+	}
 	ctx, cancel := detached(ctx)
 	defer cancel()
 	if in.CandidateID != uuid.Nil {
@@ -213,4 +235,12 @@ func (s *Service) fail(ctx context.Context, in ExecuteInput, runID uuid.UUID, re
 		return fmt.Errorf("deploy: finish run after failure: %w (original: %w)", err, cause)
 	}
 	return cause
+}
+
+// interrupted reports whether a stage error belongs to a resumable
+// completion that shutdown stopped. Before promotion nothing it did needs
+// undoing: the revision is reused by identical inputs, and the journal
+// reattaches its steps by key. After promotion the kernel adopts the run.
+func (s *Service) interrupted(in ExecuteInput) bool {
+	return in.resumable && s.lifetime().Err() != nil
 }

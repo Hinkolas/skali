@@ -92,6 +92,8 @@ metadata:
   namespace: skali-system
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: skalid
@@ -103,6 +105,7 @@ spec:
         skali.dev/image-id: sha256:0123456789abcdef
     spec:
       serviceAccountName: skalid
+      terminationGracePeriodSeconds: 45
       priorityClassName: skali-critical
       topologySpreadConstraints:
         - maxSkew: 1

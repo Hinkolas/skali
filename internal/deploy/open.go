@@ -694,12 +694,22 @@ func (s *Service) openUnderRun(ctx context.Context, in OpenInput, env store.Envi
 // running; the caller should attach to its run.
 var ErrDeploymentCompleting = errors.New("deploy: the deployment is already completing")
 
+// ErrShuttingDown: the daemon is draining for shutdown and starts no new
+// completion; the client retries against the next daemon.
+var ErrShuttingDown = errors.New("deploy: the daemon is shutting down")
+
+// errInterrupted marks a completion that shutdown stopped between stages.
+// Nothing was failed or discarded: the deployment stays preparing and the
+// next boot resumes it.
+var errInterrupted = errors.New("deploy: completion interrupted by daemon shutdown")
+
 // completion is the hand-off from the request-bound half of Complete to the
 // half that runs on the service lifetime.
 type completion struct {
 	deploymentID uuid.UUID
 	runID        uuid.UUID
 	jsvc         *journal.Service
+	actions      []ArtifactAction
 	in           ExecuteInput
 }
 
@@ -735,6 +745,12 @@ func (s *Service) beginComplete(ctx context.Context, deploymentID uuid.UUID, jsv
 		return nil, err
 	}
 	c, err := s.prepareCompletion(ctx, deployment, jsvc)
+	if err == nil {
+		// Closing the artifacts step is the durable mark that the client's
+		// part is over: from here the daemon owns the deployment, and a
+		// restart resumes it (see RecoverOnBoot).
+		err = s.closeArtifactsStep(ctx, jsvc, c.runID, c.in.redactor, c.actions)
+	}
 	if err != nil {
 		s.release(deploymentID)
 		return nil, err
@@ -815,16 +831,11 @@ func (s *Service) prepareCompletion(ctx context.Context, deployment *store.Deplo
 			actionPlatforms[action.Application] = action.Platform
 		}
 	}
-
-	// Closing the artifacts step is the durable mark that the client's part
-	// is over: from here the daemon owns the deployment (see RecoverOnBoot).
-	if err := s.closeArtifactsStep(ctx, jsvc, runID, redactor, actions); err != nil {
-		return nil, err
-	}
 	return &completion{
 		deploymentID: deployment.ID,
 		runID:        runID,
 		jsvc:         jsvc,
+		actions:      actions,
 		in: ExecuteInput{
 			ProjectID:           deployment.ProjectID,
 			EnvironmentID:       deployment.EnvironmentID,
@@ -839,6 +850,7 @@ func (s *Service) prepareCompletion(ctx context.Context, deployment *store.Deplo
 			PruneValues:         deployment.PruneValues,
 			ActionPlatforms:     actionPlatforms,
 			redactor:            redactor,
+			resumable:           true,
 		},
 	}, nil
 }
@@ -849,17 +861,26 @@ func (s *Service) prepareCompletion(ctx context.Context, deployment *store.Deplo
 func (s *Service) runCompletion(c *completion) {
 	defer s.release(c.deploymentID)
 	ctx := s.lifetime()
-	if _, err := s.finishComplete(ctx, c); err != nil {
+	_, err := s.finishComplete(ctx, c)
+	switch {
+	case errors.Is(err, errInterrupted):
+		slog.WarnContext(ctx, "deploy: completion interrupted by shutdown; the next boot resumes it",
+			"deployment", c.deploymentID, "run", c.runID, "err", err)
+	case err != nil:
 		slog.WarnContext(ctx, "deploy: complete deployment", "deployment", c.deploymentID, "run", c.runID, "err", err)
 	}
 }
 
 // finishComplete is the half that moves state: revision, promotion, and the
-// rollout handoff, with the deployment marked failed on any error. The
-// failure mark runs detached from ctx so that a cancelled ctx (the daemon
-// shutting down) still leaves a closed row behind.
+// rollout handoff, with the deployment marked failed on any error but an
+// interruption by shutdown, which leaves it for the next boot to resume.
+// The failure mark runs detached from ctx so that it lands even when ctx
+// ended for another reason.
 func (s *Service) finishComplete(ctx context.Context, c *completion) (*ExecuteResult, error) {
 	result, err := s.runStages(ctx, c.runID, c.in)
+	if errors.Is(err, errInterrupted) {
+		return result, err
+	}
 	if err != nil {
 		// Promotion marks the deployment promoted inside its own
 		// transaction, so a failure after that point (journal writes on the
@@ -992,35 +1013,96 @@ func (s *Service) SweepStaleDeployments(ctx context.Context, jsvc *journal.Servi
 	return swept, nil
 }
 
-// RecoverOnBoot fails every preparing deployment whose completion this
-// daemon owned when it last died: the artifacts step of its run already
-// succeeded, so the client's part was over and no client will ever finish
-// the row. The journal's own recovery failed the orphaned attempt; this
-// closes the deployment and its run so the environment is free again.
-func (s *Service) RecoverOnBoot(ctx context.Context, jsvc *journal.Service) (int, error) {
+// resumeStepKey journals that a restarted daemon picked a completion back
+// up. A run that already carries it was interrupted twice and is failed
+// instead, so a completion that brings the daemon down cannot loop.
+const resumeStepKey = "resume"
+
+// RecoverOnBoot picks up every preparing deployment whose completion the
+// previous daemon owned when it stopped: the artifacts step of its run
+// already succeeded, so the client's part was over and no client will ever
+// finish the row. Everything the completion needs is persisted (the
+// verified artifacts, the staged candidate, the run), and promotion is the
+// one atomic step, so the completion runs again from revision creation on
+// the service lifetime. A deployment that cannot resume (an artifact is
+// gone, or this is its second interruption) is failed instead, which
+// closes its run so the environment is free again. The journal's own
+// recovery must run first: it fails the attempts the previous daemon left
+// running. SetLifetime and SetEnqueuer must be wired before.
+func (s *Service) RecoverOnBoot(ctx context.Context, jsvc *journal.Service) (resumed, failed int, err error) {
 	rows, err := s.st.ListServerOwnedPreparingDeployments(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("deploy: list interrupted deployments: %w", err)
+		return 0, 0, fmt.Errorf("deploy: list interrupted deployments: %w", err)
 	}
-	recovered := 0
 	for _, row := range rows {
+		reason, err := s.resume(ctx, &row, jsvc)
+		if err != nil {
+			return resumed, failed, err
+		}
+		if reason == "" {
+			resumed++
+			continue
+		}
 		if row.RunID != nil {
 			if redactor, err := s.values.Redactor(ctx, row.EnvironmentID, uuid.Nil); err == nil {
 				if err := s.instantStep(ctx, jsvc, *row.RunID, redactor, "restart", "Daemon restarted",
-					"deployment failed: daemon restarted while it was completing"); err != nil {
+					"deployment failed: "+reason); err != nil {
 					slog.WarnContext(ctx, "deploy: journal restart diagnostic", "run", *row.RunID, "err", err)
 				}
 			}
 		}
-		if err := s.FailDeployment(ctx, row.ID, jsvc, "daemon restarted while the deployment was completing"); err != nil {
+		if err := s.FailDeployment(ctx, row.ID, jsvc, reason); err != nil {
 			if errors.Is(err, ErrInvalidDeploymentTransition) {
 				continue
 			}
-			return recovered, err
+			return resumed, failed, err
 		}
-		recovered++
+		failed++
 	}
-	return recovered, nil
+	return resumed, failed, nil
+}
+
+// resume starts the completion of one interrupted deployment in the
+// background. It returns why the deployment cannot resume instead, and an
+// error only when the journal cannot be read: one deployment that fails to
+// resume must not keep the daemon from booting.
+func (s *Service) resume(ctx context.Context, deployment *store.Deployment, jsvc *journal.Service) (string, error) {
+	if deployment.RunID == nil {
+		return "the daemon restarted while the deployment was completing", nil
+	}
+	steps, err := jsvc.StepStates(ctx, *deployment.RunID)
+	if err != nil {
+		return "", fmt.Errorf("deploy: read interrupted run: %w", err)
+	}
+	if _, ok := steps[resumeStepKey]; ok {
+		return "the daemon restarted twice while the deployment was completing", nil
+	}
+	if err := s.tryClaim(deployment.ID); err != nil {
+		return "", fmt.Errorf("deploy: claim interrupted deployment: %w", err)
+	}
+	c, err := s.prepareCompletion(ctx, deployment, jsvc)
+	if err == nil {
+		c.in.settled = map[string]bool{}
+		for key, state := range steps {
+			if state.Status == journal.StepSucceeded {
+				c.in.settled[key] = true
+			}
+		}
+		err = s.instantStep(ctx, jsvc, c.runID, c.in.redactor, resumeStepKey, "Daemon restarted",
+			"the daemon restarted while the deployment was completing; resuming it")
+	}
+	if err != nil {
+		s.release(deployment.ID)
+		slog.WarnContext(ctx, "deploy: resume interrupted deployment", "deployment", deployment.ID, "err", err)
+		var incomplete *ArtifactsIncompleteError
+		if errors.As(err, &incomplete) {
+			return "the daemon restarted while the deployment was completing, and the artifacts for " +
+				strings.Join(incomplete.Missing, ", ") + " are no longer verified", nil
+		}
+		return "the daemon restarted while the deployment was completing and could not resume it", nil
+	}
+	go s.runCompletion(c)
+	return "", nil
 }
 
 // TouchDeployment records artifact-window liveness.

@@ -960,6 +960,9 @@ func writeDeployError(ctx context.Context, w http.ResponseWriter, err error) {
 	case errors.Is(err, deploy.ErrDeploymentCompleting):
 		writeError(w, http.StatusConflict, codeDeploymentCompleting,
 			"the deployment is already completing; attach to its run")
+	case errors.Is(err, deploy.ErrShuttingDown):
+		writeError(w, http.StatusServiceUnavailable, codeShuttingDown,
+			"the daemon is shutting down; retry once it is back")
 	case errors.Is(err, deploy.ErrDefinitionMismatch):
 		writeError(w, http.StatusUnprocessableEntity, codeBadRequest, trimDeployPrefix(err))
 	case errors.As(err, &capabilities):

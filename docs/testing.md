@@ -60,7 +60,7 @@ cluster. Cluster restart has a separate opt-in described below.
 | Named live command | Coverage |
 | --- | --- |
 | `task test:live` | All five live package families below. |
-| `task test:live:kube` | Apply/prune, ownership, and actual NetworkPolicy enforcement. |
+| `task test:live:kube` | Apply/prune, ownership, actual NetworkPolicy enforcement, and the platform bundle's switch of an existing Deployment to the Recreate strategy. |
 | `task test:live:observe` | Kubernetes list/watch propagation, stale state, and recovery. |
 | `task test:live:reconcile` | Environment deployment, healing, isolation, ownership, and rollout behavior, including prompt rollout handoffs while other environments keep the workers busy. |
 | `task test:live:backup` | Backup and restore Jobs: a cancel interrupts a real Job wait and removes the Job and its target Secret; a real `pg_restore` that fails halfway leaves the database as it was; a bucket restored on the pinned SeaweedFS lists exactly its snapshot's keys. |

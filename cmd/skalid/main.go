@@ -72,6 +72,22 @@ import (
 
 const serviceName = "skalid"
 
+// Shutdown is bounded end to end: the bundle's termination grace period
+// (bundle.SkalidTerminationGrace) covers all of it with margin, and the
+// Recreate strategy starts the next daemon only after this one exited.
+const (
+	// drainTimeout bounds the first phase: the HTTP server stops
+	// accepting, and running deployment completions finish.
+	drainTimeout = 20 * time.Second
+	// requestGrace is how long in-flight requests keep their context once
+	// shutdown begins. Event streams never go idle on their own; after the
+	// grace their contexts end, so the drain does not wait them out.
+	requestGrace = 5 * time.Second
+	// stopTimeout bounds the second phase: the cancelled loops and any
+	// completion the drain cut short return.
+	stopTimeout = 5 * time.Second
+)
+
 func main() {
 	if err := run(); err != nil {
 		slog.Error("fatal", "service", serviceName, "err", err)
@@ -208,13 +224,6 @@ func runServe() error {
 		return fmt.Errorf("recover journal: %w", err)
 	} else if failed > 0 {
 		slog.InfoContext(ctx, "recovered orphaned attempts", "failed", failed)
-	}
-	// Deployments whose completion the previous daemon was driving when it
-	// died: their runs would otherwise stay running and block the environment.
-	if failed, err := deploySvc.RecoverOnBoot(ctx, journalSvc); err != nil {
-		return fmt.Errorf("recover deployments: %w", err)
-	} else if failed > 0 {
-		slog.InfoContext(ctx, "failed interrupted deployments", "count", failed)
 	}
 
 	// Every Kubernetes request's latency and request-budget wait is
@@ -379,10 +388,21 @@ func runServe() error {
 
 	// loopCtx is the lifetime of everything that outlives a request: the
 	// loops below and deployment completions handed off by the API. It
-	// exists before the listener so no handler runs without it.
+	// exists before the listener so no handler runs without it. loops
+	// tracks the goroutines that run on it, so shutdown can wait for them.
 	loopCtx, cancelLoops := context.WithCancel(ctx)
 	defer cancelLoops()
+	var loops sync.WaitGroup
 	deploySvc.SetLifetime(loopCtx)
+
+	// Deployments whose completion the previous daemon was driving when it
+	// stopped: they resume on loopCtx, or fail when they cannot, so their
+	// runs never stay running and block the environment.
+	if resumed, failed, err := deploySvc.RecoverOnBoot(ctx, journalSvc); err != nil {
+		return fmt.Errorf("recover deployments: %w", err)
+	} else if resumed+failed > 0 {
+		slog.InfoContext(ctx, "recovered interrupted deployments", "resumed", resumed, "failed", failed)
+	}
 
 	// The backup controller runs beside the kernel and the substrate with
 	// its own queue: backup and restore runs are operational work driven by
@@ -487,8 +507,13 @@ func runServe() error {
 	if substrateCtl != nil {
 		poolTuner = substrateCtl
 	}
+	// Every request context derives from requestCtx, which shutdown cancels
+	// after requestGrace.
+	requestCtx, cancelRequests := context.WithCancel(context.Background())
+	defer cancelRequests()
 	srv := &http.Server{
-		Addr: cfg.HTTPAddr,
+		Addr:        cfg.HTTPAddr,
+		BaseContext: func(net.Listener) context.Context { return requestCtx },
 		Handler: studio.Handler(api.StripAPIPrefix(api.NewRouter(api.Deps{
 			Auth:               authSvc,
 			CookieSecure:       cfg.CookieSecure,
@@ -534,26 +559,26 @@ func runServe() error {
 		}
 	}()
 
-	go sweepLoop(loopCtx, authSvc)
+	loops.Go(func() { sweepLoop(loopCtx, authSvc) })
 
 	// The reconciliation kernel: observation sync, workers, and audits. In
 	// API-only mode it parks until shutdown.
-	go func() {
+	loops.Go(func() {
 		if err := kernel.Run(loopCtx); err != nil && !errors.Is(err, context.Canceled) {
 			slog.Error("reconcile kernel stopped", "err", err)
 		}
-	}()
+	})
 	if backupCtl != nil {
-		go backupCtl.Run(loopCtx)
+		loops.Go(func() { backupCtl.Run(loopCtx) })
 	}
 	if rotationCtl != nil {
-		go rotationCtl.Run(loopCtx)
+		loops.Go(func() { rotationCtl.Run(loopCtx) })
 	}
 	if backupScheduler != nil {
-		go backupScheduler.Run(loopCtx)
+		loops.Go(func() { backupScheduler.Run(loopCtx) })
 	}
 	if substrateCtl != nil {
-		go substrateCtl.Run(loopCtx)
+		loops.Go(func() { substrateCtl.Run(loopCtx) })
 		// The SeaweedFS provider observer : poll-based, its
 		// own named source, so a seaweed outage degrades bucket health
 		// without touching cluster observation.
@@ -562,11 +587,11 @@ func runServe() error {
 			Enqueue: func(environmentID uuid.UUID) { kernel.EnqueueFor(environmentID, reconcile.ReasonPoll) },
 		})
 		substrateCtl.SetProbePoke(seaweedPoll.Poke)
-		go func() {
+		loops.Go(func() {
 			if err := seaweedPoll.Run(loopCtx); err != nil && !errors.Is(err, context.Canceled) {
 				slog.Error("seaweed observer stopped", "err", err)
 			}
-		}()
+		})
 	}
 
 	// Staged values and pending artifact records are normally closed
@@ -578,7 +603,9 @@ func runServe() error {
 	if _, err := artifactSvc.SweepPending(ctx, 24*time.Hour); err != nil {
 		slog.WarnContext(ctx, "sweep pending artifacts", "err", err)
 	}
-	go productSweepLoop(loopCtx, valueSvc, artifactSvc, deploySvc, journalSvc, cfg.BuildStaleTimeout)
+	loops.Go(func() {
+		productSweepLoop(loopCtx, valueSvc, artifactSvc, deploySvc, journalSvc, cfg.BuildStaleTimeout)
+	})
 
 	// Usage telemetry: samples metrics-server readings into the platform
 	// database and prunes them by age. Absent in API-only mode.
@@ -591,11 +618,11 @@ func runServe() error {
 			Seaweed:           seaweed.NewClient(kubeClient, substrate.Namespace),
 			PlatformNamespace: substrate.Namespace,
 		}
-		go sampler.Run(loopCtx)
+		loops.Go(func() { sampler.Run(loopCtx) })
 	}
 
 	// The daily release scan (and automatic updates when enabled).
-	go updatesSvc.Run(loopCtx)
+	loops.Go(func() { updatesSvc.Run(loopCtx) })
 
 	slog.InfoContext(ctx, "starting", "service", serviceName, "http_addr", cfg.HTTPAddr)
 
@@ -607,10 +634,50 @@ func runServe() error {
 	case <-sigCtx.Done():
 	}
 	slog.Info("shutdown signal received", "service", serviceName)
+	return shutdown(srv, cancelRequests, deploySvc, cancelLoops, &loops)
+}
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	return srv.Shutdown(shutdownCtx)
+// shutdown stops the daemon in two bounded phases, so the next daemon
+// never boots beside work this one still drives. First it stops accepting:
+// the HTTP server closes its listener and finishes in-flight requests, and
+// deployment completions refuse new work while the running ones reach
+// their end. Then the loops are cancelled and awaited. A completion still
+// running at the drain deadline stops where the cancellation reaches it,
+// with nothing failed or discarded, and the next boot resumes it; loop
+// work the deadline cuts short is recovered by the journal and the
+// reconcilers like a crash.
+func shutdown(srv *http.Server, cancelRequests context.CancelFunc, deploySvc *deploy.Service,
+	cancelLoops context.CancelFunc, loops *sync.WaitGroup) error {
+	drainCtx, cancelDrain := context.WithTimeout(context.Background(), drainTimeout)
+	defer cancelDrain()
+	served := make(chan error, 1)
+	go func() { served <- srv.Shutdown(drainCtx) }()
+	grace := time.AfterFunc(requestGrace, cancelRequests)
+	defer grace.Stop()
+	if err := deploySvc.Drain(drainCtx); err != nil {
+		slog.Warn("deployment completions still running at the drain deadline; the next boot resumes them",
+			"service", serviceName)
+	}
+	serveErr := <-served
+
+	cancelLoops()
+	stopCtx, cancelStop := context.WithTimeout(context.Background(), stopTimeout)
+	defer cancelStop()
+	stopped := make(chan struct{})
+	go func() {
+		loops.Wait()
+		close(stopped)
+	}()
+	if err := deploySvc.Drain(stopCtx); err != nil {
+		slog.Warn("deployment completions did not stop in time", "service", serviceName)
+	}
+	select {
+	case <-stopped:
+	case <-stopCtx.Done():
+		slog.Warn("background loops did not stop in time", "service", serviceName)
+	}
+	slog.Info("shutdown complete", "service", serviceName)
+	return serveErr
 }
 
 // sweepLoop hourly clears expired sessions and login challenges.

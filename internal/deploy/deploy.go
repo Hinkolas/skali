@@ -70,7 +70,9 @@ type Service struct {
 	feed      *feed.Projects
 	// lifetimeCtx is the daemon's context for work that outlives the
 	// request that started it (deployment completion). nil means
-	// context.Background(), which is what tests and API-only mode want.
+	// context.Background(), which is what tests want. Its cancellation is
+	// shutdown: a completion it interrupts stays preparing for the next
+	// boot to resume (RecoverOnBoot).
 	lifetimeCtx context.Context
 	// requestWait and promotionWait bound how long a change waits on the
 	// environment lock (lock.go).
@@ -80,8 +82,12 @@ type Service struct {
 	// completing holds the deployments whose completion runs in a
 	// goroutine right now; a repeated complete call must not start a
 	// second promotion. In-memory is exact: a daemon restart kills the
-	// goroutine too, and RecoverOnBoot closes what it left behind.
+	// goroutine too, and RecoverOnBoot picks up what it left behind.
 	completing map[uuid.UUID]struct{}
+	// inflight counts the claims in completing, so shutdown can wait for
+	// them; draining refuses new claims once it has begun (Drain).
+	inflight sync.WaitGroup
+	draining bool
 }
 
 func New(st *store.Store, valueSvc *valuestore.Service, artifactSvc *artifactstore.Service, compilerVersion string) *Service {
@@ -102,8 +108,9 @@ func (s *Service) SetEnqueuer(e Enqueuer) { s.enqueuer = e }
 func (s *Service) SetFeed(f *feed.Projects) { s.feed = f }
 
 // SetLifetime wires the context that background completion work runs
-// under. Cancelling it (daemon shutdown) fails in-flight completions
-// cleanly instead of leaving them half done.
+// under. Cancelling it (daemon shutdown past Drain's deadline) stops
+// in-flight completions without failing them and leaves them for the next
+// boot to resume; it must be set before RecoverOnBoot.
 func (s *Service) SetLifetime(ctx context.Context) { s.lifetimeCtx = ctx }
 
 func (s *Service) lifetime() context.Context {
@@ -114,21 +121,51 @@ func (s *Service) lifetime() context.Context {
 }
 
 // tryClaim marks a deployment as completing; ErrDeploymentCompleting when
-// another completion already holds it.
+// another completion already holds it, ErrShuttingDown once Drain began.
 func (s *Service) tryClaim(id uuid.UUID) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.draining {
+		return ErrShuttingDown
+	}
 	if _, held := s.completing[id]; held {
 		return ErrDeploymentCompleting
 	}
 	s.completing[id] = struct{}{}
+	s.inflight.Add(1)
 	return nil
 }
 
 func (s *Service) release(id uuid.UUID) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if _, held := s.completing[id]; !held {
+		return
+	}
 	delete(s.completing, id)
+	s.inflight.Done()
+}
+
+// Drain is the first half of shutdown: it refuses every later completion
+// with ErrShuttingDown and waits until the running ones have finished, or
+// until ctx ends, which it reports as ctx's error. Completions still
+// running then stop when the lifetime context is cancelled, and the next
+// boot resumes them. Calling it again only waits again.
+func (s *Service) Drain(ctx context.Context) error {
+	s.mu.Lock()
+	s.draining = true
+	s.mu.Unlock()
+	done := make(chan struct{})
+	go func() {
+		s.inflight.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 type PrepareInput struct {
