@@ -1,6 +1,8 @@
 package cnpg
 
 import (
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -230,4 +232,44 @@ func TestCatalog(t *testing.T) {
 	}
 	_, ok := Lookup("postgres", 12)
 	require.False(t, ok)
+}
+
+// TestCatalogPatchesStayInTheirLine pins what a patch transition may be:
+// the same repository, the same PostgreSQL major, and the same image
+// variant and OS base (the tag after the version), moving forward. Any
+// other move changes on-disk or collation compatibility and is not a
+// patch, however small the version step.
+func TestCatalogPatchesStayInTheirLine(t *testing.T) {
+	t.Parallel()
+	for _, major := range SupportedMajors("postgres") {
+		image, _ := Lookup("postgres", major)
+		repository, version, variant := splitPostgresRef(t, image.Ref)
+		require.Equal(t, major, version[0], image.Ref)
+		for _, from := range image.PatchesFrom {
+			fromRepository, fromVersion, fromVariant := splitPostgresRef(t, from)
+			require.Equal(t, repository, fromRepository, from)
+			require.Equal(t, variant, fromVariant, from)
+			require.Equal(t, major, fromVersion[0], from)
+			require.Less(t, fromVersion[1], version[1], "%s must be older than %s", from, image.Ref)
+			require.True(t, image.Patches(from))
+		}
+		require.False(t, image.Patches(image.Ref))
+	}
+}
+
+// splitPostgresRef splits repo:17.11-system-trixie into the repository,
+// the major and minor, and the variant suffix.
+func splitPostgresRef(t *testing.T, ref string) (string, [2]int, string) {
+	t.Helper()
+	repository, tag, ok := strings.Cut(ref, ":")
+	require.True(t, ok, ref)
+	version, variant, ok := strings.Cut(tag, "-")
+	require.True(t, ok, ref)
+	majorText, minorText, ok := strings.Cut(version, ".")
+	require.True(t, ok, ref)
+	major, err := strconv.Atoi(majorText)
+	require.NoError(t, err, ref)
+	minor, err := strconv.Atoi(minorText)
+	require.NoError(t, err, ref)
+	return repository, [2]int{major, minor}, variant
 }

@@ -43,7 +43,7 @@ func TestLivePoolApplySendsNothingUnchanged(t *testing.T) {
 	ctx := context.Background()
 
 	cluster := cnpg.RenderCluster(cnpg.ClusterSpec{
-		Namespace: namespace, Name: "pool", Image: "ghcr.io/cloudnative-pg/postgresql:17.9-system-trixie",
+		Namespace: namespace, Name: "pool", Image: "ghcr.io/cloudnative-pg/postgresql:17.11-system-trixie",
 		Instances: 1, StorageBytes: 1 << 30,
 		Roles: []cnpg.Role{
 			{Name: "u_data_abcd1234", DisablePassword: true},

@@ -45,7 +45,7 @@ func TestLiveStopWorkersWaitsForTheirPods(t *testing.T) {
 			TerminationGracePeriodSeconds: &grace,
 			Containers: []corev1.Container{{
 				Name:    "worker",
-				Image:   "ghcr.io/cloudnative-pg/postgresql:17.9-system-trixie",
+				Image:   "ghcr.io/cloudnative-pg/postgresql:17.11-system-trixie",
 				Command: []string{"/bin/sh", "-c", "trap '' TERM; while true; do sleep 1; done"},
 			}},
 		}}},

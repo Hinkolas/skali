@@ -222,7 +222,9 @@ with a kind (offline, not found, rate limited, unavailable, invalid) that the
 Software update page turns into a notice, and is retried hourly until the
 feed answers again; the last release found stays visible and updatable.
 Version pins for k3s, k3d, CNPG, cert-manager, Longhorn, and Lima live in
-their packages next to their checksums; bump them together.
+their packages next to their checksums; bump them together. A PostgreSQL
+pool image bump moves existing pools too; follow
+[PostgreSQL patch updates](postgres-patch-updates.md).
 
 Before cutting a release, repeat the [dependency review](dependency-review-v0.1.3.md).
 The daily/manual `audit.yml` checks Go and npm advisories separately from

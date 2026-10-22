@@ -5,6 +5,8 @@
 package cnpg
 
 import (
+	"slices"
+
 	"github.com/Hinkolas/skali/internal/dbcatalog"
 )
 
@@ -15,18 +17,39 @@ import (
 type Image struct {
 	Ref        string
 	Extensions []string
+	// PatchesFrom lists the earlier images of the same major whose pools
+	// move to Ref on their own, one pool at a time (see the substrate's
+	// patchPool). Each entry is a reviewed transition, not a version
+	// range: the same PostgreSQL major, OS base and collation libraries,
+	// and no step a pool cannot take while running. A pool on an image
+	// missing here keeps it until a release adds the transition.
+	PatchesFrom []string
+}
+
+// Patches reports whether a pool running ref moves to this image.
+func (i Image) Patches(ref string) bool {
+	return slices.Contains(i.PatchesFrom, ref)
 }
 
 // catalog maps (engine, major) to its blessed image: the stock CNPG "system"
 // images, which ship the PostgreSQL contrib set plus pgvector for every
 // supported major. The extension list comes from dbcatalog so the compiler,
 // the manifest schema, and the driver agree on one record. A pool copies its
-// image at creation and keeps it; changing an entry here only affects pools
-// created afterwards.
+// image at creation and keeps it; changing a Ref creates new pools on the
+// new image and moves existing ones only from the images its PatchesFrom
+// lists. docs/postgres-patch-updates.md is the review a transition needs.
 var catalog = map[string]map[int]Image{
 	"postgres": {
-		17: {Ref: "ghcr.io/cloudnative-pg/postgresql:17.9-system-trixie", Extensions: dbcatalog.Extensions("postgres", 17)},
-		18: {Ref: "ghcr.io/cloudnative-pg/postgresql:18.4-system-trixie", Extensions: dbcatalog.Extensions("postgres", 18)},
+		17: {
+			Ref:         "ghcr.io/cloudnative-pg/postgresql:17.11-system-trixie",
+			Extensions:  dbcatalog.Extensions("postgres", 17),
+			PatchesFrom: []string{"ghcr.io/cloudnative-pg/postgresql:17.9-system-trixie"},
+		},
+		18: {
+			Ref:         "ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie",
+			Extensions:  dbcatalog.Extensions("postgres", 18),
+			PatchesFrom: []string{"ghcr.io/cloudnative-pg/postgresql:18.4-system-trixie"},
+		},
 	},
 }
 

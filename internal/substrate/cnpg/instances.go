@@ -36,6 +36,9 @@ type Instance struct {
 	Restarts  int32
 	StartedAt *time.Time
 	Phase     string
+	// Image is the postgres container's image: what a patch update
+	// waits on until every member runs the pool's.
+	Image string
 }
 
 // InstancesFromPods projects instance pods into members, the primary
@@ -48,6 +51,11 @@ func InstancesFromPods(pods []corev1.Pod) []Instance {
 			Role:  pod.Labels[LabelInstanceRole],
 			Node:  pod.Spec.NodeName,
 			Phase: string(pod.Status.Phase),
+		}
+		for _, container := range pod.Spec.Containers {
+			if container.Name == PostgresContainer {
+				instance.Image = container.Image
+			}
 		}
 		if instance.Role == "" {
 			instance.Role = pod.Labels[LabelRoleLegacy]
@@ -73,4 +81,31 @@ func InstancesFromPods(pods []corev1.Pod) []Instance {
 		return out[i].Name < out[j].Name
 	})
 	return out
+}
+
+// HealthyPhase is CNPG's steady-state Cluster phase.
+const HealthyPhase = "Cluster in healthy state"
+
+// Settled reports whether a pool runs image throughout, with the reason
+// when it does not: the Cluster in its steady-state phase and every member
+// ready with its postgres container on image. A pool CNPG has not started
+// rolling yet still has members on the previous image, so a changed image
+// reads as unsettled from the moment it is applied until the last member
+// runs it.
+func Settled(phase string, members []Instance, image string) (bool, string) {
+	if phase != HealthyPhase {
+		return false, phase
+	}
+	if len(members) == 0 {
+		return false, "no members"
+	}
+	for _, member := range members {
+		if member.Image != image {
+			return false, member.Name + " runs " + member.Image
+		}
+		if !member.Ready {
+			return false, member.Name + " is not ready"
+		}
+	}
+	return true, ""
 }
