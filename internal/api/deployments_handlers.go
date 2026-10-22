@@ -925,6 +925,9 @@ func writeDeployError(ctx context.Context, w http.ResponseWriter, err error) {
 	var unknownLocal *deploy.UnknownLocalApplicationError
 	var invalidIntercept *deploy.InvalidInterceptPortsError
 	var volumeShrink *deploy.VolumeShrinkError
+	var transition *deploy.TransitionError
+	var quotaBelowUsage *deploy.BucketQuotaError
+	var usageUnavailable *deploy.BucketUsageUnavailableError
 	var invalidValues *revision.ValuesError
 	var staleRevision *revision.SchemaError
 	var staleDefinition *compiler.UnsupportedDefinitionError
@@ -990,6 +993,14 @@ func writeDeployError(ctx context.Context, w http.ResponseWriter, err error) {
 		writeError(w, http.StatusUnprocessableEntity, codeBadRequest, trimDeployPrefix(err))
 	case errors.As(err, &volumeShrink):
 		writeError(w, http.StatusUnprocessableEntity, codeBadRequest, trimDeployPrefix(err))
+	case errors.As(err, &transition):
+		writeError(w, http.StatusUnprocessableEntity, codeUnsupportedTransition, trimDeployPrefix(transition))
+	case errors.As(err, &quotaBelowUsage):
+		writeError(w, http.StatusUnprocessableEntity, codeQuotaBelowUsage, trimDeployPrefix(quotaBelowUsage))
+	// 503: nothing is wrong with the request; the measurement it needs is
+	// unavailable right now, and a retry may succeed.
+	case errors.As(err, &usageUnavailable):
+		writeError(w, http.StatusServiceUnavailable, codeUsageUnavailable, trimDeployPrefix(usageUnavailable))
 	case errors.As(err, &invalidValues):
 		writeError(w, http.StatusUnprocessableEntity, codeInvalidValues, invalidValues.Message)
 	case errors.As(err, &incomplete):

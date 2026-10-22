@@ -80,6 +80,11 @@ func runBucketQuota(t *testing.T, fixture *bucketLiveFixture) {
 	})
 	require.False(t, status.ReadOnly)
 	require.EqualValues(t, quota, status.QuotaBytes)
+	// The deploy's quota-reduction check measures the figure upkeep
+	// enforces.
+	measured, err := controller.BucketUsedBytes(ctx, files.ClaimID)
+	require.NoError(t, err)
+	require.Equal(t, status.UsedBytes, measured)
 	require.GreaterOrEqual(t, status.EntryCount, int64(1))
 	require.GreaterOrEqual(t, status.DiskBytes, status.UsedBytes)
 

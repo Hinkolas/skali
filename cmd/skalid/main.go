@@ -370,6 +370,7 @@ func runServe() error {
 			Resync:       cfg.ReconcileResync,
 		})
 		kernelDeps.Claims = substrateCtl
+		deploySvc.SetBucketUsage(substrateCtl)
 		kernelDeps.SubstrateQueue = substrateCtl.QueueStats
 	}
 	reconcileCfg := reconcile.Config{

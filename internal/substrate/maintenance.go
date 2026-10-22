@@ -133,6 +133,29 @@ func (c *Controller) enforceQuotas(ctx context.Context, claims []store.BucketCla
 	return nil
 }
 
+// BucketUsedBytes measures a live bucket claim's usage now, by the same
+// live-bytes figure enforceQuotas compares against the quota, so a quota
+// the deploy accepted is one upkeep leaves open. A claim with no live
+// allocation has no bucket yet and stores nothing; a bucket the volume
+// listing does not name has no volumes yet.
+func (c *Controller) BucketUsedBytes(ctx context.Context, claimID uuid.UUID) (int64, error) {
+	if c.deps.Seaweed == nil {
+		return 0, errors.New("object storage is not configured")
+	}
+	allocation, err := c.deps.DB.LiveAllocation(ctx, claimID)
+	if errors.Is(err, dbstore.ErrNotFound) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	sizes, err := c.deps.Seaweed.CollectionSizes(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return sizes[allocation.BucketName].LiveBytes, nil
+}
+
 // maintainBucket runs one bucket's upkeep; each step logs its own failure
 // and the next one still runs.
 func (c *Controller) maintainBucket(ctx context.Context, claimRow store.BucketClaim, allocation store.BucketAllocation) {

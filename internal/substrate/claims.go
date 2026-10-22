@@ -83,7 +83,7 @@ func (c *Controller) Ensure(ctx context.Context, in reconcile.ClaimEnsureInput) 
 		}, current)
 		if errors.Is(err, dbstore.ErrSpecConflict) {
 			states = append(states, reconcile.ClaimState{Service: dotted,
-				Waiting: "the requested engine, version, or isolation differs from the live database; replacing it is a destructive change"})
+				Waiting: "the requested engine, version, or isolation differs from the live database, which cannot change in place; deploy the live values again or roll back"})
 			continue
 		}
 		if err != nil {
@@ -205,7 +205,7 @@ func (c *Controller) ensureBucketClaims(ctx context.Context, in reconcile.ClaimE
 		}, liveByKey[key])
 		if errors.Is(err, dbstore.ErrSpecConflict) {
 			states = append(states, reconcile.ClaimState{Service: dotted,
-				Waiting: "the requested visibility or versioning differs from the live bucket; replacing it is a destructive change"})
+				Waiting: "the requested visibility or versioning differs from the live bucket, which cannot change in place; deploy the live values again or roll back"})
 			continue
 		}
 		if err != nil {

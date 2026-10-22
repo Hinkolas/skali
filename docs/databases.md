@@ -99,6 +99,32 @@ environments holding a database, plus the host behind the loopback
 NodePort. The pool comes up with the platform and stays running;
 `skali dev stop` stops the whole platform with data retained.
 
+## Changing a database after it exists
+
+`availability`, `storage.size`, `extensions` and `recovery.pointInTime`
+change in place on the next deploy. `engine`, `version` and `isolation`
+cannot: they decide which pool holds the data, and Skali does not move a
+database between pools. A plan preview, deploy, promotion or rollback
+that would change one of them on an existing database is refused before
+anything is built, naming the field and both values:
+
+```text
+databases.main.version cannot change from 17 to 18 on an existing database; its data cannot move in place.
+Keep version 17, or declare a new database with version 18, copy the data across, and remove the old one
+```
+
+Confirming destructive changes does not get past this; the database, its
+credentials and its data stay as they are. The check compares against
+the database that exists, not the revision last deployed, so it also
+holds after a rollout that failed or fell back.
+
+To move to another version or isolation without losing data, declare a
+second database under a new key with the new settings and deploy. Copy
+the data into it with the tooling you already use for PostgreSQL (for
+example `pg_dump` and `pg_restore` from an application or job that has
+both connections), point the applications at the new database, and only
+then remove the old one, which is a destructive change of its own.
+
 ## Pools and memory
 
 Every pool runs a PostgreSQL parameter set derived from one number, its

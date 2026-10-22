@@ -1411,6 +1411,11 @@ func (s *Service) finishPreview(ctx context.Context, env store.Environment,
 			return nil, err
 		}
 	}
+	// Stateful services are checked against what is live, not against the
+	// active revision: a failed rollout or fallback can leave them apart.
+	if err := s.checkTransitions(ctx, env.ID, candidate.Definition); err != nil {
+		return nil, err
+	}
 
 	document := plan.Diff(active, candidate)
 	document.Prune(pruned)
