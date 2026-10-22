@@ -102,7 +102,7 @@ implementation/verification reference or an explicit, bounded decision.
 
 | ID | Priority and task | Required evidence before closing |
 | --- | --- | --- |
-| D1 | **Before stable: update PostgreSQL 17/18 system images and assess pgvector.** Current pins are 17.9 and 18.4. | Choose maintained same-major images containing at least the applicable 17.11/18.6 core fixes; scan both architectures and extension/OS packages. Verify provisioning, extensions, role isolation, SQL, logical backup/restore, and existing-pool patch upgrades. Catalog changes affect newly created pools; persisted pools retain their copied image, so demonstrate how existing installs receive the fix too. |
+| D1 | **Before stable: update PostgreSQL 17/18 system images and assess pgvector.** Pins moved from 17.9/18.4 to 17.11/18.6 on branch `fix/postgres-patch-updates`; see [PostgreSQL patch updates](postgres-patch-updates.md#2026-10-22-179--1711-and-184--186). | Choose maintained same-major images containing at least the applicable 17.11/18.6 core fixes; scan both architectures and extension/OS packages. Verify provisioning, extensions, role isolation, SQL, logical backup/restore, and existing-pool patch upgrades. Catalog changes affect newly created pools; persisted pools retain their copied image, so demonstrate how existing installs receive the fix too. **Done:** image comparison, release-note classification, scans (below), automatic serialized pool patch updates with unit, DB and k3d live tests. **Remaining:** rehearse an upgrade from v0.1.3-rc.7 with existing pools on the old images, covering provisioning, extensions, SQL and backup/restore after the move; publish the tenant follow-ups in the release notes. |
 | D2 | **After the next RC, before stable: address registry 2.8.3 with [#242](https://github.com/Hinkolas/skali/issues/242).** | Owner decision on 2026-10-22: combine the registry dependency work with the internal-S3 storage/replaceable-replica rework; retain the current registry for the next RC. Its binary uses Go 1.20.8 and its Alpine 3.18.12 base is end of support. Scan the selected maintained image and verify existing-data migration, token auth/signatures, push/pull, import/blob mounting, cross-replica behavior and the slow authenticated upload regression. Verify this substantive change in a later RC before v0.1.3 stable. Distribution 3.1.2 is a candidate to evaluate, not an approved drop-in upgrade. |
 | D3 | **Before stable: disposition k3s and its edge/runtime dependencies.** | Inspect the k3s, containerd/runc/CNI, Traefik, CoreDNS, Helm helper, local-path and metrics-server findings. Select a supported patch bundle or document advisory-specific non-applicability; update the installer/localdev/built-in inventory together. Rehearse cluster and dev upgrades, network policies, aliases/TLS, and slow pushes. |
 | D4 | **Before stable: SeaweedFS and CNPG/cert-manager operator review.** | Scan maintained candidates/rebuilds and separate used server paths from unused bundled features. For SeaweedFS verify authenticated S3, bootstrap deny identity, credential rotation/retirement, bucket deletion/quota, restore and cancellation, and metadata/replication behavior. For operators verify bootstrap, reconciliation and ACME on the chosen versions. |
@@ -127,6 +127,17 @@ SSL/GSS recursion issue CVE-2026-6479 is fixed in 17.10 and 18.4. The 18.4 pin
 therefore does not include the later core fixes. Scan counts alone missed some
 18.x core findings, which is why upstream version notices are part of this
 review. [PostgreSQL security notices](https://www.postgresql.org/support/security/)
+
+The D1 replacement images were scanned on 2026-10-22 with Trivy 0.76.1 and
+the advisory database of 2026-10-22 13:15 UTC, the same database that still
+reproduces the 17.9 and 18.4 counts above. Both carry pgvector 0.8.7, the
+upstream fix for CVE-2026-103484; Trivy still reports it there because the
+Debian tracker lists the package unfixed. Two critical matches remain on
+both images, neither with a fix in the image's distribution yet:
+`libxml2` CVE-2026-6653, a denial of service reachable through PostgreSQL's
+XML functions, so it stays open until Debian ships a fix; and `certifi` in
+the Python packages of the image's barman-cloud tooling, which Skali does
+not configure.
 
 The database scans also flag pgvector CVE-2026-103484, OS libraries, Perl, and
 Python packages. They include duplicated package/source matches and conditional
@@ -291,6 +302,8 @@ where the counts agree they are shown once for readability.
 | `ghcr.io/cloudnative-pg/cloudnative-pg:1.29.2` | runtime | amd64, arm64 | 0/38/30/2/1 |
 | `ghcr.io/cloudnative-pg/postgresql:17.9-system-trixie` | runtime | amd64, arm64 | 17/253/437/266/7 |
 | `ghcr.io/cloudnative-pg/postgresql:18.4-system-trixie` | runtime | amd64, arm64 | 15/163/289/203/7 |
+| `ghcr.io/cloudnative-pg/postgresql:17.11-system-trixie` (D1 replacement, scanned 2026-10-22) | runtime | amd64, arm64 | 2/82/167/165/5 |
+| `ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie` (D1 replacement, scanned 2026-10-22) | runtime | amd64, arm64 | 2/82/167/165/5 |
 | `ghcr.io/hinkolas/mirror/alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6` | build | amd64, arm64 | 0/0/1/0/2 |
 | `golang:1.26-alpine` | examples | amd64, arm64 | 0/0/0/0/0 |
 | `golang:1.26.10-alpine` | build | amd64, arm64 | 0/0/0/0/0 |

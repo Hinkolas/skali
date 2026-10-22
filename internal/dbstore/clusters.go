@@ -226,6 +226,21 @@ func (s *Service) SetClusterShape(ctx context.Context, id uuid.UUID, instances i
 	return nil
 }
 
+// SetClusterImage moves a live pool from one image to another, reporting
+// whether it moved: false means the pool no longer runs from (another pass
+// moved it first) or was released.
+func (s *Service) SetClusterImage(ctx context.Context, id uuid.UUID, from, to string) (bool, error) {
+	rows, err := s.st.SetDatabaseClusterImage(ctx, store.SetDatabaseClusterImageParams{
+		ID:        id,
+		FromImage: from,
+		ToImage:   to,
+	})
+	if err != nil {
+		return false, fmt.Errorf("dbstore: set cluster image: %w", err)
+	}
+	return rows == 1, nil
+}
+
 // ClusterTuning is a pool's tuning as an administrator sets it: the memory
 // budget (nil = automatic) and the PostgreSQL parameter overrides.
 type ClusterTuning struct {

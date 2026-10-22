@@ -23,7 +23,7 @@ import (
 )
 
 // livePostgresImage is a pool image the test cluster already holds.
-const livePostgresImage = "ghcr.io/cloudnative-pg/postgresql:17.9-system-trixie"
+const livePostgresImage = "ghcr.io/cloudnative-pg/postgresql:17.11-system-trixie"
 
 // livePostgres runs a throwaway PostgreSQL server in namespace whose
 // "tenant" role owns two databases: app, the restore's destination, and

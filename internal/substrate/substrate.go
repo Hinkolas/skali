@@ -232,6 +232,12 @@ type Controller struct {
 	// upkeep pass reset, reported by the observation probe.
 	driftMu sync.Mutex
 	drift   map[string][]string
+	// unpatched records, per pool, the image a held patch update was
+	// logged for; see noteUnpatched.
+	unpatched map[uuid.UUID]string
+	// patchMu serialises patch update decisions, so two workers never
+	// both find the pools settled and move two at once.
+	patchMu sync.Mutex
 	// accessMu serialises every list-render-apply of a platform access
 	// policy (ensureS3Access, ensurePoolAccess): claim, pool and store
 	// passes run on separate workers, and a listing applied after a newer
@@ -320,6 +326,7 @@ func New(deps Deps, cfg Config) *Controller {
 			func(key workKey) string { return string(key.kind) }),
 		waiting:           make(map[uuid.UUID]string),
 		pendingExtensions: make(map[uuid.UUID][]byte),
+		unpatched:         make(map[uuid.UUID]string),
 	}
 	c.pointFilerTarget()
 	return c
@@ -684,8 +691,8 @@ func (c *Controller) ensureDefaultSharedPool(ctx context.Context) (time.Duration
 	return 0, nil
 }
 
-// reconcilePool re-applies one pool's desired objects; claims drive tenant
-// work separately.
+// reconcilePool re-applies one pool's desired objects, first moving it to
+// a patched image when one is due; claims drive tenant work separately.
 func (c *Controller) reconcilePool(ctx context.Context, id uuid.UUID) (time.Duration, error) {
 	pool, err := c.deps.DB.GetCluster(ctx, id)
 	if err != nil {
@@ -700,7 +707,15 @@ func (c *Controller) reconcilePool(ctx context.Context, id uuid.UUID) (time.Dura
 	case dbstore.StateReleasing:
 		return 0, c.releasePool(ctx, *pool)
 	}
-	return c.ensurePool(ctx, *pool, time.Now())
+	patched, wait, err := c.patchPool(ctx, *pool)
+	if err != nil {
+		return 0, err
+	}
+	requeue, err := c.ensurePool(ctx, patched, time.Now())
+	if err != nil || requeue > 0 {
+		return requeue, err
+	}
+	return wait, nil
 }
 
 func hasCapability(capabilities []string, capability string) bool {

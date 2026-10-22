@@ -33,6 +33,31 @@ holds.
 
 `skali validate` rejects a version outside this table.
 
+### Patch updates
+
+Each major runs one pinned image. A Skali release can pin a newer patch
+release of a major, for example PostgreSQL 17.11 after 17.9. Pools created
+from then on start on it, and existing pools move to it on their own once
+the upgraded skalid runs, if the release lists the image the pool runs as
+a reviewed source for the new one. Data stays where it is: a patch release
+of the same major needs no dump and restore. The platform's own database
+moves to its new pin while the upgrade converges.
+
+Pools move one at a time, and only while every pool is healthy and running
+its own image, so an update that does not come up stops at the first
+pool. CloudNativePG restarts each pool in place: replicas first, then the
+primary. A single-instance pool, including the local `skali dev` pool,
+refuses connections for the seconds its restart takes; applications
+should reconnect. A pool on an image the release has no reviewed
+transition for keeps that image, and skalid logs
+`pool keeps its image; no reviewed patch update from it`.
+
+PostgreSQL patch releases sometimes recommend follow-ups that depend on
+what a database holds, such as reindexing one index type after a fix to
+it. Skali does not run them inside your databases. The notes of the Skali
+release that ships an update list them; run the ones that apply with
+`skali sql` or your own tooling.
+
 ## Extensions
 
 Request extensions per database with `extensions: [pg_trgm, ...]`.
@@ -71,10 +96,12 @@ How extensions work on a pool:
   keeps working as a no-op; a plain `CREATE EXTENSION vector` fails because
   the extension already exists.
 - The extension version is the one packaged in the pool's image (pgvector
-  0.8.2 on the PostgreSQL 17 image and 0.8.6 on the 18 image at the time of
-  writing). A pool image upgrade rolls the pool's instances but does not
-  run `ALTER EXTENSION ... UPDATE` in existing databases; that remains a
-  manual step.
+  0.8.7 on both images at the time of writing). A patch update replaces
+  the extension's library on every instance but does not run
+  `ALTER EXTENSION ... UPDATE` in existing databases, so their recorded
+  extension version stays as it was; running it remains a manual step.
+  Each transition's review checks that the existing SQL definitions keep
+  working with the new library.
 - Removing an extension from the manifest stops declaring it and leaves the
   extension and every dependent column, index and row in place. Dropping it
   is a manual, destructive operation; Skali never cascades it.

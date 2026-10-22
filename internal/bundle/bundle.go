@@ -39,11 +39,13 @@ const (
 	// CNPGOperatorImage is the operator image the vendored manifest
 	// deploys, exported so local dev can pre-pull it into the cluster.
 	CNPGOperatorImage = "ghcr.io/cloudnative-pg/cloudnative-pg:" + CNPGVersion
-	// BootstrapPostgresImage pins skali-db's postgres image to what the
-	// 1.29 operator would default to anyway, frozen against operator
-	// default drift and pre-pullable. Never pin below a previously running
-	// major: CNPG refuses downgrades.
-	BootstrapPostgresImage = "ghcr.io/cloudnative-pg/postgresql:18.4-system-trixie"
+	// BootstrapPostgresImage pins skali-db's postgres image to the
+	// substrate catalog's PostgreSQL 18 image, frozen against operator
+	// default drift and pre-pullable. An upgrade's bundle converge rolls
+	// skali-db onto a new pin, so a change takes the same review as a pool
+	// patch (docs/postgres-patch-updates.md). Never pin below a previously
+	// running major: CNPG refuses downgrades.
+	BootstrapPostgresImage = "ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie"
 	// CertManagerVersion pins the vendored cert-manager release.
 	CertManagerVersion = "1.21.1"
 	// CertManagerNamespace is the namespace the vendored manifest creates;

@@ -20,7 +20,7 @@ import (
 
 // clusterHealthyPhase is CNPG's steady-state phase string, the same probe
 // the installer bundle uses for the bootstrap database.
-const clusterHealthyPhase = "Cluster in healthy state"
+const clusterHealthyPhase = cnpg.HealthyPhase
 
 // ensurePool applies one pool's CNPG Cluster from its row plus the live
 // tenant roles, the connection check's role, and its tuned parameter set. Idempotent server-side apply

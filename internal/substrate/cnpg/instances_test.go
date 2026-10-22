@@ -25,7 +25,10 @@ func TestInstancesFromPods(t *testing.T) {
 		},
 		{
 			ObjectMeta: metav1.ObjectMeta{Name: "pg17-shared-1", Labels: map[string]string{LabelInstanceRole: RolePrimary}},
-			Spec:       corev1.PodSpec{NodeName: "db-1"},
+			Spec: corev1.PodSpec{NodeName: "db-1", Containers: []corev1.Container{
+				{Name: "bootstrap-controller", Image: "ghcr.io/cloudnative-pg/cloudnative-pg:1.29.2"},
+				{Name: PostgresContainer, Image: "ghcr.io/cloudnative-pg/postgresql:17.11-system-trixie"},
+			}},
 			Status: corev1.PodStatus{
 				Phase:      corev1.PodRunning,
 				StartTime:  &started,
@@ -45,12 +48,15 @@ func TestInstancesFromPods(t *testing.T) {
 	require.Equal(t, "db-1", got[0].Node)
 	require.True(t, got[0].Ready)
 	require.Equal(t, started.Time, *got[0].StartedAt)
+	require.Equal(t, "ghcr.io/cloudnative-pg/postgresql:17.11-system-trixie", got[0].Image,
+		"the image is the postgres container's")
 
 	require.Equal(t, "pg17-shared-2", got[1].Name)
 	require.Equal(t, RoleReplica, got[1].Role, "legacy role label is the fallback")
 	require.False(t, got[1].Ready)
 	require.Equal(t, int32(3), got[1].Restarts)
 	require.Nil(t, got[1].StartedAt)
+	require.Empty(t, got[1].Image)
 
 	require.Equal(t, "pg17-shared-3", got[2].Name)
 	require.Equal(t, "", got[2].Role)

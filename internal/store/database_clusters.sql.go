@@ -322,6 +322,29 @@ func (q *Queries) ListLiveDatabaseClusters(ctx context.Context) ([]DatabaseClust
 	return items, nil
 }
 
+const setDatabaseClusterImage = `-- name: SetDatabaseClusterImage :execrows
+UPDATE database_clusters
+SET image = $2, updated_at = now()
+WHERE id = $1 AND image = $3 AND state <> 'released'
+`
+
+type SetDatabaseClusterImageParams struct {
+	ID        uuid.UUID
+	ToImage   string
+	FromImage string
+}
+
+// Patch update: moves a live pool from the image it runs to a newer one of
+// the same major. The from-image guard makes a lost race (or a pool already
+// moved) a 0-row no-op.
+func (q *Queries) SetDatabaseClusterImage(ctx context.Context, arg SetDatabaseClusterImageParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setDatabaseClusterImage, arg.ID, arg.ToImage, arg.FromImage)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setDatabaseClusterNodePort = `-- name: SetDatabaseClusterNodePort :execrows
 UPDATE database_clusters
 SET node_port = $2, updated_at = now()

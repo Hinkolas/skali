@@ -48,6 +48,14 @@ UPDATE database_clusters
 SET instances = $2, storage_bytes = $3, updated_at = now()
 WHERE id = $1;
 
+-- Patch update: moves a live pool from the image it runs to a newer one of
+-- the same major. The from-image guard makes a lost race (or a pool already
+-- moved) a 0-row no-op.
+-- name: SetDatabaseClusterImage :execrows
+UPDATE database_clusters
+SET image = sqlc.arg(to_image), updated_at = now()
+WHERE id = $1 AND image = sqlc.arg(from_image) AND state <> 'released';
+
 -- Local-platform loopback port allocation. The IS NULL guard makes a lost
 -- allocation race a 0-row no-op; the caller re-reads and retries. The
 -- partial unique index rejects double allocation of the same port.
