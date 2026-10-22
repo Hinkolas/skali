@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -544,4 +545,39 @@ func TestArtifactWindowInterruptDuringUpload(t *testing.T) {
 	require.EqualError(t, err, "run r1 was cancelled")
 	require.Contains(t, out, "stop  Import "+source)
 	f.requireCancelledNotFailed(t)
+}
+
+// A failure the server recorded left the environment as it was; one the
+// server never heard of still holds it, and the report says so and names
+// the command that frees it.
+func TestReportArtifactFailure(t *testing.T) {
+	var out bytes.Buffer
+	reportArtifactFailure(&out, "r1", "", errors.New("upload for web failed: boom"))
+	require.Contains(t, out.String(), "upload for web failed: boom")
+	require.Contains(t, out.String(), "The environment is unchanged")
+
+	out.Reset()
+	err := &unreportedFailure{cause: errors.New("upload for web failed: reset"), report: errors.New("unreachable")}
+	reportArtifactFailure(&out, "r1", "khz", fmt.Errorf("upload: %w", err))
+	require.NotContains(t, out.String(), "The environment is unchanged")
+	require.Contains(t, out.String(), "run r1 still holds the environment")
+	require.Contains(t, out.String(), "skali run cancel --remote khz r1")
+	require.Contains(t, out.String(), "additionally, failing the deployment: unreachable")
+}
+
+// failDeployment marks a report the server did not take, keeping the cause
+// reachable for callers that match it.
+func TestFailDeploymentUnreported(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	t.Cleanup(srv.Close)
+	api := client.New(srv.URL, "token", client.Caller{UserAgent: "test"})
+	cause := errors.New("upload for web failed")
+	opened := &client.OpenedDeployment{Deployment: &client.Deployment{ID: "d1", RunID: "r1"}}
+
+	err := failDeployment(context.Background(), api, opened, cause)
+	var unreported *unreportedFailure
+	require.ErrorAs(t, err, &unreported)
+	require.ErrorIs(t, err, cause)
 }

@@ -53,6 +53,10 @@ type UploadStatus struct {
 	// were retried do not count.
 	SentBlobs int
 	Sent      int64
+	// Wire counts every body byte sent, failed and retried attempts
+	// included. It exceeds Sent once an attempt's body was lost, as when a
+	// push is cancelled or fails mid-transfer.
+	Wire int64
 	// Rate is the network throughput in bytes per second over the recent
 	// window, retransmissions included; zero until it can be measured.
 	Rate    float64
@@ -376,12 +380,19 @@ func describeTransfer(status UploadStatus, average float64) string {
 	return strings.Join(parts, "; ")
 }
 
-// describeSent states progress against the needed bytes when known.
+// describeSent states what an unfinished push left in the registry,
+// against the needed bytes when known. Bytes of attempts the registry
+// never accepted are named separately: an interrupted transfer sent them,
+// but they are lost.
 func describeSent(status UploadStatus) string {
+	kept := utils.FormatBytes(status.Sent)
 	if needed, ok := status.Needed(); ok {
-		return utils.FormatBytes(status.Sent) + " of " + utils.FormatBytes(needed) + " sent"
+		kept += " of " + utils.FormatBytes(needed)
 	}
-	return utils.FormatBytes(status.Sent) + " sent"
+	if status.Wire > status.Sent {
+		return utils.FormatBytes(status.Wire) + " sent, " + kept + " kept by the registry"
+	}
+	return kept + " sent"
 }
 
 // FormatRate renders a throughput for humans.
@@ -557,6 +568,7 @@ func (t *uploadTracker) snapshot(now time.Time) UploadStatus {
 		Reused:      t.reused,
 		SentBlobs:   t.sentBlobs,
 		Sent:        t.committed + t.stagedBytes + t.inflight,
+		Wire:        t.wire,
 		Elapsed:     now.Sub(t.started),
 		Failures:    t.failures,
 		Retrying:    t.retrying,

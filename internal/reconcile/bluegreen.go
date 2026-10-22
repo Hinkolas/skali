@@ -221,14 +221,22 @@ func snapshotNamespace(snapshot observe.Snapshot) string {
 }
 
 // rolloutBudget is the deadline a rollout gets before the target falls
-// back: the longest per-application rollout timeout the revision declares,
-// or the kernel default when none does.
+// back: the longest rollout timeout of the revision's applications, each
+// its declared timeout or the kernel default when it declares none (the
+// same per-application value the Deployment's progress deadline gets). A
+// declared timeout shorter than the default shortens the budget. A
+// revision without applications gets the kernel default.
 func rolloutBudget(definition compiler.ProjectDefinition, fallback time.Duration) time.Duration {
-	budget := fallback
+	if len(definition.Applications) == 0 {
+		return fallback
+	}
+	var budget time.Duration
 	for _, application := range definition.Applications {
-		if timeout := time.Duration(application.Deployment.Rollout.TimeoutMillis) * time.Millisecond; timeout > budget {
-			budget = timeout
+		timeout := time.Duration(application.Deployment.Rollout.TimeoutMillis) * time.Millisecond
+		if timeout <= 0 {
+			timeout = fallback
 		}
+		budget = max(budget, timeout)
 	}
 	return budget
 }
