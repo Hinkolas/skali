@@ -218,7 +218,9 @@ jobs:
       - uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
-          version: "~> v2"
+          # Exact, like the release job, so the rehearsal runs the release's
+          # GoReleaser.
+          version: v2.18.3
           # Install-only also adds the binary to PATH for subsequent steps.
           install-only: true
 
