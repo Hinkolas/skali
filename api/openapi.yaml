@@ -4147,7 +4147,9 @@ paths:
         stderr (server to client; unused with a TTY), 3 control. Control
         frames are single JSON objects `{"type": ...}`: clients send
         `resize` (`cols`/`rows`) and `stdin_eof` (half-close); the server
-        ends every session with exactly one terminal frame, either `exit`
+        sends `ready` once the process reads stdin (right away for exec;
+        an SQL session holds its stdin until then) and ends every session
+        with exactly one terminal frame, either `exit`
         (`code` carries the process exit status) or `error` (`err_code`
         `exec_failed`, or `start_failed` for an SQL session whose client
         never started, and `message`), then closes the connection. A close
@@ -4205,7 +4207,10 @@ paths:
           runner, which prints one document `{"results": [{"columns":
           [{"name", "type", "type_oid"}], "rows": [[...]], "command",
           "rows_affected"}], "error": {...}}` with rows as arrays aligned
-          with the columns. An interactive (TTY) session is always `psql`.
+          with the columns and COPY TO STDOUT output as base64 in
+          `copy_data` (`"copy_encoding": "base64"`, byte for byte); COPY
+          FROM STDIN is refused there. An interactive (TTY) session is
+          always `psql`.
       - name: tty
         in: query
         required: false
@@ -4251,7 +4256,8 @@ paths:
         session's script arrives on stdin (channel 0, ended by
         `stdin_eof`), so SQL never appears in URLs or logs. After the
         upgrade the client pod starts (seconds, longer while its image is
-        pulled; the server pings meanwhile). A pod that never starts ends
+        pulled; the server pings meanwhile) and the server sends `ready`;
+        clients send the script only after it. A pod that never starts ends
         the session with an `error` frame whose `err_code` is
         `start_failed`. Otherwise the terminal `exit` frame carries the
         client's status, psql's codes for every format: 0 success, 1 a

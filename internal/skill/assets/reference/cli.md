@@ -163,8 +163,9 @@ can remove them. Invalid YAML diagnostics identify the configuration file to edi
   `\d <table>`; `--format csv` drops command tags; `--format json` prints
   one document `{"results": [{"columns": [{"name", "type", "type_oid"}],
   "rows": [[...]], "command", "rows_affected"}], "error": {"code",
-  "message", ...}}` with rows as arrays aligned with the columns and runs
-  the script as one query (one implicit transaction, no meta-commands).
+  "message", ...}}` with rows as arrays aligned with the columns (COPY TO
+  STDOUT output as base64 `copy_data`) and runs the script as one query (one
+  implicit transaction, no meta-commands, no COPY FROM STDIN).
   `--read-only` guards against accidental writes (not a permission),
   `--statement-timeout 30s` cancels slow statements on the server, and
   `--timeout 5m` ends the whole session with status 124. Needs `maintain`

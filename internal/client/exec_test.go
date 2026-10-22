@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/pem"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -268,7 +271,19 @@ func TestExecAfterRequestOnHTTP2Edge(t *testing.T) {
 	require.NoError(t, session.Run(context.Background(), nil, nil, nil, nil))
 }
 
+// recordingReader notes when stdin was first read.
+type recordingReader struct {
+	io.Reader
+	firstRead atomic.Int64
+}
+
+func (r *recordingReader) Read(p []byte) (int, error) {
+	r.firstRead.CompareAndSwap(0, time.Now().UnixNano())
+	return r.Reader.Read(p)
+}
+
 func TestSQLSessionShapeAndScript(t *testing.T) {
+	var readyAt atomic.Int64
 	srv := execTestServer(t, func(t *testing.T, r *http.Request, conn *websocket.Conn) {
 		require.Equal(t, "/v1/environments/env-1/databases/data/sql", r.URL.Path)
 		query := r.URL.Query()
@@ -277,6 +292,11 @@ func TestSQLSessionShapeAndScript(t *testing.T) {
 		require.Equal(t, "2500", query.Get("statement_timeout"))
 		require.Empty(t, query.Get("tty"))
 		require.Len(t, query, 3, "the script never rides the URL")
+
+		// The client process takes a while to start; only then is it ready.
+		time.Sleep(200 * time.Millisecond)
+		readyAt.Store(time.Now().UnixNano())
+		sendControl(t, conn, execproto.Control{Type: execproto.ControlReady})
 
 		// The script arrives on stdin, then the half-close.
 		var script strings.Builder
@@ -308,11 +328,13 @@ func TestSQLSessionShapeAndScript(t *testing.T) {
 	defer session.Close()
 
 	var stdout strings.Builder
-	err = session.Run(context.Background(), strings.NewReader("SELECT 1"), &stdout, nil, nil)
+	script := &recordingReader{Reader: strings.NewReader("SELECT 1")}
+	err = session.Run(context.Background(), script, &stdout, nil, nil)
 	exit, ok := errors.AsType[*ExecExitError](err)
 	require.True(t, ok, "%v", err)
 	require.Equal(t, 3, exit.Code)
 	require.Equal(t, `{"results":[]}`, stdout.String())
+	require.Greater(t, script.firstRead.Load(), readyAt.Load(), "stdin must wait for the ready frame")
 }
 
 func TestSessionStartFailedMessage(t *testing.T) {
@@ -328,4 +350,120 @@ func TestSessionStartFailedMessage(t *testing.T) {
 	defer session.Close()
 	err = session.Run(context.Background(), nil, nil, nil, nil)
 	require.EqualError(t, err, "start the database client: ImagePullBackOff", "no exec failed prefix")
+}
+
+// failingReader yields some input, then a read error.
+type failingReader struct{ sent bool }
+
+func (r *failingReader) Read(p []byte) (int, error) {
+	if !r.sent {
+		r.sent = true
+		return copy(p, "SELECT"), nil
+	}
+	return 0, errors.New("is a directory")
+}
+
+func TestSessionStdinReadErrorEndsTheSession(t *testing.T) {
+	srv := execTestServer(t, func(t *testing.T, _ *http.Request, conn *websocket.Conn) {
+		// A remote process that waits for EOF forever: only the client
+		// giving up ends the session.
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	})
+	c := New(srv.URL, "tok", Caller{})
+	session, err := c.Exec(context.Background(), "env-1", ExecOptions{Service: "web"})
+	require.NoError(t, err)
+	defer session.Close()
+
+	result := make(chan error, 1)
+	go func() { result <- session.Run(context.Background(), &failingReader{}, nil, nil, nil) }()
+	select {
+	case err := <-result:
+		require.EqualError(t, err, "read stdin: is a directory")
+	case <-time.After(5 * time.Second):
+		t.Fatal("a failed stdin must end the session, not leave the remote waiting for EOF")
+	}
+}
+
+// syncWriter collects output from the read loop while the test polls it.
+type syncWriter struct {
+	mu  sync.Mutex
+	buf strings.Builder
+}
+
+func (w *syncWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.Write(p)
+}
+
+func (w *syncWriter) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.String()
+}
+
+func TestSessionSurvivesStdinBackpressure(t *testing.T) {
+	const script = 8 << 20
+	outputSeen := make(chan struct{})
+	srv := execTestServer(t, func(t *testing.T, _ *http.Request, conn *websocket.Conn) {
+		// The remote process is busy (a long statement) and reads no
+		// input; it still pings and prints, and the client must keep
+		// reading both while its stdin writes wait.
+		require.NoError(t, conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(time.Second)))
+		require.NoError(t, conn.WriteMessage(websocket.BinaryMessage,
+			execproto.EncodeData(execproto.ChannelStdout, []byte("busy"))))
+		select {
+		case <-outputSeen:
+		case <-time.After(5 * time.Second):
+			t.Error("output stalled behind blocked stdin")
+		}
+		var received int
+		for {
+			_, message, err := conn.ReadMessage()
+			require.NoError(t, err)
+			channel, payload, err := execproto.Decode(message)
+			require.NoError(t, err)
+			if channel == execproto.ChannelStdin {
+				received += len(payload)
+				continue
+			}
+			break // the stdin EOF
+		}
+		require.Equal(t, script, received, "no input is lost")
+		sendControl(t, conn, execproto.Control{Type: execproto.ControlExit})
+	})
+	c := New(srv.URL, "tok", Caller{})
+	session, err := c.Exec(context.Background(), "env-1", ExecOptions{Service: "web"})
+	require.NoError(t, err)
+	defer session.Close()
+
+	stdout := &syncWriter{}
+	go func() {
+		require.Eventually(t, func() bool { return stdout.String() == "busy" }, 5*time.Second, 10*time.Millisecond)
+		close(outputSeen)
+	}()
+	input := strings.NewReader(strings.Repeat("x", script))
+	require.NoError(t, session.Run(context.Background(), input, stdout, nil, nil))
+}
+
+func TestSessionCancelDoesNotWaitForStdin(t *testing.T) {
+	srv := execTestServer(t, func(_ *testing.T, r *http.Request, conn *websocket.Conn) {
+		// Never reads: every stdin write eventually blocks.
+		<-r.Context().Done()
+	})
+	c := New(srv.URL, "tok", Caller{})
+	session, err := c.Exec(context.Background(), "env-1", ExecOptions{Service: "web"})
+	require.NoError(t, err)
+	defer session.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	err = session.Run(ctx, strings.NewReader(strings.Repeat("x", 64<<20)), nil, nil, nil)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.Less(t, time.Since(started), 3*time.Second, "cancellation must not queue behind a blocked stdin write")
 }

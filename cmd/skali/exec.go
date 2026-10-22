@@ -209,6 +209,10 @@ type sessionDrive struct {
 	timeout time.Duration
 }
 
+// cancelGrace is how long a cancelled session may take to wind down
+// before runSession reports the cancellation without it.
+var cancelGrace = 3 * time.Second
+
 // errSessionTimeout is the cancellation cause of an expired --timeout.
 var errSessionTimeout = errors.New("session timeout")
 
@@ -246,7 +250,30 @@ func runSession(parent context.Context, drive sessionDrive,
 		}
 	}()
 
-	err := driveSession(ctx, drive, open, reauth)
+	// A cancelled session normally returns at once, but a write to a local
+	// stdout nobody drains (a pipe reader that stopped reading) blocks in
+	// the kernel where no context reaches it. Past a short grace the
+	// outcome stands without it; the terminal is restored here since the
+	// stuck call never gets to.
+	var terminal *term.State
+	if drive.tty {
+		terminal, _ = term.GetState(int(os.Stdin.Fd()))
+	}
+	result := make(chan error, 1)
+	go func() { result <- driveSession(ctx, drive, open, reauth) }()
+	var err error
+	select {
+	case err = <-result:
+	case <-ctx.Done():
+		select {
+		case err = <-result:
+		case <-time.After(cancelGrace):
+			if terminal != nil {
+				_ = term.Restore(int(os.Stdin.Fd()), terminal)
+			}
+			err = ctx.Err()
+		}
+	}
 	if _, remote := errors.AsType[*client.ExecExitError](err); err == nil || remote || ctx.Err() == nil {
 		return err
 	}
@@ -304,6 +331,21 @@ func driveSession(ctx context.Context, drive sessionDrive,
 	return session.Run(ctx, drive.stdin, os.Stdout, os.Stderr, resize)
 }
 
+// untilDone runs call but returns as soon as ctx ends: the plain password
+// prompt blocks in a stdin read that no context reaches, and runSession
+// holds SIGINT, so without this neither Ctrl-C nor --timeout would end a
+// session waiting for an answer. The abandoned read ends with the process.
+func untilDone(ctx context.Context, call func() error) error {
+	done := make(chan error, 1)
+	go func() { done <- call() }()
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 // codedError is a failure with a conventional exit status of its own; the
 // error line still prints.
 type codedError struct {
@@ -324,7 +366,19 @@ func (e *codedError) Unwrap() error { return e.err }
 func sessionReauth(command *cobra.Command, api *client.Client, remoteName string) func(context.Context) error {
 	return func(ctx context.Context) error {
 		if clirender.IsTerminal(os.Stdin) {
-			return reauthSession(ctx, command.ErrOrStderr(), bufio.NewReader(os.Stdin), api)
+			// A password prompt turns echo off for its read; when the
+			// session ends while it waits, the read never returns to turn
+			// it back on, so the state from before the prompt is restored
+			// here.
+			fd := int(os.Stdin.Fd())
+			state, stateErr := term.GetState(fd)
+			err := untilDone(ctx, func() error {
+				return reauthSession(ctx, command.ErrOrStderr(), bufio.NewReader(os.Stdin), api)
+			})
+			if ctx.Err() != nil && stateErr == nil {
+				_ = term.Restore(fd, state)
+			}
+			return err
 		}
 		local, err := isLocalAdmin(ctx, api)
 		if err != nil {

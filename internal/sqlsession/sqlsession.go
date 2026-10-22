@@ -217,11 +217,12 @@ func (e *StartError) Error() string { return "start the database client: " + e.E
 func (e *StartError) Unwrap() error { return e.Err }
 
 // Run starts the client, streams the session over streams until the client
-// process ends or ctx is cancelled, and deletes the client. It reports the
-// pod the session ran in (empty when it never started). A nonzero exit
-// surfaces as *exec.CodeExitError like podexec; a client that never started
-// as *StartError.
-func (s *Service) Run(ctx context.Context, target *Target, streams podexec.Streams) (string, error) {
+// process ends or ctx is cancelled, and deletes the client. ready is called
+// once the client runs, right before its process starts reading stdin. It
+// reports the pod the session ran in (empty when it never started). A
+// nonzero exit surfaces as *exec.CodeExitError like podexec; a client that
+// never started as *StartError.
+func (s *Service) Run(ctx context.Context, target *Target, streams podexec.Streams, ready func()) (string, error) {
 	image := target.PostgresImage
 	if target.Format == FormatJSON {
 		if s.RunnerImage == nil {
@@ -245,6 +246,7 @@ func (s *Service) Run(ctx context.Context, target *Target, streams podexec.Strea
 	if err != nil {
 		return pod, err
 	}
+	ready()
 	return pod, s.Kube.ExecStream(ctx, target.Namespace, pod, containerName, Command(target), kube.ExecStreamOptions{
 		Stdin:  streams.Stdin,
 		Stdout: streams.Stdout,

@@ -22,7 +22,9 @@ import (
 // *sqlsession.Service in production, a fake in tests.
 type SQLService interface {
 	Resolve(ctx context.Context, environmentID uuid.UUID, opts sqlsession.Options) (*sqlsession.Target, error)
-	Run(ctx context.Context, target *sqlsession.Target, streams podexec.Streams) (string, error)
+	// Run starts the client and streams the session; it calls ready once
+	// the client process reads stdin.
+	Run(ctx context.Context, target *sqlsession.Target, streams podexec.Streams, ready func()) (string, error)
 }
 
 // sqlHandlers serves SQL sessions against one database service: the same
@@ -96,9 +98,9 @@ func (h *sqlHandlers) open(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 	var pod string
-	streamErr := bridgeSession(r.Context(), conn, target.TTY, func(ctx context.Context, streams podexec.Streams) error {
+	streamErr := bridgeSession(r.Context(), conn, target.TTY, func(ctx context.Context, streams podexec.Streams, ready func()) error {
 		var err error
-		pod, err = h.sql.Run(ctx, target, streams)
+		pod, err = h.sql.Run(ctx, target, streams, ready)
 		return err
 	})
 

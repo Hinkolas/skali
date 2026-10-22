@@ -27,20 +27,31 @@ func readScript(t *testing.T, script io.ReadCloser) string {
 
 func TestSQLInput(t *testing.T) {
 	// -c is the script, whatever the terminals.
-	script, interactive, err := sqlInput(sqlInvocation{command: "SELECT 1"}, true, true)
+	script, interactive, err := sqlInput(sqlInvocation{command: "SELECT 1", commandSet: true}, true, true)
 	require.NoError(t, err)
 	require.False(t, interactive)
 	require.Equal(t, "SELECT 1", readScript(t, script))
 
 	path := filepath.Join(t.TempDir(), "seed.sql")
 	require.NoError(t, os.WriteFile(path, []byte("INSERT INTO t VALUES (1);"), 0o600))
-	script, interactive, err = sqlInput(sqlInvocation{file: path, format: "json"}, true, true)
+	script, interactive, err = sqlInput(sqlInvocation{file: path, fileSet: true, format: "json"}, true, true)
 	require.NoError(t, err)
 	require.False(t, interactive)
 	require.Equal(t, "INSERT INTO t VALUES (1);", readScript(t, script))
 
-	_, _, err = sqlInput(sqlInvocation{file: filepath.Join(t.TempDir(), "missing.sql")}, false, false)
+	_, _, err = sqlInput(sqlInvocation{file: t.TempDir(), fileSet: true}, false, false)
+	require.ErrorContains(t, err, "is a directory")
+	_, _, err = sqlInput(sqlInvocation{file: filepath.Join(t.TempDir(), "missing.sql"), fileSet: true}, false, false)
 	require.ErrorIs(t, err, os.ErrNotExist, "a missing file fails before any session opens")
+
+	// An explicitly empty -c is an empty script, not a cue to read stdin
+	// or open a prompt.
+	script, interactive, err = sqlInput(sqlInvocation{commandSet: true}, true, true)
+	require.NoError(t, err)
+	require.False(t, interactive)
+	require.Empty(t, readScript(t, script))
+	_, _, err = sqlInput(sqlInvocation{fileSet: true}, false, false)
+	require.Error(t, err, "an explicitly empty -f names no file")
 
 	// Neither: a terminal on both ends is interactive psql, anything else
 	// reads the script from stdin.
@@ -57,8 +68,8 @@ func TestSQLInput(t *testing.T) {
 		inv  sqlInvocation
 		want string
 	}{
-		{sqlInvocation{command: "SELECT 1", file: "x.sql"}, "exclude each other"},
-		{sqlInvocation{format: "yaml", command: "SELECT 1"}, `--format "yaml"`},
+		{sqlInvocation{commandSet: true, fileSet: true}, "exclude each other"},
+		{sqlInvocation{format: "yaml", commandSet: true}, `--format "yaml"`},
 		{sqlInvocation{format: "json"}, "--format applies to scripts"},
 	} {
 		_, _, err := sqlInput(tc.inv, true, true)
@@ -106,6 +117,24 @@ func TestRunSessionTimeout(t *testing.T) {
 	require.EqualError(t, err, "session timed out after 50ms")
 }
 
+func TestRunSessionTimeoutWithStuckSession(t *testing.T) {
+	// A session stuck where no context reaches (a blocked write to a local
+	// stdout) still ends at --timeout, shortly after the grace.
+	original := cancelGrace
+	cancelGrace = 100 * time.Millisecond
+	t.Cleanup(func() { cancelGrace = original })
+	stuck := make(chan struct{})
+	t.Cleanup(func() { close(stuck) })
+	open := func(context.Context) (*client.ExecSession, error) {
+		<-stuck
+		return nil, errors.New("unreachable")
+	}
+	started := time.Now()
+	err := runSession(context.Background(), sessionDrive{timeout: 100 * time.Millisecond}, open, noReauth)
+	require.Equal(t, 124, exitCodeFor(err), "%v", err)
+	require.Less(t, time.Since(started), 2*time.Second)
+}
+
 func TestRunSessionRemoteStatusWins(t *testing.T) {
 	// A session that ended with the remote's own status before the
 	// deadline fired keeps it.
@@ -118,6 +147,23 @@ func TestRunSessionRemoteStatusWins(t *testing.T) {
 	exit, ok := errors.AsType[*client.ExecExitError](err)
 	require.True(t, ok, "%v", err)
 	require.Equal(t, 3, exit.Code)
+}
+
+func TestRunSessionTimeoutDuringReauth(t *testing.T) {
+	// A reauth prompt that never gets an answer (the plain prompt's stdin
+	// read ignores contexts) must not outlive --timeout.
+	open := func(context.Context) (*client.ExecSession, error) {
+		return nil, &client.APIError{Status: http.StatusForbidden, Code: "reauth_required", Message: "recent authentication required"}
+	}
+	blocked := make(chan struct{})
+	t.Cleanup(func() { close(blocked) })
+	reauth := func(ctx context.Context) error {
+		return untilDone(ctx, func() error { <-blocked; return nil })
+	}
+	started := time.Now()
+	err := runSession(context.Background(), sessionDrive{timeout: 100 * time.Millisecond}, open, reauth)
+	require.Equal(t, 124, exitCodeFor(err), "%v", err)
+	require.Less(t, time.Since(started), 5*time.Second)
 }
 
 func TestSessionReauthNeverReadsPipedStdin(t *testing.T) {

@@ -33,6 +33,11 @@ const (
 	// process sees EOF on stdin while output keeps flowing. This is what
 	// terminates piped invocations such as `exec app -- psql < dump.sql`.
 	ControlStdinEOF = "stdin_eof"
+	// ControlReady (server to client) reports that the session's process
+	// has started and reads stdin from now on. A session whose process
+	// starts after the handshake (an SQL client pod) holds client stdin
+	// until it arrives; other clients may ignore it.
+	ControlReady = "ready"
 	// ControlExit (server to client) is the terminal frame of a session
 	// whose process ran to completion; Code carries its exit status. The
 	// server closes the connection after sending it.

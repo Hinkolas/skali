@@ -21,8 +21,13 @@ import (
 // sqlInvocation carries the flag surface shared by `skali sql` and `skali
 // dev sql`.
 type sqlInvocation struct {
-	command          string
-	file             string
+	command string
+	file    string
+	// commandSet and fileSet record that -c or -f was given at all: an
+	// empty -c (a generated query that came out empty) is an empty script,
+	// never a reason to read stdin instead.
+	commandSet       bool
+	fileSet          bool
 	format           string
 	readOnly         bool
 	statementTimeout time.Duration
@@ -48,10 +53,12 @@ const sqlLong = "Sql runs SQL against one database of the project, declared as\n
 	"                \"rows\": [[1]], \"command\": \"SELECT 1\", \"rows_affected\": 1}],\n" +
 	"   \"error\": {\"code\": \"42P01\", \"message\": \"...\"}}\n\n" +
 	"Rows are arrays aligned with the columns; booleans, numbers and json\n" +
-	"keep their JSON types, everything else is PostgreSQL's text form. The\n" +
-	"json format runs the script as one query, so its statements share one\n" +
-	"implicit transaction unless the script manages its own, and psql\n" +
-	"meta-commands are not available there.\n\n" +
+	"keep their JSON types, everything else is PostgreSQL's text form; the\n" +
+	"output of COPY ... TO STDOUT is kept byte for byte as base64 in\n" +
+	"\"copy_data\" (\"copy_encoding\": \"base64\"). The json\n" +
+	"format runs the script as one query, so its statements share one\n" +
+	"implicit transaction unless the script manages its own; psql\n" +
+	"meta-commands and COPY ... FROM STDIN are not available there.\n\n" +
 	"--read-only sets default_transaction_read_only, a guard against\n" +
 	"accidental writes rather than a permission. The session needs maintain\n" +
 	"on the environment, like exec, and a recent login on a promote-only one."
@@ -169,18 +176,24 @@ func sqlInput(inv sqlInvocation, stdinTerminal, stdoutTerminal bool) (io.ReadClo
 	default:
 		return nil, false, fmt.Errorf("--format %q: want psql, csv, or json", inv.format)
 	}
-	if inv.command != "" && inv.file != "" {
+	if inv.commandSet && inv.fileSet {
 		return nil, false, errors.New("-c and -f exclude each other")
 	}
 	switch {
-	case inv.command != "":
+	case inv.commandSet:
 		return io.NopCloser(strings.NewReader(inv.command)), false, nil
-	case inv.file == "-":
+	case inv.fileSet && inv.file == "-":
 		return io.NopCloser(os.Stdin), false, nil
-	case inv.file != "":
+	case inv.fileSet:
 		file, err := os.Open(inv.file)
 		if err != nil {
 			return nil, false, err
+		}
+		// A directory opens fine and fails only on read; refuse it here,
+		// before a session starts. Pipes and devices (-f <(...)) are fine.
+		if info, err := file.Stat(); err == nil && info.IsDir() {
+			file.Close()
+			return nil, false, fmt.Errorf("-f %s: is a directory", inv.file)
 		}
 		return file, false, nil
 	}
@@ -198,6 +211,8 @@ func sqlInput(inv sqlInvocation, stdinTerminal, stdoutTerminal bool) (io.ReadClo
 // few seconds to start.
 func runSQLSession(command *cobra.Command, api *client.Client, environmentID, database string,
 	inv sqlInvocation, reauth func(context.Context) error) error {
+	inv.commandSet = command.Flags().Changed("command")
+	inv.fileSet = command.Flags().Changed("file")
 	script, interactive, err := sqlInput(inv, clirender.IsTerminal(os.Stdin), clirender.IsTerminal(os.Stdout))
 	if err != nil {
 		return err

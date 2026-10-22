@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -26,12 +27,12 @@ import (
 type fakeSQLService struct {
 	mu      sync.Mutex
 	resolve func(ctx context.Context, environmentID uuid.UUID, opts sqlsession.Options) (*sqlsession.Target, error)
-	run     func(ctx context.Context, target *sqlsession.Target, streams podexec.Streams) (string, error)
+	run     func(ctx context.Context, target *sqlsession.Target, streams podexec.Streams, ready func()) (string, error)
 }
 
 func (f *fakeSQLService) script(
 	resolve func(ctx context.Context, environmentID uuid.UUID, opts sqlsession.Options) (*sqlsession.Target, error),
-	run func(ctx context.Context, target *sqlsession.Target, streams podexec.Streams) (string, error),
+	run func(ctx context.Context, target *sqlsession.Target, streams podexec.Streams, ready func()) (string, error),
 ) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -49,14 +50,14 @@ func (f *fakeSQLService) Resolve(ctx context.Context, environmentID uuid.UUID, o
 	return resolve(ctx, environmentID, opts)
 }
 
-func (f *fakeSQLService) Run(ctx context.Context, target *sqlsession.Target, streams podexec.Streams) (string, error) {
+func (f *fakeSQLService) Run(ctx context.Context, target *sqlsession.Target, streams podexec.Streams, ready func()) (string, error) {
 	f.mu.Lock()
 	run := f.run
 	f.mu.Unlock()
 	if run == nil {
 		return "", errors.New("fakeSQLService: Run not scripted")
 	}
-	return run(ctx, target, streams)
+	return run(ctx, target, streams, ready)
 }
 
 // resolveAs echoes the options back as a target, the way the real service
@@ -156,11 +157,12 @@ func TestSQLSessionStreamsScript(t *testing.T) {
 	var gotOpts sqlsession.Options
 	started := make(chan struct{})
 	a.sqlFake.script(resolveAs(t, &gotOpts),
-		func(_ context.Context, target *sqlsession.Target, streams podexec.Streams) (string, error) {
+		func(_ context.Context, target *sqlsession.Target, streams podexec.Streams, ready func()) (string, error) {
 			require.Equal(t, sqlsession.FormatJSON, target.Format)
 			// The client takes a moment to start; the script the client
 			// sent meanwhile is still there once it reads.
 			<-started
+			ready()
 			script, err := io.ReadAll(streams.Stdin)
 			require.NoError(t, err)
 			_, _ = streams.Stdout.Write([]byte(`{"results":[],"script":"` + string(script) + `"}`))
@@ -184,6 +186,7 @@ func TestSQLSessionStreamsScript(t *testing.T) {
 	close(started)
 
 	transcript := readTranscript(t, conn)
+	require.True(t, transcript.ready)
 	require.Equal(t, `{"results":[],"script":"SELECT 1"}`, transcript.stdout.String())
 	require.Equal(t, "NOTICE:  hi", transcript.stderr.String())
 	require.Equal(t, execproto.ControlExit, transcript.terminal.Type)
@@ -205,7 +208,7 @@ func TestSQLSessionExitAndStartFailure(t *testing.T) {
 
 	// A failing script is the client's exit status, passed through.
 	a.sqlFake.script(resolveAs(t, nil),
-		func(context.Context, *sqlsession.Target, podexec.Streams) (string, error) {
+		func(context.Context, *sqlsession.Target, podexec.Streams, func()) (string, error) {
 			return "skali-sql-1", kexec.CodeExitError{Err: errors.New("exit 3"), Code: 3}
 		})
 	conn, _, err := a.dialExec(token, path)
@@ -217,7 +220,7 @@ func TestSQLSessionExitAndStartFailure(t *testing.T) {
 
 	// A client that never starts is its own error code.
 	a.sqlFake.script(resolveAs(t, nil),
-		func(context.Context, *sqlsession.Target, podexec.Streams) (string, error) {
+		func(context.Context, *sqlsession.Target, podexec.Streams, func()) (string, error) {
 			return "", &sqlsession.StartError{Err: errors.New("ErrImagePull: not found")}
 		})
 	conn, _, err = a.dialExec(token, path)
@@ -225,7 +228,47 @@ func TestSQLSessionExitAndStartFailure(t *testing.T) {
 	transcript = readTranscript(t, conn)
 	conn.Close()
 	require.Equal(t, execproto.ControlError, transcript.terminal.Type)
+	require.False(t, transcript.ready, "a client that never started is never ready")
 	require.Equal(t, execproto.ErrCodeStartFailed, transcript.terminal.ErrCode)
 	require.True(t, strings.HasPrefix(transcript.terminal.Message, "start the database client: ErrImagePull"),
 		transcript.terminal.Message)
+}
+
+// TestBridgeEndsWhenRunNeverReadsStdin covers a session whose process ends
+// without reading the stdin that already arrived (an SQL client that never
+// started): the read loop is parked in the pipe write, and the bridge must
+// still tear down instead of waiting for it forever.
+func TestBridgeEndsWhenRunNeverReadsStdin(t *testing.T) {
+	stdinSent := make(chan struct{})
+	bridged := make(chan error, 1)
+	upgrader := sessionUpgrader()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		require.NoError(t, err)
+		defer conn.Close()
+		bridged <- bridgeSession(r.Context(), conn, false, func(context.Context, podexec.Streams, func()) error {
+			<-stdinSent
+			return &sqlsession.StartError{Err: errors.New("ImagePullBackOff")}
+		})
+	}))
+	t.Cleanup(srv.Close)
+
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	require.NoError(t, err)
+	defer conn.Close()
+	require.NoError(t, conn.WriteMessage(websocket.BinaryMessage,
+		execproto.EncodeData(execproto.ChannelStdin, []byte("SELECT 1"))))
+	// Let the read loop take the frame and park in the pipe write.
+	time.Sleep(100 * time.Millisecond)
+	close(stdinSent)
+
+	transcript := readTranscript(t, conn)
+	require.Equal(t, execproto.ErrCodeStartFailed, transcript.terminal.ErrCode)
+	select {
+	case err := <-bridged:
+		_, isStart := errors.AsType[*sqlsession.StartError](err)
+		require.True(t, isStart, "%v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the bridge never returned: its read loop is stuck writing stdin nobody reads")
+	}
 }

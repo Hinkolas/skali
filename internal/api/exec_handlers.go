@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -109,7 +110,8 @@ func (h *execHandlers) open(w http.ResponseWriter, r *http.Request) {
 	defer conn.Close()
 
 	start := time.Now()
-	streamErr := bridgeSession(r.Context(), conn, session.TTY, func(ctx context.Context, streams podexec.Streams) error {
+	streamErr := bridgeSession(r.Context(), conn, session.TTY, func(ctx context.Context, streams podexec.Streams, ready func()) error {
+		ready()
 		return h.exec.Stream(ctx, session, streams)
 	})
 
@@ -192,9 +194,11 @@ func (h *execHandlers) writeResolveError(ctx context.Context, w http.ResponseWri
 // the session teardown: the terminal control frame, the close handshake,
 // and cancelling the upstream process when the client vanishes. The
 // connection is live (pinged, read) before run starts, so a run that first
-// starts its target (an SQL client pod) keeps the client attached.
+// starts its target (an SQL client pod) keeps the client attached; run
+// calls ready once its process reads stdin, which sends the ready frame
+// clients of such sessions hold their stdin for.
 func bridgeSession(ctx context.Context, conn *websocket.Conn, tty bool,
-	run func(ctx context.Context, streams podexec.Streams) error) error {
+	run func(ctx context.Context, streams podexec.Streams, ready func()) error) error {
 	execCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -246,9 +250,23 @@ func bridgeSession(ctx context.Context, conn *websocket.Conn, tty bool,
 		streams.Resize = &execSizeQueue{sizes: resize, done: execCtx.Done()}
 	}
 
+	var readyOnce sync.Once
+	ready := func() {
+		readyOnce.Do(func() {
+			frame, err := execproto.EncodeControl(execproto.Control{Type: execproto.ControlReady})
+			if err != nil {
+				return
+			}
+			select {
+			case outbound <- frame:
+			case <-writerDone:
+			case <-execCtx.Done():
+			}
+		})
+	}
 	execDone := make(chan error, 1)
 	go func() {
-		execDone <- run(execCtx, streams)
+		execDone <- run(execCtx, streams, ready)
 	}()
 
 	// Read loop: stdin and control frames in, until the peer closes or the
@@ -302,6 +320,10 @@ func bridgeSession(ctx context.Context, conn *websocket.Conn, tty bool,
 	}()
 
 	streamErr := <-execDone
+	// Nothing reads stdin any more; a read loop parked in a pipe write (a
+	// process that ended, or an SQL client that never started, with input
+	// already sent) gets ErrClosedPipe and goes back to reading frames.
+	_ = stdinReader.CloseWithError(io.ErrClosedPipe)
 
 	// Terminal frame: the process's own exit status, or the infrastructure
 	// failure. A cancelled session (client gone) sends nothing; the write
