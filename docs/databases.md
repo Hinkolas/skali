@@ -326,7 +326,10 @@ marks it, deploy requires explicit confirmation, and teardown drops the
 logical database, its credentials and its roles. Dedicated and project
 pools are removed with their last database; the shared pool remains.
 Teardown starts only once the revision that removes the database is
-active: a rollout that fails and falls back finds it untouched.
+active: a rollout that fails and falls back finds it untouched. A
+rollback to a revision from before the database was added removes it the
+same way, and `skali rollback` asks for the same confirmation
+(`--allow-destructive` when it runs unattended).
 
 Object storage works the same way through the `buckets:` collection; see
 [buckets.md](buckets.md).

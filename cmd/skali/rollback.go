@@ -18,11 +18,12 @@ import (
 )
 
 type rollbackOptions struct {
-	Remote      string
-	Environment string
-	Revision    string
-	Yes         bool
-	Detach      bool
+	Remote           string
+	Environment      string
+	Revision         string
+	Yes              bool
+	AllowDestructive bool
+	Detach           bool
 }
 
 func newRollbackCommand() *cobra.Command {
@@ -45,6 +46,8 @@ func newRollbackCommand() *cobra.Command {
 	command.Flags().StringVar(&opts.Revision, "revision", "",
 		"revision to roll back to (a revision id or unique checksum prefix)")
 	command.Flags().BoolVar(&opts.Yes, "yes", false, "skip the confirmation prompt")
+	command.Flags().BoolVar(&opts.AllowDestructive, "allow-destructive", false,
+		"allow a rollback that drops a database, bucket, or volume the active revision declares")
 	command.Flags().BoolVar(&opts.Detach, "detach", false,
 		"start the rollback and return without attaching to the run")
 	return command
@@ -110,7 +113,7 @@ func runRollback(command *cobra.Command, opts *rollbackOptions) error {
 		}
 	}
 
-	result, err := target.api.SetTarget(ctx, target.environmentID, chosen.ID)
+	result, err := setRollbackTarget(ctx, out, target.api, target.environmentID, target.environment, chosen.ID, opts)
 	if err != nil {
 		return err
 	}
@@ -139,6 +142,38 @@ func runRollback(command *cobra.Command, opts *rollbackOptions) error {
 	default:
 		return nil
 	}
+}
+
+// setRollbackTarget asks for a plain rollback first: most never need the
+// destructive confirmation, and daemons that predate it reject the field.
+// One the daemon refuses as destructive names what it drops, and is
+// confirmed as a destructive deploy is: the environment name typed back,
+// or --allow-destructive.
+func setRollbackTarget(ctx context.Context, out io.Writer, api *client.Client,
+	environmentID, environment, revisionID string, opts *rollbackOptions) (*client.SetTargetResult, error) {
+	result, err := api.SetTarget(ctx, environmentID, revisionID, false)
+	var apiErr *client.APIError
+	if !errors.As(err, &apiErr) || apiErr.Code != "destructive_change" {
+		return result, err
+	}
+	style := clirender.StyleFor(out)
+	fmt.Fprintln(out, "\n"+style.BoldRed("DESTRUCTIVE:")+" "+apiErr.Message)
+	if !opts.AllowDestructive {
+		if !cliprompt.Interactive() || opts.Yes {
+			return nil, errors.New("rollback is destructive; review it and re-run with --allow-destructive")
+		}
+		confirmed, err := cliprompt.New(os.Stdin, out).ConfirmTyped(ctx,
+			"This rollback is destructive",
+			fmt.Sprintf("Type %q exactly to continue.", environment),
+			environment)
+		if err != nil {
+			return nil, err
+		}
+		if !confirmed {
+			return nil, errors.New("aborted")
+		}
+	}
+	return api.SetTarget(ctx, environmentID, revisionID, true)
 }
 
 // resolveRevisionArg matches an exact revision id first, then a unique

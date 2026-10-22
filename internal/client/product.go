@@ -797,10 +797,17 @@ type SetTargetResult struct {
 }
 
 // SetTarget rolls the environment back to an existing revision.
-func (c *Client) SetTarget(ctx context.Context, environmentID, revisionID string) (*SetTargetResult, error) {
+// allowDestructive confirms a rollback the daemon refused with
+// destructive_change; it is only sent when set, since daemons that predate
+// it reject the field.
+func (c *Client) SetTarget(ctx context.Context, environmentID, revisionID string,
+	allowDestructive bool) (*SetTargetResult, error) {
 	var res SetTargetResult
-	err := c.do(ctx, http.MethodPut, "/v1/environments/"+environmentID+"/target",
-		map[string]string{"revision_id": revisionID}, &res)
+	body := struct {
+		RevisionID       string `json:"revision_id"`
+		AllowDestructive bool   `json:"allow_destructive,omitempty"`
+	}{revisionID, allowDestructive}
+	err := c.do(ctx, http.MethodPut, "/v1/environments/"+environmentID+"/target", body, &res)
 	if err != nil {
 		return nil, err
 	}

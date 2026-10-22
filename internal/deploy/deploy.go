@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"maps"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,6 +26,7 @@ import (
 	"github.com/Hinkolas/skali/internal/diagnostic"
 	"github.com/Hinkolas/skali/internal/feed"
 	"github.com/Hinkolas/skali/internal/journal"
+	"github.com/Hinkolas/skali/internal/plan"
 	"github.com/Hinkolas/skali/internal/revision"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/utils"
@@ -449,11 +451,39 @@ type RollbackInput struct {
 	RevisionID    uuid.UUID
 	Actor         string
 	Journal       *journal.Service
+	// AllowDestructive confirms a rollback that drops what the active
+	// revision holds data in, as a deployment's AllowDestructive does.
+	AllowDestructive bool
 }
 
 type RollbackResult struct {
 	Warnings []diagnostic.Warning
 	RunID    uuid.UUID
+}
+
+// DestructiveRollbackError: the rollback revision does not declare a
+// database, bucket, or volume the active revision does, and the rollback
+// was not confirmed. It matches ErrDestructiveChange; unlike a
+// deployment, a rollback has no plan preview, so the error names the
+// changes.
+type DestructiveRollbackError struct {
+	Changes []plan.Change
+}
+
+func (e *DestructiveRollbackError) Error() string {
+	changes := make([]string, len(e.Changes))
+	for i, change := range e.Changes {
+		changes[i] = change.Service
+		if change.Detail != "" {
+			changes[i] += " (" + change.Detail + ")"
+		}
+	}
+	return "deploy: the rollback is destructive: " + strings.Join(changes, ", ") +
+		"; review it and explicitly allow it"
+}
+
+func (e *DestructiveRollbackError) Is(target error) bool {
+	return target == ErrDestructiveChange
 }
 
 // Rollback points the target at an existing revision of this environment and
@@ -513,6 +543,23 @@ func (s *Service) Rollback(ctx context.Context, in RollbackInput) (*RollbackResu
 	}
 	if err := s.checkTransitions(ctx, in.EnvironmentID, rev.Definition); err != nil {
 		return nil, err
+	}
+	// The rest is checked against the active revision, as a deployment
+	// is: volumes only grow, and a database or bucket the rollback
+	// revision does not declare is released with its data once it is
+	// active. Aborting a rollout in flight drops only what that rollout
+	// added, as its fallback would, and needs no confirmation.
+	active, err := s.revisionOrNil(ctx, target.ActiveRevisionID)
+	if err != nil {
+		return nil, err
+	}
+	if active != nil {
+		if err := validateVolumeSizes(active.Definition, rev.Definition); err != nil {
+			return nil, err
+		}
+		if changes := plan.Diff(active, rev).DestructiveChanges(); len(changes) > 0 && !in.AllowDestructive {
+			return nil, &DestructiveRollbackError{Changes: changes}
+		}
 	}
 
 	run, err := in.Journal.BeginRun(ctx, journal.RunInput{

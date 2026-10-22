@@ -59,6 +59,17 @@ func (p *Plan) Destructive() bool {
 	return false
 }
 
+// DestructiveChanges lists the changes Destructive reports, in plan order.
+func (p *Plan) DestructiveChanges() []Change {
+	var changes []Change
+	for _, change := range p.Changes {
+		if change.Destructive {
+			changes = append(changes, change)
+		}
+	}
+	return changes
+}
+
 // Prune records the stored values a pruning deployment removes. The rows
 // sit next to the revision-level value changes, sorted by name; a name that
 // is both dropped from the revision and pruned from the store keeps both

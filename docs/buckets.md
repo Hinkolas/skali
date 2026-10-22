@@ -446,4 +446,7 @@ Removing a bucket from the definition is a destructive change: the plan
 marks it, deploy requires explicit confirmation, and teardown removes the
 access identity, the bucket, and its objects as soon as the revision that
 removes it is active; a rollout that fails and falls back finds it
-untouched. The platform store itself remains for the next bucket.
+untouched. A rollback to a revision from before the bucket was added
+removes it the same way, and `skali rollback` asks for the same
+confirmation (`--allow-destructive` when it runs unattended). The
+platform store itself remains for the next bucket.

@@ -211,7 +211,10 @@ environment only changes through:
 - rollback to a revision of this environment (`PUT .../target`, `deploy`,
   no sudo). That includes revisions created before the environment became
   promote-only and revisions whose rollout failed and fell back; rollback
-  re-targets what the environment already holds and is not policy-gated;
+  re-targets what the environment already holds and is not policy-gated.
+  One that drops a database, bucket, or volume the active revision
+  declares still needs `allow_destructive`, as a destructive promotion
+  does;
 - a redeploy (`redeploy: true` on plan and open; the Studio's Redeploy
   button). It re-runs the environment's own active definition and
   artifacts with the current values, so like rollback it introduces no
