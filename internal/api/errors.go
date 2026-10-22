@@ -37,7 +37,10 @@ const (
 	codeNodeUnreachable     = "node_unreachable"
 	codeRegistryDisabled    = "registry_disabled"
 	codeRegistryUnavailable = "registry_unavailable"
-	codeInternal            = "internal"
+	// codeShuttingDown: the daemon is draining for shutdown and refused
+	// work it would not finish; nothing changed, so a retry is safe.
+	codeShuttingDown = "shutting_down"
+	codeInternal     = "internal"
 	// codeCLIVersionMismatch: a released daemon refused a released CLI of
 	// another version; the message names the required version.
 	codeCLIVersionMismatch = "cli_version_mismatch"

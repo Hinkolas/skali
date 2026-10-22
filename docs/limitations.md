@@ -293,6 +293,15 @@ to `local` today.
 if it is down, but deploys, the Studio, and the API are unavailable until
 it is back.
 
+Upgrading or restarting `skalid` therefore interrupts the API briefly:
+the running daemon stops before its successor starts, so two never act on
+the cluster at once. The stopping daemon refuses new work, gives open
+requests a few seconds and deployments it is completing up to 20 seconds
+to finish, then exits. A deployment it could not finish in time is neither
+failed nor rolled back; the next daemon resumes it from the stored
+artifacts and values. Studio event streams reconnect on their own. A CLI
+command that was following a run may need to be repeated.
+
 ## Studio updates need a coordinator-managed cluster and internet egress
 
 The System / Software update page can move a reconciled (coordinator-managed)

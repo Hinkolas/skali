@@ -1038,6 +1038,14 @@ spec:
 `, Namespace, host, IssuerName, edge.CompressMiddlewareName, edge.RedirectMiddlewareName)
 }
 
+// SkalidTerminationGrace is how long Kubernetes lets a stopping skalid
+// drain before it kills the process, in seconds. skalid's own shutdown is
+// bounded well inside it (cmd/skalid). The Deployment recreates rather
+// than rolls: skalid has no leader election, so the next daemon must not
+// boot, recover, and reconcile while this one still drains. An upgrade
+// costs the API those seconds of downtime.
+const SkalidTerminationGrace = 45
+
 func skalidYAML(profile Profile) string {
 	// Pod-template annotations force a roll on changes the spec cannot
 	// see: a re-imported image under the same tag, and the secret-backed
@@ -1243,6 +1251,8 @@ metadata:
   namespace: %[1]s
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: skalid
@@ -1252,6 +1262,7 @@ spec:
         app.kubernetes.io/name: skalid%[5]s
     spec:
       serviceAccountName: skalid
+      terminationGracePeriodSeconds: %[7]d
       priorityClassName: `+layout.PriorityClassCritical+`
       topologySpreadConstraints:
         - maxSkew: 1
@@ -1313,7 +1324,7 @@ spec:
     - port: 80
       targetPort: 7070
 `, Namespace, profile.SkalidImage, base64.StdEncoding.EncodeToString([]byte(profile.AuthSecret)), profile.RegistryHost,
-		podAnnotations, capabilitiesEnv) + edgeSuffix
+		podAnnotations, capabilitiesEnv, SkalidTerminationGrace) + edgeSuffix
 }
 
 func bootstrapYAML(profile Profile) string {
