@@ -90,8 +90,8 @@ func (s *Service) Teardown(ctx context.Context, environmentID uuid.UUID, purge b
 	// An open deployment window means a client is still building against
 	// this environment; tearing the target down underneath it would turn
 	// its completion into a resurrection race. Refuse instead.
-	if _, err := s.st.GetPreparingDeploymentForEnvironment(ctx, environmentID); err == nil {
-		return nil, false, ErrDeploymentInFlight
+	if preparing, err := s.st.GetPreparingDeploymentForEnvironment(ctx, environmentID); err == nil {
+		return nil, false, preparingInFlight(preparing)
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, false, fmt.Errorf("deploy: check in-flight deployment: %w", err)
 	}
@@ -157,7 +157,7 @@ func (s *Service) Teardown(ctx context.Context, environmentID uuid.UUID, purge b
 		Actor:         actor,
 	})
 	if errors.Is(err, journal.ErrRunConflict) {
-		return nil, false, ErrDeploymentInFlight
+		return nil, false, s.inFlight(ctx, environmentID)
 	}
 	if err != nil {
 		return nil, false, err

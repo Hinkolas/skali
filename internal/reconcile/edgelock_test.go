@@ -155,8 +155,8 @@ func TestProbeDueSkipsUsableSameDomainOnly(t *testing.T) {
 }
 
 // The read-only adoption decision agrees with attachRun: runs the backup
-// controller owns are never adopted, nor is a deployment run inside its
-// artifact window; one past it is.
+// controller owns are never adopted, nor is a deployment run its opener
+// has not handed off yet; one handed off is, bound to its revision.
 func TestAdoptableRunMatchesAttachRun(t *testing.T) {
 	t.Parallel()
 	f := newKernelFixture(t, Config{})
@@ -184,11 +184,10 @@ func TestAdoptableRunMatchesAttachRun(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, result.RunID, run.ID)
 	require.Equal(t, "deployment", run.Kind)
+	require.Equal(t, &result.RevisionID, run.Revision)
 
-	_, err = f.st.Pool.Exec(ctx, `INSERT INTO deployments (id, project_id, environment_id, definition_version_id, status, run_id)
-		SELECT $1, project_id, environment_id, definition_version_id, 'preparing', $2 FROM revisions WHERE id = $3`,
-		uuid.New(), result.RunID, result.RevisionID)
+	_, err = f.st.Pool.Exec(ctx, `UPDATE runs SET rollout_revision_id = NULL WHERE id = $1`, result.RunID)
 	require.NoError(t, err)
 	_, ok = adoptable()
-	require.False(t, ok, "a preparing deployment's run belongs to the build client")
+	require.False(t, ok, "a deployment run not handed off belongs to its opener")
 }

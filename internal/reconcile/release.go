@@ -176,22 +176,23 @@ func liveReleaseJob(snapshot observe.Snapshot, namespace, name string) *observe.
 	return nil
 }
 
-// releaseBudget is the extra time the revision's release commands may
-// legitimately take on top of the rollout deadline. Without it a long
-// migration would trip the deadline while its Job still runs within its own
-// timeout; the Job's activeDeadlineSeconds keeps the budget bounded.
-func releaseBudget(definition compiler.ProjectDefinition) time.Duration {
-	var budget time.Duration
-	for _, application := range definition.Applications {
-		command := application.Deployment.ReleaseCommand
-		if len(command.Command) == 0 {
-			continue
-		}
-		timeout := time.Duration(command.TimeoutMillis) * time.Millisecond
-		if timeout <= 0 {
-			timeout = rendering.DefaultReleaseTimeout
-		}
-		budget += timeout
+// releaseTimeout is how long an application's release command may run:
+// its Job enforces this through activeDeadlineSeconds.
+func releaseTimeout(application compiler.Application) time.Duration {
+	timeout := time.Duration(application.Deployment.ReleaseCommand.TimeoutMillis) * time.Millisecond
+	if timeout <= 0 {
+		timeout = rendering.DefaultReleaseTimeout
 	}
-	return budget
+	return timeout
+}
+
+// releaseStart is when the current promotion's release Job of a service
+// started: its creation, or now when the pass is creating it (or deleting
+// an earlier promotion's failure to run it afresh).
+func releaseStart(snapshot observe.Snapshot, job *batchv1.Job, target store.EnvironmentTarget, now time.Time) time.Time {
+	live := liveReleaseJob(snapshot, job.Namespace, job.Name)
+	if live == nil || live.Job == nil || !ofPromotion(live.Job, target) {
+		return now
+	}
+	return live.Job.Created
 }

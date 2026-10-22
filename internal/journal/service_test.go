@@ -416,40 +416,48 @@ func TestRunDeploymentDocument(t *testing.T) {
 
 func TestFinishRunForcesTerminality(t *testing.T) {
 	t.Parallel()
-	f := newFixture(t)
-	ctx := context.Background()
+	// Running work adopts the run's outcome, success included: a step still
+	// running when its run succeeds is a writer's record that has not
+	// landed yet, never work cancelled underneath it.
+	for _, outcome := range []RunStatus{RunFailed, RunCancelled, RunSucceeded} {
+		t.Run(string(outcome), func(t *testing.T) {
+			t.Parallel()
+			f := newFixture(t)
+			ctx := context.Background()
 
-	run := f.startRun(t)
-	running, err := f.svc.EnsureStep(ctx, run.ID, nil, "running-step", "Running")
-	require.NoError(t, err)
-	require.NoError(t, f.svc.SetStepStatus(ctx, running.ID, StepRunning))
-	attempt, err := f.svc.StartAttempt(ctx, running.ID)
-	require.NoError(t, err)
-	_, err = f.svc.EnsureStep(ctx, run.ID, nil, "pending-step", "Pending")
-	require.NoError(t, err)
-	waiting, err := f.svc.EnsureStep(ctx, run.ID, nil, "waiting-step", "Waiting")
-	require.NoError(t, err)
-	require.NoError(t, f.svc.SetStepStatus(ctx, waiting.ID, StepWaiting))
+			run := f.startRun(t)
+			running, err := f.svc.EnsureStep(ctx, run.ID, nil, "running-step", "Running")
+			require.NoError(t, err)
+			require.NoError(t, f.svc.SetStepStatus(ctx, running.ID, StepRunning))
+			attempt, err := f.svc.StartAttempt(ctx, running.ID)
+			require.NoError(t, err)
+			_, err = f.svc.EnsureStep(ctx, run.ID, nil, "pending-step", "Pending")
+			require.NoError(t, err)
+			waiting, err := f.svc.EnsureStep(ctx, run.ID, nil, "waiting-step", "Waiting")
+			require.NoError(t, err)
+			require.NoError(t, f.svc.SetStepStatus(ctx, waiting.ID, StepWaiting))
 
-	require.NoError(t, f.svc.FinishRun(ctx, run.ID, RunFailed))
+			require.NoError(t, f.svc.FinishRun(ctx, run.ID, outcome))
 
-	tree, err := f.svc.RunTree(ctx, run.ID)
-	require.NoError(t, err)
-	require.Equal(t, "failed", tree.Run.Status)
-	statuses := map[string]string{}
-	for _, node := range tree.Steps {
-		statuses[node.Step.Key] = node.Step.Status
+			tree, err := f.svc.RunTree(ctx, run.ID)
+			require.NoError(t, err)
+			require.Equal(t, string(outcome), tree.Run.Status)
+			statuses := map[string]string{}
+			for _, node := range tree.Steps {
+				statuses[node.Step.Key] = node.Step.Status
+			}
+			require.Equal(t, map[string]string{
+				"running-step": string(outcome),
+				"pending-step": "skipped",
+				"waiting-step": "skipped",
+			}, statuses)
+
+			closed, err := f.st.GetAttemptByID(ctx, attempt.ID)
+			require.NoError(t, err)
+			require.Equal(t, string(outcome), closed.Status)
+			require.NotNil(t, closed.FinishedAt)
+		})
 	}
-	require.Equal(t, map[string]string{
-		"running-step": "failed",
-		"pending-step": "skipped",
-		"waiting-step": "skipped",
-	}, statuses)
-
-	closed, err := f.st.GetAttemptByID(ctx, attempt.ID)
-	require.NoError(t, err)
-	require.Equal(t, "failed", closed.Status)
-	require.NotNil(t, closed.FinishedAt)
 }
 
 // waitUntilBlocked waits until a statement whose text holds marker waits

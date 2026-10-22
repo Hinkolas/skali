@@ -4709,6 +4709,10 @@ components:
             - internal
         message:
           type: string
+          description: |
+            For people, not for branching. A `deployment_in_flight`
+            message names the run holding the environment, when it is
+            known, and the commands that follow or cancel it.
 
     Error:
       type: object

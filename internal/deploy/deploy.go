@@ -208,6 +208,10 @@ type Prepared struct {
 	// Restart makes Promote stamp a workload restart on the target (a
 	// forced deployment); Prepare never sets it, the caller does.
 	Restart bool
+	// RunID is the run the promotion hands to the kernel: Promote binds it
+	// to the revision in the transaction that moves the target, the moment
+	// the kernel may adopt it. uuid.Nil promotes without a run (tests).
+	RunID uuid.UUID
 	// DeploymentID is the multi-request deployment this promotion closes:
 	// Promote marks it promoted in the same transaction that moves the
 	// target. uuid.Nil promotes outside that flow (Execute, tests) and
@@ -415,6 +419,9 @@ func (s *Service) Promote(ctx context.Context, p *Prepared) error {
 		}); err != nil {
 			return fmt.Errorf("deploy: advance draft: %w", err)
 		}
+		if err := handOff(ctx, q, p.RunID, p.RevisionID); err != nil {
+			return err
+		}
 		if p.DeploymentID == uuid.Nil {
 			return nil // promotion outside the multi-request deployment flow
 		}
@@ -484,8 +491,8 @@ func (s *Service) Rollback(ctx context.Context, in RollbackInput) (*RollbackResu
 	if target.TargetRevisionID != nil && *target.TargetRevisionID == in.RevisionID {
 		return nil, ErrAlreadyTargeted
 	}
-	if _, err := s.st.GetPreparingDeploymentForEnvironment(ctx, in.EnvironmentID); err == nil {
-		return nil, ErrDeploymentInFlight
+	if preparing, err := s.st.GetPreparingDeploymentForEnvironment(ctx, in.EnvironmentID); err == nil {
+		return nil, preparingInFlight(preparing)
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("deploy: check in-flight deployment: %w", err)
 	}
@@ -497,7 +504,7 @@ func (s *Service) Rollback(ctx context.Context, in RollbackInput) (*RollbackResu
 		Actor:         in.Actor,
 	})
 	if errors.Is(err, journal.ErrRunConflict) {
-		return nil, ErrDeploymentInFlight
+		return nil, s.inFlight(ctx, in.EnvironmentID)
 	}
 	if err != nil {
 		return nil, err
@@ -535,7 +542,7 @@ func (s *Service) Rollback(ctx context.Context, in RollbackInput) (*RollbackResu
 		if rows == 0 {
 			return unmovedTarget(ctx, q, in.EnvironmentID)
 		}
-		return nil
+		return handOff(ctx, q, run.ID, in.RevisionID)
 	})
 	if err != nil {
 		return nil, finishRunFailed(ctx, in.Journal, run.ID, err)
@@ -618,8 +625,8 @@ func (s *Service) Restart(ctx context.Context, in RestartInput) (*RestartResult,
 			return nil, ErrApplicationNotFound
 		}
 	}
-	if _, err := s.st.GetPreparingDeploymentForEnvironment(ctx, in.EnvironmentID); err == nil {
-		return nil, ErrDeploymentInFlight
+	if preparing, err := s.st.GetPreparingDeploymentForEnvironment(ctx, in.EnvironmentID); err == nil {
+		return nil, preparingInFlight(preparing)
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("deploy: check in-flight deployment: %w", err)
 	}
@@ -644,38 +651,42 @@ func (s *Service) Restart(ctx context.Context, in RestartInput) (*RestartResult,
 		Deployment:    encoded,
 	})
 	if errors.Is(err, journal.ErrRunConflict) {
-		return nil, ErrDeploymentInFlight
+		return nil, s.inFlight(ctx, in.EnvironmentID)
 	}
 	if err != nil {
 		return nil, err
 	}
+	// From here on a run exists that only this call can conclude: a client
+	// that disconnects mid-restart must not strand it running.
+	ctx, cancel := detached(ctx)
+	defer cancel()
 
-	if in.ApplicationKey == "" {
-		// The environment-wide stamp also touches updated_at itself, so the
-		// rollout-deadline clock restarts with it.
-		if _, err := s.st.StampEnvironmentRestart(ctx, in.EnvironmentID); err != nil {
-			return nil, finishRunFailed(ctx, in.Journal, run.ID,
-				fmt.Errorf("deploy: stamp restart: %w", err))
-		}
-	} else {
-		err = s.st.WithTx(ctx, func(q *store.Queries) error {
+	// The stamp and the handoff commit together: the kernel adopts the run
+	// for the revision it restarts once the restart exists to roll out.
+	err = s.st.WithTx(ctx, func(q *store.Queries) error {
+		if in.ApplicationKey == "" {
+			// The environment-wide stamp starts the rollout-deadline clock
+			// itself.
+			if _, err := q.StampEnvironmentRestart(ctx, in.EnvironmentID); err != nil {
+				return fmt.Errorf("deploy: stamp restart: %w", err)
+			}
+		} else {
 			if _, err := q.StampApplicationRestart(ctx, store.StampApplicationRestartParams{
 				EnvironmentID:  in.EnvironmentID,
 				ApplicationKey: in.ApplicationKey,
 			}); err != nil {
 				return fmt.Errorf("deploy: stamp restart: %w", err)
 			}
-			// The stamp begins a rollout without moving the target; touching
-			// the target row restarts the rollout-deadline clock for the
-			// adopted run.
-			if _, err := q.TouchEnvironmentTarget(ctx, in.EnvironmentID); err != nil {
-				return fmt.Errorf("deploy: touch target: %w", err)
+			// The stamp begins a rollout without moving the target; the
+			// rollout-deadline clock starts with it.
+			if _, err := q.StartEnvironmentRollout(ctx, in.EnvironmentID); err != nil {
+				return fmt.Errorf("deploy: start rollout: %w", err)
 			}
-			return nil
-		})
-		if err != nil {
-			return nil, finishRunFailed(ctx, in.Journal, run.ID, err)
 		}
+		return handOff(ctx, q, run.ID, *target.TargetRevisionID)
+	})
+	if err != nil {
+		return nil, finishRunFailed(ctx, in.Journal, run.ID, err)
 	}
 
 	redactor, err := s.values.Redactor(ctx, in.EnvironmentID, uuid.Nil)
@@ -701,6 +712,22 @@ func (s *Service) Restart(ctx context.Context, in RestartInput) (*RestartResult,
 		return nil, err
 	}
 	return &RestartResult{RunID: run.ID}, nil
+}
+
+// handOff binds a rollout run to the revision it rolls out, inside the
+// transaction that moves the target or stamps the restart: from its commit
+// the kernel adopts the run and concludes it, and not a pass before. A run
+// that already finished (cancelled while its change prepared) is left
+// alone; the change goes ahead without it, since runs never drive.
+// uuid.Nil hands nothing off.
+func handOff(ctx context.Context, q *store.Queries, runID, revisionID uuid.UUID) error {
+	if runID == uuid.Nil {
+		return nil
+	}
+	if _, err := q.HandOffRun(ctx, store.HandOffRunParams{ID: runID, RolloutRevisionID: revisionID}); err != nil {
+		return fmt.Errorf("deploy: hand off run: %w", err)
+	}
+	return nil
 }
 
 // unlessConcluded passes err on unless the run had already finished. Once

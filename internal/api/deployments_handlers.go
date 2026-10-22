@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/Hinkolas/skali/internal/diagnostic"
 	"net/http"
 	"slices"
@@ -768,6 +769,18 @@ func (h *deploymentsHandlers) cancelRun(w http.ResponseWriter, r *http.Request) 
 	}{"cancelled", outcome.Fallback, outcome.Continues})
 }
 
+// inFlightMessage is the deployment_in_flight message: why the change was
+// refused and, when the refusal names the run holding the environment,
+// which run that is and how to follow or cancel it.
+func inFlightMessage(err error, refused string) string {
+	var inFlight *deploy.InFlightError
+	if !errors.As(err, &inFlight) {
+		return refused + "; cancel its run or wait for it to finish"
+	}
+	return fmt.Sprintf("%s: %s run %s; follow it with `skali run attach %[3]s` or cancel it with `skali run cancel %[3]s`",
+		refused, inFlight.Kind, inFlight.RunID)
+}
+
 func newDeploymentPayload(deployment *store.Deployment) deploymentPayload {
 	payload := deploymentPayload{
 		ID:                  deployment.ID.String(),
@@ -922,7 +935,7 @@ func writeDeployError(ctx context.Context, w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, codeNotFound, "not found")
 	case errors.Is(err, deploy.ErrDeploymentInFlight):
 		writeError(w, http.StatusConflict, codeDeploymentInFlight,
-			"another deployment is already running for this environment")
+			inFlightMessage(err, "another deployment is already running for this environment"))
 	case errors.Is(err, deploy.ErrProjectDeleting):
 		writeError(w, http.StatusConflict, codeProjectDeleting, "the project is being deleted")
 	case errors.Is(err, deploy.ErrEnvironmentReleasing):

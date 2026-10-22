@@ -399,7 +399,7 @@ func (h *environmentsHandlers) teardown(w http.ResponseWriter, r *http.Request) 
 			writeError(w, http.StatusConflict, codeConflict, "environment is already releasing")
 		case errors.Is(err, deploy.ErrDeploymentInFlight):
 			writeError(w, http.StatusConflict, codeDeploymentInFlight,
-				"a deployment is in flight; cancel its run or wait for it to finish")
+				inFlightMessage(err, "a deployment is in flight"))
 		case errors.Is(err, deploy.ErrEnvironmentBusy):
 			writeEnvironmentBusy(w)
 		default:

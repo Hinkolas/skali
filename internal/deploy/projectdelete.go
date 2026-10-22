@@ -48,8 +48,8 @@ func (s *Service) DeleteProject(ctx context.Context, projectID uuid.UUID, jr *jo
 		return nil, fmt.Errorf("deploy: list environment states: %w", err)
 	}
 	for _, env := range states {
-		if _, err := s.st.GetPreparingDeploymentForEnvironment(ctx, env.ID); err == nil {
-			return nil, ErrDeploymentInFlight
+		if preparing, err := s.st.GetPreparingDeploymentForEnvironment(ctx, env.ID); err == nil {
+			return nil, preparingInFlight(preparing)
 		} else if !errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("deploy: check in-flight deployment: %w", err)
 		}

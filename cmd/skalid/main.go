@@ -696,21 +696,34 @@ func sweepLoop(ctx context.Context, svc *auth.Service) {
 	}
 }
 
+// staleDeploymentSweep is how often abandoned artifact windows are looked
+// for. It is the recovery backstop for a client that vanished mid-build,
+// not the cleanup path: a window is failed within this interval of passing
+// the stale timeout, so the environment it holds frees up minutes after,
+// not up to an hour after.
+const staleDeploymentSweep = 5 * time.Minute
+
+// productSweepLoop hourly clears staged values and pending artifacts that
+// nothing will use, and fails abandoned artifact windows on their own,
+// shorter cadence.
 func productSweepLoop(ctx context.Context, valueSvc *valuestore.Service, artifactSvc *artifactstore.Service,
 	deploySvc *deploy.Service, journalSvc *journal.Service, buildStaleTimeout time.Duration) {
-	ticker := time.NewTicker(time.Hour)
-	defer ticker.Stop()
+	hourly := time.NewTicker(time.Hour)
+	defer hourly.Stop()
+	deployments := time.NewTicker(staleDeploymentSweep)
+	defer deployments.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-hourly.C:
 			if _, err := valueSvc.SweepStaged(ctx, 24*time.Hour); err != nil {
 				slog.WarnContext(ctx, "sweep staged values", "err", err)
 			}
 			if _, err := artifactSvc.SweepPending(ctx, 24*time.Hour); err != nil {
 				slog.WarnContext(ctx, "sweep pending artifacts", "err", err)
 			}
+		case <-deployments.C:
 			// Abandoned artifact windows: the client stopped building or
 			// verifying; fail the deployment and free the environment.
 			if swept, err := deploySvc.SweepStaleDeployments(ctx, journalSvc, buildStaleTimeout); err != nil {

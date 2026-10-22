@@ -15,7 +15,7 @@ import (
 const beginRun = `-- name: BeginRun :one
 INSERT INTO runs (id, kind, project_id, environment_id, actor, bypass_protection, deployment, status, started_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, 'running', now())
-RETURNING id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection, failure, deployment
+RETURNING id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection, failure, deployment, rollout_revision_id
 `
 
 type BeginRunParams struct {
@@ -55,6 +55,7 @@ func (q *Queries) BeginRun(ctx context.Context, arg BeginRunParams) (Run, error)
 		&i.BypassProtection,
 		&i.Failure,
 		&i.Deployment,
+		&i.RolloutRevisionID,
 	)
 	return i, err
 }
@@ -75,7 +76,7 @@ func (q *Queries) CountRunningRuns(ctx context.Context) (int64, error) {
 const createRun = `-- name: CreateRun :one
 INSERT INTO runs (id, kind, project_id, environment_id, actor, bypass_protection, deployment)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection, failure, deployment
+RETURNING id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection, failure, deployment, rollout_revision_id
 `
 
 type CreateRunParams struct {
@@ -112,6 +113,7 @@ func (q *Queries) CreateRun(ctx context.Context, arg CreateRunParams) (Run, erro
 		&i.BypassProtection,
 		&i.Failure,
 		&i.Deployment,
+		&i.RolloutRevisionID,
 	)
 	return i, err
 }
@@ -165,7 +167,7 @@ func (q *Queries) FinishRun(ctx context.Context, arg FinishRunParams) (*uuid.UUI
 }
 
 const getRunByID = `-- name: GetRunByID :one
-SELECT id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection, failure, deployment FROM runs WHERE id = $1
+SELECT id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection, failure, deployment, rollout_revision_id FROM runs WHERE id = $1
 `
 
 func (q *Queries) GetRunByID(ctx context.Context, id uuid.UUID) (Run, error) {
@@ -184,12 +186,13 @@ func (q *Queries) GetRunByID(ctx context.Context, id uuid.UUID) (Run, error) {
 		&i.BypassProtection,
 		&i.Failure,
 		&i.Deployment,
+		&i.RolloutRevisionID,
 	)
 	return i, err
 }
 
 const getRunForUpdate = `-- name: GetRunForUpdate :one
-SELECT id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection, failure, deployment FROM runs WHERE id = $1 FOR UPDATE
+SELECT id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection, failure, deployment, rollout_revision_id FROM runs WHERE id = $1 FOR UPDATE
 `
 
 // Row lock so status transitions are guarded under the lifecycle machine.
@@ -209,12 +212,13 @@ func (q *Queries) GetRunForUpdate(ctx context.Context, id uuid.UUID) (Run, error
 		&i.BypassProtection,
 		&i.Failure,
 		&i.Deployment,
+		&i.RolloutRevisionID,
 	)
 	return i, err
 }
 
 const getRunningRunByEnvironment = `-- name: GetRunningRunByEnvironment :one
-SELECT id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection, failure, deployment FROM runs WHERE environment_id = $1 AND status = 'running'
+SELECT id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection, failure, deployment, rollout_revision_id FROM runs WHERE environment_id = $1 AND status = 'running'
 `
 
 // Journal attachment for the reconcile worker: adopt the environment's
@@ -236,12 +240,36 @@ func (q *Queries) GetRunningRunByEnvironment(ctx context.Context, environmentID 
 		&i.BypassProtection,
 		&i.Failure,
 		&i.Deployment,
+		&i.RolloutRevisionID,
 	)
 	return i, err
 }
 
+const handOffRun = `-- name: HandOffRun :execrows
+UPDATE runs SET rollout_revision_id = $1::uuid
+WHERE id = $2::uuid AND status = 'running'
+`
+
+type HandOffRunParams struct {
+	RolloutRevisionID uuid.UUID
+	ID                uuid.UUID
+}
+
+// HandOffRun binds a running rollout run to the revision it rolls out
+// (see the column's migration). It runs in the transaction that moves the
+// target or stamps the restart, so the kernel never sees one without the
+// other. A run that no longer runs is left alone: the journal explains and
+// never drives, so the change goes ahead without it.
+func (q *Queries) HandOffRun(ctx context.Context, arg HandOffRunParams) (int64, error) {
+	result, err := q.db.Exec(ctx, handOffRun, arg.RolloutRevisionID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const listRunningRunsByKind = `-- name: ListRunningRunsByKind :many
-SELECT id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection, failure, deployment FROM runs WHERE kind = $1 AND status = 'running' ORDER BY created_at
+SELECT id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection, failure, deployment, rollout_revision_id FROM runs WHERE kind = $1 AND status = 'running' ORDER BY created_at
 `
 
 // Boot recovery for controllers that own runs of one kind without a
@@ -270,6 +298,7 @@ func (q *Queries) ListRunningRunsByKind(ctx context.Context, kind string) ([]Run
 			&i.BypassProtection,
 			&i.Failure,
 			&i.Deployment,
+			&i.RolloutRevisionID,
 		); err != nil {
 			return nil, err
 		}
@@ -282,7 +311,7 @@ func (q *Queries) ListRunningRunsByKind(ctx context.Context, kind string) ([]Run
 }
 
 const listRunsByEnvironment = `-- name: ListRunsByEnvironment :many
-SELECT id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection, failure, deployment FROM runs WHERE environment_id = $1 ORDER BY created_at DESC
+SELECT id, kind, project_id, environment_id, actor, status, created_at, started_at, finished_at, bypass_protection, failure, deployment, rollout_revision_id FROM runs WHERE environment_id = $1 ORDER BY created_at DESC
 `
 
 // A run that never started explains nothing and nothing will ever finish
@@ -311,6 +340,7 @@ func (q *Queries) ListRunsByEnvironment(ctx context.Context, environmentID *uuid
 			&i.BypassProtection,
 			&i.Failure,
 			&i.Deployment,
+			&i.RolloutRevisionID,
 		); err != nil {
 			return nil, err
 		}

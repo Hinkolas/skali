@@ -42,7 +42,7 @@ const (
 // revision, render the desired state, apply and prune idempotently,
 // evaluate health, and activate when the revision's health conditions pass.
 // A pass that changes nothing writes no journal rows.
-func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UUID) (time.Duration, error) {
+func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UUID) (requeue time.Duration, err error) {
 	// Edge probes are network waits (5s each); they run before the lock so
 	// a pass holds it only for database and cluster work and a Promote or
 	// Rollback waiting on the same lock is never parked behind DNS.
@@ -86,6 +86,7 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 	attachment := k.attachRun(ctx, state, func(ctx context.Context) *redact.Redactor {
 		return k.redactor(ctx, environmentID, rev, inputs)
 	})
+	defer func() { attachment.settle(ctx, err) }()
 
 	intercepts, err := passIntercepts(state)
 	if err != nil {
@@ -174,7 +175,10 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 	// not the active revision). A converged environment never re-creates a
 	// release Job: drift healing that re-ran migrations spontaneously would
 	// turn an explanatory pass into a mutation nobody asked for.
+	// releaseStarts records when each driven release Job started, for the
+	// rollout deadline.
 	releaseWaiting := make(map[string]string)
+	releaseStarts := make(map[string]time.Time)
 
 	// Environment-scoping objects first: namespace, the values Secret, the
 	// ingress isolation, then the shared edge objects no single service
@@ -260,6 +264,7 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 			}
 			objs := desired.services[service]
 			if rolloutInFlight && objs.releaseJob != nil {
+				releaseStarts[service] = releaseStart(snapshot, objs.releaseJob, target, time.Now())
 				state, reason, err := k.ensureRelease(ctx, attachment, target, service, objs.releaseJob, snapshot)
 				if err != nil {
 					return 0, err
@@ -373,7 +378,8 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 	// edge verdicts (a domain that does not reach this edge yet) ride into
 	// the module through the kernel cache, so a deferred route stops gating
 	// health in the same pass that discovered it.
-	tls := k.reconcileTLS(ctx, attachment, target, rev, desired, k.deps.Observed.Snapshot(environmentID), probeInterval)
+	deadline := rolloutDeadline(rev, target, rolloutBudget(rev.Definition, k.cfg.RolloutDeadline), desired, snapshot, releaseStarts)
+	tls := k.reconcileTLS(ctx, attachment, target, rev, desired, k.deps.Observed.Snapshot(environmentID), probeInterval, deadline)
 	pass.Mark("tls")
 
 	// Evaluate over a post-apply snapshot and activate when every service of
@@ -431,7 +437,7 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 		healthCheck = k.healthRequeue(environmentID, attachment.adopted() && rolloutRun(attachment.run.Kind))
 	}
 	if healthy && !tls.blocked {
-		if tls.failed && attachment.created {
+		if tls.failed && attachment.owned() {
 			// A converged environment's issuance failed after its domain
 			// arrived: the run this pass created to say so closes failed
 			// before the pass concludes, since nothing else is wrong.
@@ -448,7 +454,26 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 		}
 		return soonest(retireRequeue, tls.requeue), nil
 	}
-	if attachment.created {
+	// The rollout deadline holds whether or not a run explains the
+	// rollout, except in the pass that just switched traffic.
+	rolloutAdopted := attachment.adopted() && rolloutRun(attachment.run.Kind)
+	switched := trafficSwitched(desired.plans)
+	if (rolloutInFlight || rolloutAdopted) && !switched &&
+		(time.Now().After(deadline) || (tls.failed && rolloutAdopted)) {
+		fellBack, err := k.failRollout(ctx, attachment, target, statuses, tls, withheld)
+		if err != nil {
+			return 0, err
+		}
+		if fellBack {
+			k.EnqueueFor(environmentID, ReasonFallback)
+			return 0, nil
+		}
+	}
+	if switched {
+		// The confirmation pass comes on the health cadence at the latest.
+		healthCheck = soonest(healthCheck, requeueHealthCheck)
+	}
+	if attachment.owned() {
 		// The healing work is recorded; health recovery arrives via watch
 		// events and, if needed, the requeue below.
 		status, reason := journal.RunSucceeded, ""
@@ -458,39 +483,6 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 		attachment.finish(ctx, status, reason)
 	}
 	if attachment.adopted() && rolloutRun(attachment.run.Kind) {
-		// Release commands extend the deadline by their own budget: their
-		// Jobs enforce the manifest timeouts, so the rollout deadline only
-		// needs to cover everything after them.
-		if tls.failed || time.Since(target.UpdatedAt) > rolloutBudget(rev.Definition, k.cfg.RolloutDeadline)+releaseBudget(rev.Definition) {
-			// Product policy: past the deadline the run fails
-			// with diagnostics and the target returns to the last active
-			// revision when one exists. The guarded compare-and-swap makes
-			// a concurrent newer promotion win; the first deployment of an
-			// environment has nothing to fall back to and keeps its
-			// target, where level-triggered reconciliation continues and a
-			// late recovery still activates.
-			attachment.completeStepFields(ctx, "", "verify", "Verify health", journal.StepFailed,
-				[]string{strings.Join(healthSummary(statuses), "\n")}, healthFields(statuses))
-			attachment.finish(ctx, journal.RunFailed, rolloutFailure(tls, statuses, withheld))
-			rows, err := k.deps.Deploy.FallbackTargetLocked(ctx, store.FallbackEnvironmentTargetParams{
-				EnvironmentID:    environmentID,
-				TargetRevisionID: target.TargetRevisionID,
-			})
-			if err != nil {
-				return 0, fmt.Errorf("reconcile: fall back target: %w", err)
-			}
-			if rows > 0 {
-				slog.WarnContext(ctx, "rollout deadline exceeded; target returned to the active revision",
-					"environment_id", environmentID)
-				k.EnqueueFor(environmentID, ReasonFallback)
-				return 0, nil
-			}
-			// A first deployment has nothing to fall back to; level-triggered
-			// reconciliation continues on the ordinary cadence so a late
-			// recovery still activates, instead of the environment silently
-			// leaving the queue until the audit.
-			return soonest(soonest(healthCheck, retireRequeue), tls.requeue), nil
-		}
 		attachment.waitStepFields(ctx, "", "verify", "Verify health",
 			strings.Join(healthSummary(statuses), "\n"), healthFields(statuses))
 	}
@@ -536,7 +528,7 @@ func (k *Kernel) waitHostGateway(ctx context.Context, attachment *runAttachment,
 	target store.EnvironmentTarget, rev *revision.Revision, cause error) (time.Duration, error) {
 	slog.Warn("reconcile: host gateway unresolved, waiting", "environment", environmentID, "error", cause)
 	if attachment.adopted() && rolloutRun(attachment.run.Kind) &&
-		time.Since(target.UpdatedAt) > rolloutBudget(rev.Definition, k.cfg.RolloutDeadline) {
+		time.Since(target.RolloutStartedAt) > rolloutBudget(rev.Definition, k.cfg.RolloutDeadline) {
 		attachment.completeStep(ctx, "render", "Render desired state", journal.StepFailed,
 			[]string{"rendering the desired state failed: " + cause.Error(),
 				"the host gateway did not resolve within the rollout deadline"})
@@ -627,8 +619,8 @@ func (k *Kernel) activate(ctx context.Context, attachment *runAttachment, target
 }
 
 // journalOpFailure records a failed environment-wide cluster operation.
-// An adopted deployment run stays running (the rollout deadline governs its
-// fate); a created reconcile run fails immediately.
+// An adopted rollout run stays running (the rollout deadline governs its
+// fate); a reconcile run the pass owns fails immediately.
 func (k *Kernel) journalOpFailure(ctx context.Context, attachment *runAttachment, key, title string, done []string, cause error) {
 	k.journalServiceOpFailure(ctx, attachment, "", key, title, done, cause)
 }
@@ -636,10 +628,14 @@ func (k *Kernel) journalOpFailure(ctx context.Context, attachment *runAttachment
 // journalServiceOpFailure is journalOpFailure for an operation of one
 // service, named by its dotted name.
 func (k *Kernel) journalServiceOpFailure(ctx context.Context, attachment *runAttachment, service, key, title string, done []string, cause error) {
+	// The cause may be the pass's own context ending; the failure must
+	// still land.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), settleTimeout)
+	defer cancel()
 	attachment.ensure(ctx)
 	attachment.completeServiceStep(ctx, service, key, title, journal.StepFailed,
 		append(done, "operation failed: "+cause.Error()))
-	if attachment.created {
+	if attachment.owned() {
 		attachment.finish(ctx, journal.RunFailed, title+" failed: "+cause.Error())
 	}
 }

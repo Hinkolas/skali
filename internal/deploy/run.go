@@ -12,10 +12,45 @@ import (
 	"github.com/Hinkolas/skali/internal/compiler"
 	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/redact"
+	"github.com/Hinkolas/skali/internal/store"
 )
 
 // ErrDeploymentInFlight: the environment already has a running deployment.
 var ErrDeploymentInFlight = errors.New("deploy: another deployment is already running for this environment")
+
+// InFlightError is ErrDeploymentInFlight naming the run that holds the
+// environment, so the refusal can say which run to follow or cancel.
+// errors.Is matches it as ErrDeploymentInFlight.
+type InFlightError struct {
+	RunID uuid.UUID
+	Kind  string
+}
+
+func (e *InFlightError) Error() string {
+	return fmt.Sprintf("%v: %s run %s", ErrDeploymentInFlight, e.Kind, e.RunID)
+}
+
+func (e *InFlightError) Is(target error) bool { return target == ErrDeploymentInFlight }
+
+// inFlight is the refusal for an environment whose running run won the
+// one-running-run race: it names that run, or stays the bare
+// ErrDeploymentInFlight when the run cannot be read (it finished since).
+func (s *Service) inFlight(ctx context.Context, environmentID uuid.UUID) error {
+	run, err := s.st.GetRunningRunByEnvironment(ctx, &environmentID)
+	if err != nil {
+		return ErrDeploymentInFlight
+	}
+	return &InFlightError{RunID: run.ID, Kind: run.Kind}
+}
+
+// preparingInFlight is the refusal for an environment with an open
+// artifact window: it names the window's run.
+func preparingInFlight(deployment store.Deployment) error {
+	if deployment.RunID == nil {
+		return ErrDeploymentInFlight
+	}
+	return &InFlightError{RunID: *deployment.RunID, Kind: "deployment"}
+}
 
 // ExecuteInput describes one deployment execution. The journal is passed in
 // rather than owned so the run tree and the deployment stay decoupled:
@@ -80,7 +115,7 @@ func (s *Service) Execute(ctx context.Context, in ExecuteInput) (*ExecuteResult,
 		Actor:         in.Actor,
 	})
 	if errors.Is(err, journal.ErrRunConflict) {
-		return nil, ErrDeploymentInFlight
+		return nil, s.inFlight(ctx, in.EnvironmentID)
 	}
 	if err != nil {
 		return nil, err
@@ -163,6 +198,10 @@ func (s *Service) runStages(ctx context.Context, runID uuid.UUID, in ExecuteInpu
 	}
 	prepared.Restart = in.Restart
 	prepared.DeploymentID = in.DeploymentID
+	if s.enqueuer != nil {
+		// Only a kernel adopts the run; without one it concludes here.
+		prepared.RunID = runID
+	}
 	var promoteLog []journal.LogEntry
 	if in.Restart {
 		promoteLog = append(promoteLog, info("forced deployment: application workloads will restart"))
