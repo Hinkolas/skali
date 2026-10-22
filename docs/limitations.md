@@ -298,6 +298,22 @@ Every `skali deploy` builds and pushes from the machine running the CLI;
 there is no push-to-deploy or in-cluster builder. `--build auto` resolves
 to `local` today.
 
+## An HTTPS request must arrive within 30 minutes
+
+The edge gives each HTTPS request 30 minutes to arrive in full, body
+included. Each image layer goes to the registry as a single request, so
+on a slow connection this caps layer size: at 1 MB/s, about 1.8 GB. A push
+that runs out of time fails with `502 Bad Gateway`; the deploy fails
+before anything is promoted, so the running release stays as it was.
+Bucket uploads through a route have the same bound per request, which for
+a multipart upload means per part.
+
+Traefik sets this per entrypoint, not per route, so the limit is the same
+for every HTTPS route, including applications and the API. A client that
+sends a request slowly can hold its connection that long. Skali owns the
+`kube-system/traefik` HelmChartConfig that sets it and reapplies it on
+every install, repair, and upgrade, so editing it by hand does not last.
+
 ## Single management plane
 
 `skalid` runs as one deployment. The applications it manages keep running

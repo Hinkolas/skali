@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"sigs.k8s.io/yaml"
 
 	"github.com/Hinkolas/skali/internal/substrate/cnpg"
 )
@@ -95,6 +96,14 @@ func TestRenderBundleObjects(t *testing.T) {
 	require.Contains(t, traefikValues, "addRoutersLabels: true")
 	require.Contains(t, traefikValues, "allowCrossNamespace: true",
 		"bucket routes in environment namespaces reach the platform's S3 gateway")
+	var chartValues map[string]any
+	require.NoError(t, yaml.Unmarshal([]byte(traefikValues), &chartValues))
+	readTimeout, _, _ := unstructured.NestedString(chartValues,
+		"ports", "websecure", "transport", "respondingTimeouts", "readTimeout")
+	require.Equal(t, EdgeReadTimeout, readTimeout,
+		"slow registry pushes outlast Traefik's 60-second default")
+	exposed, _, _ := unstructured.NestedBool(chartValues, "ports", "metrics", "expose", "default")
+	require.True(t, exposed)
 	require.Len(t, objects.BootstrapUser, 2)
 
 	// Everything namespaced sits in skali-system; the admin password only
