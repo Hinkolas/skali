@@ -677,6 +677,9 @@ func exitCodeFor(err error) int {
 	if dispatchEnvironment(envDispatched) != "" && readOnlyInvocation(preparseArgs(os.Args[1:], newRootCommand)) && refusedAsWrongRelease(err) {
 		return exitVersionMoved
 	}
+	if coded, ok := errors.AsType[*codedError](err); ok {
+		return coded.code
+	}
 	return 1
 }
 

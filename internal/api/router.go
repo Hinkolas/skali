@@ -74,6 +74,11 @@ type Deps struct {
 	// *podexec.Service, which answers node_unreachable itself in API-only
 	// mode.
 	Exec ExecService
+	// SQL runs SQL sessions against database services over the exec
+	// protocol; nil hides the route. Production always wires
+	// *sqlsession.Service, which answers node_unreachable itself in
+	// API-only mode.
+	SQL SQLService
 	// Capabilities is the installation's declared capability set for the
 	// deployment gate.
 	Capabilities []string
@@ -255,6 +260,12 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 			if d.Exec != nil {
 				xh := newExecHandlers(d.Exec, d.Auth)
 				ac.route(r, "GET", "/environments/{id}/exec", classEnvMaintain, xh.open)
+			}
+			// SQL sessions are exec into a database client: the same
+			// class and the same promote-only sudo gate.
+			if d.SQL != nil {
+				qh := newSQLHandlers(d.SQL, d.Auth)
+				ac.route(r, "GET", "/environments/{id}/databases/{key}/sql", classEnvMaintain, qh.open)
 			}
 		})
 

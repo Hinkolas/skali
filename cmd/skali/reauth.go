@@ -25,9 +25,7 @@ func reauthSession(ctx context.Context, out io.Writer, in *bufio.Reader, api *cl
 	if err != nil {
 		return fmt.Errorf("reauthenticate: %w", err)
 	}
-	// The local platform's own admin never types the generated password;
-	// other accounts on it (test members) confirm like on any remote.
-	if api.Master() == localdev.MasterURL() && info.User.Email == localdev.AdminEmail {
+	if localAdmin(api, info) {
 		return reauthLocal(ctx, api)
 	}
 	session := promptSession(out, in)
@@ -73,6 +71,22 @@ func reauthSession(ctx context.Context, out io.Writer, in *bufio.Reader, api *cl
 		return fmt.Errorf("reauthenticate: %w", err)
 	}
 	return nil
+}
+
+// localAdmin reports whether the session is the local platform's own
+// admin, who never types the generated password; other accounts on it
+// (test members) confirm like on any remote.
+func localAdmin(api *client.Client, info *client.SessionInfo) bool {
+	return api.Master() == localdev.MasterURL() && info.User.Email == localdev.AdminEmail
+}
+
+// isLocalAdmin looks the session up for localAdmin.
+func isLocalAdmin(ctx context.Context, api *client.Client) (bool, error) {
+	info, err := api.CurrentSession(ctx)
+	if err != nil {
+		return false, fmt.Errorf("reauthenticate: %w", err)
+	}
+	return localAdmin(api, info), nil
 }
 
 // reauthPromptError explains a failed prompt read: on a closed pipe the

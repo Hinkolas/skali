@@ -5,12 +5,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"os"
 	"os/signal"
 	"slices"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -25,8 +27,10 @@ import (
 type execInvocation struct {
 	forceTTY  bool
 	noTTY     bool
+	noStdin   bool
 	pod       string
 	container string
+	timeout   time.Duration
 }
 
 func addExecFlags(command *cobra.Command, inv *execInvocation) {
@@ -34,10 +38,20 @@ func addExecFlags(command *cobra.Command, inv *execInvocation) {
 		"allocate a remote TTY even when stdout is not a terminal")
 	command.Flags().BoolVar(&inv.noTTY, "no-tty", false,
 		"never allocate a remote TTY")
+	command.Flags().BoolVarP(&inv.noStdin, "no-stdin", "n", false,
+		"do not forward stdin: the command sees end of input at once (like ssh -n); implies --no-tty")
 	command.Flags().StringVar(&inv.pod, "pod", "",
 		"exec into this pod instead of the newest ready one")
 	command.Flags().StringVar(&inv.container, "container", "",
 		"container name (default: the service's own container)")
+	addSessionTimeoutFlag(command, &inv.timeout)
+}
+
+// addSessionTimeoutFlag is the wall-clock bound every session command
+// shares.
+func addSessionTimeoutFlag(command *cobra.Command, timeout *time.Duration) {
+	command.Flags().DurationVar(timeout, "timeout", 0,
+		"end the session after this long, such as 30s or 5m, and exit with status 124 (default: no limit)")
 }
 
 func newExecCommand() *cobra.Command {
@@ -68,9 +82,7 @@ func newExecCommand() *cobra.Command {
 					return err
 				}
 			}
-			reauth := func(ctx context.Context) error {
-				return reauthSession(ctx, command.OutOrStdout(), bufio.NewReader(command.InOrStdin()), target.api)
-			}
+			reauth := sessionReauth(command, target.api, target.remoteName)
 			prompt := shellPrompt(target.remoteName, service, inv, target.project+"/"+target.environment)
 			return runExecSession(command, target.api, target.environmentID, inv, service, argv, prompt, reauth)
 		},
@@ -143,7 +155,10 @@ func shellPrompt(remote, service string, inv execInvocation, scope string) strin
 // explicit flag wins, otherwise a TTY is allocated exactly when stdin and
 // stdout are both terminals.
 func decideTTY(inv execInvocation) (bool, error) {
-	if inv.noTTY {
+	if inv.noStdin && inv.forceTTY {
+		return false, errors.New("--tty needs stdin; drop --no-stdin")
+	}
+	if inv.noTTY || inv.noStdin {
 		return false, nil
 	}
 	stdinTerminal := clirender.IsTerminal(os.Stdin)
@@ -156,12 +171,9 @@ func decideTTY(inv execInvocation) (bool, error) {
 	return stdinTerminal && clirender.IsTerminal(os.Stdout), nil
 }
 
-// runExecSession opens the exec session (with one reauth retry, like every
-// other sudo-gated command), owns the local terminal for its duration, and
-// maps the remote exit status onto the process's own.
+// runExecSession opens the exec session and drives it with runSession.
 func runExecSession(command *cobra.Command, api *client.Client, environmentID string,
 	inv execInvocation, service string, argv []string, prompt string, reauth func(context.Context) error) error {
-	ctx := command.Context()
 	tty, err := decideTTY(inv)
 	if err != nil {
 		return err
@@ -180,28 +192,123 @@ func runExecSession(command *cobra.Command, api *client.Client, environmentID st
 		// quoting applies to it.
 		opts.Command = []string{"/bin/sh", "-c", `export PS1="$1"; exec /bin/sh`, "sh", prompt}
 	}
-	session, err := api.Exec(ctx, environmentID, opts)
+	var stdin io.Reader = os.Stdin
+	if inv.noStdin {
+		stdin = strings.NewReader("")
+	}
+	return runSession(command.Context(), sessionDrive{tty: tty, stdin: stdin, timeout: inv.timeout},
+		func(ctx context.Context) (*client.ExecSession, error) { return api.Exec(ctx, environmentID, opts) },
+		reauth)
+}
+
+// sessionDrive is how runSession attaches the local process to a session.
+type sessionDrive struct {
+	tty   bool
+	stdin io.Reader // forwarded until EOF, which half-closes the remote stdin
+	// timeout bounds the whole session, opening included; zero is none.
+	timeout time.Duration
+}
+
+// cancelGrace is how long a cancelled session may take to wind down
+// before runSession reports the cancellation without it.
+var cancelGrace = 3 * time.Second
+
+// errSessionTimeout is the cancellation cause of an expired --timeout.
+var errSessionTimeout = errors.New("session timeout")
+
+// interruptCause records which signal ended a session.
+type interruptCause struct{ signal os.Signal }
+
+func (c interruptCause) Error() string { return "interrupted by " + c.signal.String() }
+
+// runSession opens a session (exec or SQL) with one reauth retry, like
+// every other sudo-gated command, owns the local terminal for its
+// duration, and maps the outcome onto the process's exit status: the
+// remote status passes through, a local interrupt exits 128+signal and an
+// expired --timeout 124 (the conventions of shells and timeout(1)), so an
+// interrupted or cut-off session never reads as success.
+func runSession(parent context.Context, drive sessionDrive,
+	open func(context.Context) (*client.ExecSession, error), reauth func(context.Context) error) error {
+	ctx, cancel := context.WithCancelCause(parent)
+	defer cancel(nil)
+	if drive.timeout > 0 {
+		var cancelTimeout context.CancelFunc
+		ctx, cancelTimeout = context.WithTimeoutCause(ctx, drive.timeout, errSessionTimeout)
+		defer cancelTimeout()
+	}
+	// Interrupts end the session (the server kills the remote process
+	// when the connection goes). In raw mode Ctrl-C is a keystroke for
+	// the remote process instead and raises no signal here.
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(signals)
+	go func() {
+		select {
+		case sig := <-signals:
+			cancel(interruptCause{signal: sig})
+		case <-ctx.Done():
+		}
+	}()
+
+	// A cancelled session normally returns at once, but a write to a local
+	// stdout nobody drains (a pipe reader that stopped reading) blocks in
+	// the kernel where no context reaches it. Past a short grace the
+	// outcome stands without it; the terminal is restored here since the
+	// stuck call never gets to.
+	var terminal *term.State
+	if drive.tty {
+		terminal, _ = term.GetState(int(os.Stdin.Fd()))
+	}
+	result := make(chan error, 1)
+	go func() { result <- driveSession(ctx, drive, open, reauth) }()
+	var err error
+	select {
+	case err = <-result:
+	case <-ctx.Done():
+		select {
+		case err = <-result:
+		case <-time.After(cancelGrace):
+			if terminal != nil {
+				_ = term.Restore(int(os.Stdin.Fd()), terminal)
+			}
+			err = ctx.Err()
+		}
+	}
+	if _, remote := errors.AsType[*client.ExecExitError](err); err == nil || remote || ctx.Err() == nil {
+		return err
+	}
+	switch cause := context.Cause(ctx); {
+	case errors.Is(cause, errSessionTimeout):
+		return &codedError{err: fmt.Errorf("session timed out after %s", drive.timeout), code: 124}
+	default:
+		if interrupt, ok := errors.AsType[interruptCause](cause); ok {
+			code := 130
+			if sig, ok := interrupt.signal.(syscall.Signal); ok {
+				code = 128 + int(sig)
+			}
+			return &client.ExecExitError{Code: code}
+		}
+	}
+	return err
+}
+
+func driveSession(ctx context.Context, drive sessionDrive,
+	open func(context.Context) (*client.ExecSession, error), reauth func(context.Context) error) error {
+	session, err := open(ctx)
 	if isReauthRequired(err) {
 		if err = reauth(ctx); err != nil {
 			return err
 		}
-		session, err = api.Exec(ctx, environmentID, opts)
+		session, err = open(ctx)
 	}
 	if err != nil {
 		return err
 	}
 	defer session.Close()
 
-	if !tty {
-		// Plain pipe mode: local interrupts cancel the session (the server
-		// kills the remote exec); stdin EOF propagates as a half-close.
-		runCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
-		defer stop()
-		err := session.Run(runCtx, os.Stdin, os.Stdout, os.Stderr, nil)
-		if errors.Is(err, context.Canceled) {
-			return nil
-		}
-		return err
+	if !drive.tty {
+		// Plain pipe mode: stdin EOF propagates as a half-close.
+		return session.Run(ctx, drive.stdin, os.Stdout, os.Stderr, nil)
 	}
 
 	// Raw mode for the session's duration: keystrokes (including Ctrl-C)
@@ -221,7 +328,68 @@ func runExecSession(command *cobra.Command, api *client.Client, environmentID st
 	stopResize := watchResize(resize)
 	defer stopResize()
 
-	return session.Run(ctx, os.Stdin, os.Stdout, os.Stderr, resize)
+	return session.Run(ctx, drive.stdin, os.Stdout, os.Stderr, resize)
+}
+
+// untilDone runs call but returns as soon as ctx ends: the plain password
+// prompt blocks in a stdin read that no context reaches, and runSession
+// holds SIGINT, so without this neither Ctrl-C nor --timeout would end a
+// session waiting for an answer. The abandoned read ends with the process.
+func untilDone(ctx context.Context, call func() error) error {
+	done := make(chan error, 1)
+	go func() { done <- call() }()
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// codedError is a failure with a conventional exit status of its own; the
+// error line still prints.
+type codedError struct {
+	err  error
+	code int
+}
+
+func (e *codedError) Error() string { return e.err.Error() }
+func (e *codedError) Unwrap() error { return e.err }
+
+// sessionReauth confirms identity for a session command without ever
+// reading a piped stdin: that stream is the remote process's input (a SQL
+// script, a file for cat), and an answer read from it would both consume
+// it and treat it as a password. With a terminal on stdin it prompts like
+// any command (on stderr, so a redirected stdout stays clean); otherwise
+// only the local platform's own admin confirms unattended, and everyone
+// else is told how to get a fresh session first.
+func sessionReauth(command *cobra.Command, api *client.Client, remoteName string) func(context.Context) error {
+	return func(ctx context.Context) error {
+		if clirender.IsTerminal(os.Stdin) {
+			// A password prompt turns echo off for its read; when the
+			// session ends while it waits, the read never returns to turn
+			// it back on, so the state from before the prompt is restored
+			// here.
+			fd := int(os.Stdin.Fd())
+			state, stateErr := term.GetState(fd)
+			err := untilDone(ctx, func() error {
+				return reauthSession(ctx, command.ErrOrStderr(), bufio.NewReader(os.Stdin), api)
+			})
+			if ctx.Err() != nil && stateErr == nil {
+				_ = term.Restore(fd, state)
+			}
+			return err
+		}
+		local, err := isLocalAdmin(ctx, api)
+		if err != nil {
+			return err
+		}
+		if local {
+			return reauthLocal(ctx, api)
+		}
+		return fmt.Errorf("recent authentication required, and skali does not prompt while stdin carries the session's input: "+
+			"confirm in a terminal first (skali remote login %s), then run this again", remoteName)
+	}
 }
 
 // isNoReadyPod matches the exec endpoint's refusal when the service has no

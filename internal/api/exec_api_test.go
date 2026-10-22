@@ -74,6 +74,8 @@ type execTranscript struct {
 	stdout   strings.Builder
 	stderr   strings.Builder
 	terminal execproto.Control
+	// ready records the ready frame, which precedes the terminal one.
+	ready bool
 }
 
 func readTranscript(t *testing.T, conn *websocket.Conn) execTranscript {
@@ -93,6 +95,11 @@ func readTranscript(t *testing.T, conn *websocket.Conn) execTranscript {
 		case execproto.ChannelControl:
 			control, err := execproto.ParseControl(payload)
 			require.NoError(t, err)
+			if control.Type == execproto.ControlReady {
+				require.False(t, transcript.ready, "ready is sent once")
+				transcript.ready = true
+				continue
+			}
 			transcript.terminal = control
 			return transcript
 		}
@@ -214,6 +221,7 @@ func TestExecEchoSession(t *testing.T) {
 	require.NoError(t, conn.WriteMessage(websocket.BinaryMessage, eof))
 
 	transcript := readTranscript(t, conn)
+	require.True(t, transcript.ready, "exec reports ready before its stream")
 	require.Equal(t, "hello exec", transcript.stdout.String())
 	require.Equal(t, "saw eof", transcript.stderr.String())
 	require.Equal(t, execproto.ControlExit, transcript.terminal.Type)

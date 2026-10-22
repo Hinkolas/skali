@@ -8,8 +8,10 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -23,6 +25,9 @@ const (
 	execHandshakeTimeout = 15 * time.Second
 	execReadTimeout      = 60 * time.Second
 	execWriteTimeout     = 10 * time.Second
+	// controlWriteTimeout bounds pongs and the close frame, which must
+	// never hold up the read loop or cancellation for long.
+	controlWriteTimeout = time.Second
 )
 
 // ExecOptions is one exec invocation's target and command.
@@ -55,9 +60,25 @@ func (e *ExecExitError) Error() string {
 // releases it early.
 type ExecSession struct {
 	conn *websocket.Conn
-	// writeMu serializes every write to the connection (stdin, control,
-	// pongs, close): gorilla forbids concurrent writers.
+	// writeMu serializes the data writes (stdin, stdin EOF, resize):
+	// gorilla forbids concurrent writers. Pongs and the close frame use
+	// WriteControl, which it allows alongside them.
 	writeMu sync.Mutex
+	// holdStdin defers stdin forwarding until the server's ready frame:
+	// an SQL session's process starts only after the handshake (its
+	// client pod may take minutes), and a script pushed before then only
+	// fills buffers until the writes time out.
+	holdStdin bool
+}
+
+// SQLOptions is one SQL session's shape. The script itself is not part of
+// it: a batch session sends it as the session's stdin.
+type SQLOptions struct {
+	Format   string // psql (default), csv, or json
+	TTY      bool   // interactive psql
+	ReadOnly bool
+	// StatementTimeout sets statement_timeout; zero keeps the server's.
+	StatementTimeout time.Duration
 }
 
 // Exec opens an interactive exec session against one environment. Handshake
@@ -65,19 +86,6 @@ type ExecSession struct {
 // codes (reauth_required, no_ready_pod, not_found) exactly like any other
 // endpoint.
 func (c *Client) Exec(ctx context.Context, environmentID string, opts ExecOptions) (*ExecSession, error) {
-	target, err := url.Parse(c.base)
-	if err != nil {
-		return nil, fmt.Errorf("client: parse master url: %w", err)
-	}
-	switch target.Scheme {
-	case "http":
-		target.Scheme = "ws"
-	case "https":
-		target.Scheme = "wss"
-	default:
-		return nil, fmt.Errorf("client: master %s has no websocket scheme", c.base)
-	}
-
 	query := url.Values{}
 	if opts.Service != "" {
 		query.Set("service", opts.Service)
@@ -93,6 +101,51 @@ func (c *Client) Exec(ctx context.Context, environmentID string, opts ExecOption
 	}
 	for _, argument := range opts.Command {
 		query.Add("cmd", argument)
+	}
+	return c.dialSession(ctx, "/v1/environments/"+url.PathEscape(environmentID)+"/exec", query)
+}
+
+// SQL opens an SQL session against one database service of an environment.
+// It speaks the exec protocol, so the returned session runs exactly like an
+// exec session; the server starts the database client after the handshake.
+// Handshake failures decode the normal error envelope (not_found for an
+// unknown database, conflict while it provisions, reauth_required).
+func (c *Client) SQL(ctx context.Context, environmentID, database string, opts SQLOptions) (*ExecSession, error) {
+	query := url.Values{}
+	if opts.Format != "" {
+		query.Set("format", opts.Format)
+	}
+	if opts.TTY {
+		query.Set("tty", "true")
+	}
+	if opts.ReadOnly {
+		query.Set("read_only", "true")
+	}
+	if opts.StatementTimeout > 0 {
+		query.Set("statement_timeout", strconv.FormatInt(opts.StatementTimeout.Milliseconds(), 10))
+	}
+	session, err := c.dialSession(ctx, "/v1/environments/"+url.PathEscape(environmentID)+
+		"/databases/"+url.PathEscape(database)+"/sql", query)
+	if err != nil {
+		return nil, err
+	}
+	session.holdStdin = true
+	return session, nil
+}
+
+// dialSession opens one execproto WebSocket at path.
+func (c *Client) dialSession(ctx context.Context, path string, query url.Values) (*ExecSession, error) {
+	target, err := url.Parse(c.base)
+	if err != nil {
+		return nil, fmt.Errorf("client: parse master url: %w", err)
+	}
+	switch target.Scheme {
+	case "http":
+		target.Scheme = "ws"
+	case "https":
+		target.Scheme = "wss"
+	default:
+		return nil, fmt.Errorf("client: master %s has no websocket scheme", c.base)
 	}
 
 	header := http.Header{}
@@ -115,7 +168,7 @@ func (c *Client) Exec(ctx context.Context, environmentID string, opts ExecOption
 		ReadBufferSize:   32 * 1024,
 		WriteBufferSize:  32 * 1024,
 	}
-	wsURL := target.String() + "/v1/environments/" + url.PathEscape(environmentID) + "/exec?" + query.Encode()
+	wsURL := target.String() + path + "?" + query.Encode()
 	conn, res, err := dialer.DialContext(ctx, wsURL, header)
 	if res != nil {
 		// Instance pinning covers the handshake response, 101 or error: an
@@ -156,14 +209,28 @@ func (s *ExecSession) Run(ctx context.Context, stdin io.Reader, stdout, stderr i
 	go func() {
 		select {
 		case <-ctx.Done():
+			// WriteControl does not queue behind a stdin write the server
+			// is not taking (writeMu); the close frame gets a short try,
+			// then the connection goes regardless.
 			message := websocket.FormatCloseMessage(websocket.CloseGoingAway, "")
-			_ = s.write(websocket.CloseMessage, message)
+			_ = s.conn.WriteControl(websocket.CloseMessage, message, time.Now().Add(controlWriteTimeout))
 			s.conn.Close()
 		case <-done:
 		}
 	}()
 
-	if stdin != nil {
+	// A stdin that fails (a read error, a write the server never takes)
+	// ends the session with that error: dropping the rest silently would
+	// leave the remote process waiting for an EOF that never comes.
+	var stdinFailure atomic.Pointer[error]
+	failStdin := func(err error) {
+		stdinFailure.CompareAndSwap(nil, &err)
+		s.conn.Close()
+	}
+	pumpStdin := func() {
+		if stdin == nil {
+			return
+		}
 		// The pump stays blocked in stdin.Read when the session ends first
 		// (an interactive os.Stdin has no unblockable read); the goroutine
 		// is accepted as leaked since the process is about to exit or the
@@ -174,22 +241,48 @@ func (s *ExecSession) Run(ctx context.Context, stdin io.Reader, stdout, stderr i
 				n, err := stdin.Read(buffer)
 				if n > 0 {
 					frame := execproto.EncodeData(execproto.ChannelStdin, buffer[:n])
-					if s.write(websocket.BinaryMessage, frame) != nil {
+					// Stdin waits for the remote process to read it, which
+					// takes as long as it takes (psql runs a long statement
+					// before it reads the next one), so its writes carry no
+					// deadline. Peer liveness is the read loop's deadline;
+					// cancellation closes the connection under the write.
+					if writeErr := s.writeWithin(websocket.BinaryMessage, frame, 0); writeErr != nil {
+						select {
+						case <-done:
+						default:
+							failStdin(fmt.Errorf("forward stdin: %w", writeErr))
+						}
 						return
 					}
 				}
 				if err != nil {
-					if errors.Is(err, io.EOF) {
-						// Half-close: the remote process sees EOF while
-						// output keeps flowing.
-						if frame, encodeErr := execproto.EncodeControl(execproto.Control{Type: execproto.ControlStdinEOF}); encodeErr == nil {
-							_ = s.write(websocket.BinaryMessage, frame)
+					if !errors.Is(err, io.EOF) {
+						failStdin(fmt.Errorf("read stdin: %w", err))
+						return
+					}
+					// Half-close: the remote process sees EOF while output
+					// keeps flowing. It queues behind the input like any
+					// stdin frame, so it waits as long as they do.
+					frame, encodeErr := execproto.EncodeControl(execproto.Control{Type: execproto.ControlStdinEOF})
+					if encodeErr != nil {
+						failStdin(encodeErr)
+						return
+					}
+					if writeErr := s.writeWithin(websocket.BinaryMessage, frame, 0); writeErr != nil {
+						select {
+						case <-done:
+						default:
+							failStdin(fmt.Errorf("forward stdin: %w", writeErr))
 						}
 					}
 					return
 				}
 			}
 		}()
+	}
+	var pumpOnce sync.Once
+	if !s.holdStdin {
+		pumpOnce.Do(pumpStdin)
 	}
 
 	if resize != nil {
@@ -216,11 +309,15 @@ func (s *ExecSession) Run(ctx context.Context, stdin io.Reader, stdout, stderr i
 	s.conn.SetReadLimit(1 << 20)
 	refresh := func() { _ = s.conn.SetReadDeadline(time.Now().Add(execReadTimeout)) }
 	refresh()
-	// The default ping handler writes the pong directly, racing the pumps;
-	// route it through the write mutex and refresh the liveness deadline.
+	// Pongs go out through WriteControl, which gorilla allows next to the
+	// pumps' writes, with a short bound: while a stdin write waits for the
+	// remote process to read, the read loop must keep draining output, or
+	// the server's output writes stall in turn. A pong that cannot go out
+	// is skipped; the server counts every frame it reads as liveness.
 	s.conn.SetPingHandler(func(appData string) error {
 		refresh()
-		return s.write(websocket.PongMessage, []byte(appData))
+		_ = s.conn.WriteControl(websocket.PongMessage, []byte(appData), time.Now().Add(controlWriteTimeout))
+		return nil
 	})
 
 	for {
@@ -228,6 +325,9 @@ func (s *ExecSession) Run(ctx context.Context, stdin io.Reader, stdout, stderr i
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
+			}
+			if failure := stdinFailure.Load(); failure != nil {
+				return *failure
 			}
 			return fmt.Errorf("client: exec connection closed unexpectedly: %w", err)
 		}
@@ -255,21 +355,37 @@ func (s *ExecSession) Run(ctx context.Context, stdin io.Reader, stdout, stderr i
 				continue
 			}
 			switch control.Type {
+			case execproto.ControlReady:
+				pumpOnce.Do(pumpStdin)
 			case execproto.ControlExit:
 				if control.Code != 0 {
 					return &ExecExitError{Code: control.Code}
 				}
 				return nil
 			case execproto.ControlError:
-				return fmt.Errorf("exec failed: %s", strings.TrimSpace(control.Message))
+				message := strings.TrimSpace(control.Message)
+				if control.ErrCode == execproto.ErrCodeExecFailed || control.ErrCode == "" {
+					return fmt.Errorf("exec failed: %s", message)
+				}
+				// Other codes carry a self-describing message.
+				return errors.New(message)
 			}
 		}
 	}
 }
 
 func (s *ExecSession) write(messageType int, data []byte) error {
+	return s.writeWithin(messageType, data, execWriteTimeout)
+}
+
+// writeWithin writes one data message; a zero timeout waits indefinitely.
+func (s *ExecSession) writeWithin(messageType int, data []byte, timeout time.Duration) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	_ = s.conn.SetWriteDeadline(time.Now().Add(execWriteTimeout))
+	deadline := time.Time{}
+	if timeout > 0 {
+		deadline = time.Now().Add(timeout)
+	}
+	_ = s.conn.SetWriteDeadline(deadline)
 	return s.conn.WriteMessage(messageType, data)
 }

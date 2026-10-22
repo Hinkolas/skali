@@ -60,6 +60,9 @@ type testAPI struct {
 	registryHost string
 	// execFake scripts the exec surface per test; unscripted calls fail.
 	execFake *fakeExecService
+	// sqlFake scripts the SQL session surface per test; unscripted calls
+	// fail.
+	sqlFake *fakeSQLService
 	// access is the router's authorization layer, exposed for the route
 	// classification tests.
 	access *access
@@ -153,6 +156,7 @@ func newTestAPIWith(t *testing.T, version string, adjust func(*Deps)) *testAPI {
 	require.NoError(t, err)
 
 	execFake := &fakeExecService{}
+	sqlFake := &fakeSQLService{}
 
 	// StripAPIPrefix wraps here exactly as in cmd/skalid, so every test
 	// doubles as proof that root paths pass through the /api wrapper.
@@ -173,6 +177,7 @@ func newTestAPIWith(t *testing.T, version string, adjust func(*Deps)) *testAPI {
 		RegistryNodeSecret: "node-secret",
 		RuntimeLogs:        &runtimelogs.Streamer{Observed: observed.Store, Store: st},
 		Exec:               execFake,
+		SQL:                sqlFake,
 		Capabilities:       []string{"application", "edge", "database"},
 		Databases:          dbstore.New(st),
 		BackupTargets:      backupTargets,
@@ -205,7 +210,7 @@ func newTestAPIWith(t *testing.T, version string, adjust func(*Deps)) *testAPI {
 	t.Cleanup(srv.Close)
 	return &testAPI{t: t, srv: srv, st: st, svc: svc, journal: journalSvc, deploy: deploySvc,
 		observed: observed, held: held, registryHost: registryURL.Host,
-		execFake: execFake, access: ac}
+		execFake: execFake, sqlFake: sqlFake, access: ac}
 }
 
 // exchangeToken drives the registry token realm with Basic credentials and
@@ -806,6 +811,7 @@ func TestSpecCoversAllRoutes(t *testing.T) {
 		Metrics:   &metrics.Service{Store: a.st},
 		Updates:   &updates.Service{Store: a.st, Version: "test"},
 		Databases: dbstore.New(a.st),
+		SQL:       &fakeSQLService{},
 	})
 
 	routes := 0
@@ -826,7 +832,7 @@ func TestSpecCoversAllRoutes(t *testing.T) {
 	for route := range ac.classes {
 		require.True(t, walked[route], "classified route %s is not registered", route)
 	}
-	require.Equal(t, 106, routes, "route count changed; update the OpenAPI spec and this number")
+	require.Equal(t, 107, routes, "route count changed; update the OpenAPI spec and this number")
 }
 
 // fakeRotator is the substrate commit the API tests never reach: the

@@ -57,6 +57,8 @@ import (
 	"github.com/Hinkolas/skali/internal/registrytoken"
 	"github.com/Hinkolas/skali/internal/rotation"
 	"github.com/Hinkolas/skali/internal/runtimelogs"
+	"github.com/Hinkolas/skali/internal/sqlrunner"
+	"github.com/Hinkolas/skali/internal/sqlsession"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/studio"
 	"github.com/Hinkolas/skali/internal/substrate"
@@ -97,6 +99,12 @@ func run() error {
 		// The release Job's reachability wait (an init container); internal
 		// like backup-worker.
 		return netwait.Run(args[1:])
+	case "sql-runner":
+		// The JSON engine of skali sql sessions, run inside their client
+		// pod; internal like backup-worker. It owns its exit status (psql's
+		// codes) and stdout, so it bypasses the fatal log line.
+		os.Exit(sqlrunner.Main(args[1:], os.Stdin, os.Stdout, os.Stderr))
+		return nil
 	default:
 		return fmt.Errorf("unknown command %q (available: serve, user, migrate, seed)", args[0])
 	}
@@ -445,10 +453,16 @@ func runServe() error {
 	// Exec needs the full kube client (the rest.Config drives the exec
 	// subresource transport); a nil client answers node_unreachable.
 	execSvc := &podexec.Service{Kube: kubeClient, Observed: observed, Store: st}
+	// SQL sessions start their client pod through the same client; a nil
+	// one answers node_unreachable.
+	sqlSvc := &sqlsession.Service{Kube: kubeClient, Store: st, Databases: dbstore.New(st), ManagedCluster: cfg.ManagedCluster}
 	// The sanctioned request-time Secret read behind credential reveal.
 	var secretReader func(ctx context.Context, namespace, name string) (map[string][]byte, error)
 	if kubeClient != nil {
 		runtimeLogs.Clientset = kubeClient.Clientset
+		sqlSvc.RunnerImage = func(ctx context.Context) (string, error) {
+			return bundle.SkalidImage(ctx, kubeClient.Clientset, cfg.BackupWorkerImage)
+		}
 		secretReader = func(ctx context.Context, namespace, name string) (map[string][]byte, error) {
 			secret, err := kubeClient.Clientset.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
 			if err != nil {
@@ -494,6 +508,7 @@ func runServe() error {
 			RegistryNodeSecret: cfg.RegistryNodeSecret,
 			RuntimeLogs:        runtimeLogs,
 			Exec:               execSvc,
+			SQL:                sqlSvc,
 			Capabilities:       cfg.Capabilities,
 			DevCACert:          cfg.DevCACert,
 			ManagedCluster:     cfg.ManagedCluster,

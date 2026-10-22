@@ -27,7 +27,7 @@ Principles:
 - One ladder of roles, used at the environment and at the project level
   with the same words. No permission matrices per action.
 - The environment is the smallest unit of control. Everything with a blast
-  radius or a secret (deployments, runs, logs, values, exec, credentials,
+  radius or a secret (deployments, runs, logs, values, exec, SQL, credentials,
   backups, routes) is environment scoped. The project is the container and
   the place where the defaults come from.
 - Access (who may act) and policy (which kind of act is allowed for anyone)
@@ -52,7 +52,7 @@ smallest thing this person needs to change?
 | `none` | locked. The environment still appears in the project's environment list (id, name, the fact that it is locked) so names and their collisions are visible, but everything inside it answers 403: no status, runs, deployments, values, settings. |
 | `read` | everything visible: status and health, deployments, revisions, runs and run logs (redacted), runtime logs, value names and versions, routes, database and bucket connection info without secrets, backups list, environment settings, who has access to it. |
 | `deploy` | change only what code runs: promote into this environment, rollback, restart, redeploy, run cancel, route probe, backup create, and direct deploys whose definition is unchanged (the manifest compiles to the environment's currently active definition version, so only image digests differ). |
-| `maintain` | the full blast radius of `skali.yml`: direct deploys that change the definition (services, routes, databases, buckets, including `--allow-destructive`), set and prune values, restore, credential rotation, and the secret-bearing reads: exec, resolved application environment, credential reveal. |
+| `maintain` | the full blast radius of `skali.yml`: direct deploys that change the definition (services, routes, databases, buckets, including `--allow-destructive`), set and prune values, restore, credential rotation, and the secret-bearing reads: exec, SQL sessions, resolved application environment, credential reveal. |
 | `admin` | management outside the yaml: this environment's protection policy, role ceiling, and automatic backup schedule, other users' roles on this environment, lowering priority, delete and teardown, bypassing protection. |
 
 Notes on the placement:
@@ -232,10 +232,10 @@ settings, before it even submits the definition). Values changes, restore,
 backups, teardown, and delete are not policy-gated: the policy is about
 untested code reaching the environment; those are configuration, data,
 access, and the environment's existence, and have their own roles (restore
-keeps the sudo it has as a maintain action). Exec is the one exception: a
-shell can change what the policy protects, so on a promote-only environment
-it needs sudo mode on top of `maintain`; on a direct environment `maintain`
-alone opens it. The deploy policy is the only "this is production" signal
+keeps the sudo it has as a maintain action). Exec and SQL sessions are the
+exception: a shell or a SQL prompt can change what the policy protects, so
+on a promote-only environment they need sudo mode on top of `maintain`; on
+a direct environment `maintain` alone opens them. The deploy policy is the only "this is production" signal
 the platform has; priority and names say nothing.
 
 The policy applies to everyone including admins. Bypass: request field
@@ -312,7 +312,7 @@ role x or higher on the environment in question; D deployer; S sudo mode.
 | status, deployments, revisions, runs, run logs, runtime logs, value names, connection info, backups list, settings, access list | E:read |
 | promote into, rollback, restart, redeploy, run cancel, route probe, backup create, direct deploy with unchanged definition | E:deploy |
 | direct deploy with definition changes, values set/prune, restore (S), accept an incomplete restore's data (S), snapshot delete (S; project admin for snapshots of environments that no longer exist) | E:maintain |
-| exec (S on promote-only environments), resolved application environment (S), credential reveal (S), credential rotation (S) | E:maintain |
+| exec and SQL sessions (S on promote-only environments), resolved application environment (S), credential reveal (S), credential rotation (S) | E:maintain |
 | bypass protection (S) | E:admin |
 | user management writes, nodes, system observation, backup target (S for writes) | IA |
 | user directory (trimmed for non-admins), own account, sessions, 2FA, `/system/meta`, `/auth/session` | any authenticated user |
@@ -418,6 +418,7 @@ their environment first):
 | `GET .../runs`, `.../runs/stream`, `GET /runs/{id}`, `.../stream`, `GET /steps/{id}/logs`, `.../stream` | E:read (a run outside any environment is instance-admin only) |
 | `GET .../logs/stream` (runtime logs) | E:read |
 | `GET .../exec` (S when promote-only) | E:maintain |
+| `GET .../databases/{key}/sql` (S when promote-only) | E:maintain |
 | `GET .../databases/{key}/connection`, `.../buckets/{key}/connection` | E:read |
 | `POST .../credentials/reveal` (S) | E:maintain |
 | `POST .../databases/{key}/credentials/rotate`, `.../buckets/{key}/credentials/rotate` (S) | E:maintain |

@@ -4147,9 +4147,12 @@ paths:
         stderr (server to client; unused with a TTY), 3 control. Control
         frames are single JSON objects `{"type": ...}`: clients send
         `resize` (`cols`/`rows`) and `stdin_eof` (half-close); the server
-        ends every session with exactly one terminal frame, either `exit`
+        sends `ready` once the process reads stdin (right away for exec;
+        an SQL session holds its stdin until then) and ends every session
+        with exactly one terminal frame, either `exit`
         (`code` carries the process exit status) or `error` (`err_code`
-        `exec_failed`, `message`), then closes the connection. A close
+        `exec_failed`, or `start_failed` for an SQL session whose client
+        never started, and `message`), then closes the connection. A close
         without a terminal frame means the session failed. The server
         pings every 15 seconds; the route is exempt from the request
         timeout. Targets resolve only among the environment's own app
@@ -4168,6 +4171,109 @@ paths:
           description: >
             `no_ready_pod`: the service has no ready pod to exec into; the
             message lists the current pods and their states.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: "`node_unreachable`: no cluster is connected."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /v1/environments/{id}/databases/{key}/sql:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: key
+        in: path
+        required: true
+        schema:
+          type: string
+        description: The database service key (`databases.<key>` in the manifest).
+      - name: format
+        in: query
+        required: false
+        schema:
+          type: string
+          enum: [psql, csv, json]
+          default: psql
+        description: >
+          `psql` runs psql (its aligned output, meta-commands work); `csv`
+          runs psql --csv without command tags; `json` runs skalid's SQL
+          runner, which prints one document `{"results": [{"columns":
+          [{"name", "type", "type_oid"}], "rows": [[...]], "command",
+          "rows_affected"}], "error": {...}}` with rows as arrays aligned
+          with the columns and COPY TO STDOUT output as base64 in
+          `copy_data` (`"copy_encoding": "base64"`, byte for byte); COPY
+          FROM STDIN is refused there. An interactive (TTY) session is
+          always `psql`.
+      - name: tty
+        in: query
+        required: false
+        schema:
+          type: boolean
+          default: false
+        description: >
+          Interactive psql on a remote TTY: stderr merges into stdout and
+          resize control messages apply. Without it the session is a batch
+          script read from stdin.
+      - name: read_only
+        in: query
+        required: false
+        schema:
+          type: boolean
+          default: false
+        description: >
+          Sets default_transaction_read_only for the session. A guard
+          against accidental writes, not a permission: the database role
+          may lift it with SET.
+      - name: statement_timeout
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          maximum: 86400000
+        description: Sets statement_timeout, in milliseconds; absent or 0 keeps the server's.
+    get:
+      operationId: sqlDatabase
+      summary: Run SQL against a database service (WebSocket)
+      description: |
+        Opens an SQL session against one database of the environment,
+        connected with the database's own login role. The session runs in
+        a short-lived client pod in the environment's namespace that holds
+        only that database's connection Secret; the database's server pod
+        is never entered. The request upgrades to a WebSocket speaking the
+        exec protocol (see `/v1/environments/{id}/exec`); every failure
+        before the upgrade (auth, reauth gate, resolution) is the normal
+        JSON error envelope on the handshake response.
+
+        The query string carries only the session's shape. A batch
+        session's script arrives on stdin (channel 0, ended by
+        `stdin_eof`), so SQL never appears in URLs or logs. After the
+        upgrade the client pod starts (seconds, longer while its image is
+        pulled; the server pings meanwhile) and the server sends `ready`;
+        clients send the script only after it. A pod that never starts ends
+        the session with an `error` frame whose `err_code` is
+        `start_failed`. Otherwise the terminal `exit` frame carries the
+        client's status, psql's codes for every format: 0 success, 1 a
+        client failure, 2 the database unreachable, 3 the script failed.
+        A session lasts at most 8 hours. Like exec it needs maintain, plus
+        a fresh session on a promote-only environment.
+      tags: [exec]
+      responses:
+        "101":
+          description: Upgraded; the connection speaks the exec protocol.
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: "`conflict`: the database is not provisioned yet."
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }

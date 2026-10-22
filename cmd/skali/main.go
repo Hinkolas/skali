@@ -51,7 +51,7 @@ func newRootCommand() *cobra.Command {
 
 	root.AddCommand(newRemoteCommand(), newValidateCommand(), newManifestCommand(), newCompileCommand(),
 		newPlanCommand(), newDeployCommand(), newRollbackCommand(),
-		newDevCommand(), newRunCommand(), newRouteCommand(), newLogsCommand(), newExecCommand(),
+		newDevCommand(), newRunCommand(), newRouteCommand(), newLogsCommand(), newExecCommand(), newSQLCommand(),
 		newValuesCommand(), newBackupCommand(), newBucketCommand(), newDatabaseCommand(), newProjectCommand(), newEnvCommand(), newAccessCommand(),
 		newClusterCommand(), newSkillCommand(), newUpgradeCommand(), newVersionCommand(), newCompletionCommand())
 	registerCompletions(root)
