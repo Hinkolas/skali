@@ -107,9 +107,9 @@ implementation/verification reference or an explicit, bounded decision.
 | D3 | **Before stable: disposition k3s and its edge/runtime dependencies.** | Inspect the k3s, containerd/runc/CNI, Traefik, CoreDNS, Helm helper, local-path and metrics-server findings. Select a supported patch bundle or document advisory-specific non-applicability; update the installer/localdev/built-in inventory together. Rehearse cluster and dev upgrades, network policies, aliases/TLS, and slow pushes. |
 | D4 | **Before stable: SeaweedFS and CNPG/cert-manager operator review.** | Scan maintained candidates/rebuilds and separate used server paths from unused bundled features. For SeaweedFS verify authenticated S3, bootstrap deny identity, credential rotation/retirement, bucket deletion/quota, restore and cancellation, and metadata/replication behavior. For operators verify bootstrap, reconciliation and ACME on the chosen versions. |
 | D5 | **Before a release supporting Longhorn: disposition its full image set.** | Manager/engine/instance/share/backing/support/UI and CSI images contain findings. Upgrade as a compatible set or document exact non-applicability. Verify existing-volume attach, read/write, restart, backup/restore, node disruption and upgrade. Local-path testing does not validate this driver. |
-| D6 | **Before publishing: review build infrastructure and release binaries.** | BuildKit v0.33.1, binfmt/QEMU, Node build image, CI PostgreSQL, GoReleaser and sqlc have findings. Use updated/rebuilt tools or document the actual affected command/input boundary. Record exact resolved GoReleaser/Node/action versions in the final release run. Preserve generated-store consistency when changing sqlc. |
+| D6 | **Before publishing: review build infrastructure and release binaries.** | BuildKit v0.33.1, binfmt/QEMU, Node build image, CI PostgreSQL, GoReleaser and sqlc have findings. Use updated/rebuilt tools or document the actual affected command/input boundary. Record exact resolved GoReleaser/Node/action versions in the final release run. Preserve generated-store consistency when changing sqlc. **Done for rc.8:** BuildKit v0.34.1, GoReleaser pinned to v2.18.3; binfmt, Node, CI PostgreSQL and sqlc dispositioned in [candidate build inputs](#candidate-build-inputs--2026-10-22). **Remaining:** record the resolved action and Node versions from the release run. |
 | D7 | **Before declaring installer/dev review clean: refresh or disposition downloaded k3d/Lima binaries and native networking.** | The pinned k3d 5.9.0 and Lima 2.2.0 executables contain vulnerable Go symbols, including the current x509 distrust advisory. Change versions/checksums together or provide a bounded applicability decision; retest native dev/VM creation and upgrade on supported hosts. Include socket_vmnet 1.2.2 and the guest OS in the native review. |
-| D8 | **Candidate hygiene: refresh the Alpine runtime/base and record floating inputs.** | The new skalid image retains medium CVE-2026-85091 in zlib and unknown CVE-2026-107891 entries in musl/musl-utils; fixed package revisions are reported. Use a maintained patched base/package set or document an advisory-specific decision. Record builder/example image digests; rerun scans on the actual candidate after all fixes. |
+| D8 | **Candidate hygiene: refresh the Alpine runtime/base and record floating inputs.** | The new skalid image retains medium CVE-2026-85091 in zlib and unknown CVE-2026-107891 entries in musl/musl-utils; fixed package revisions are reported. Use a maintained patched base/package set or document an advisory-specific decision. Record builder/example image digests; rerun scans on the actual candidate after all fixes. **Done for rc.8:** Alpine 3.24.3 removes both; the locally assembled image scans 0/0/0/0/1 ([candidate build inputs](#candidate-build-inputs--2026-10-22)). **Remaining:** scan the published candidate image. |
 
 ### Scheduling decision — 2026-10-22
 
@@ -155,6 +155,26 @@ SeaweedFS's binary was built with Go 1.25.12; its findings include Go TLS/x509,
 HTTP/2, gRPC, compression and optional library APIs. The current root module's
 Go/x/net update does not repair dependencies compiled into that image. The
 same distinction applies to operator and Longhorn binaries.
+
+### Candidate build inputs — 2026-10-22
+
+Before rc.8, D6 and D8 were taken up with Trivy 0.76.1 and the advisory
+database of 2026-10-22 13:15 UTC, plus govulncheck 1.7.0 in binary mode.
+
+| Input | Change | Evidence and decision |
+| --- | --- | --- |
+| skalid runtime base | `alpine:3.24.2` → `3.24.3` (`sha256:b3413572…c9e6`), mirrored; release and dev Dockerfiles | 3.24.3 scans 0/0/0/0/0 on both architectures (3.24.2: 0/0/1/0/2). The release image assembled from it under BuildKit v0.34.1 on both architectures carries zlib 1.3.2-r1, musl 1.2.6-r3 and ca-certificates 20261020-r0, and scans 0/0/0/0/1. The remaining entry is GO-2026-5932, the deprecation notice for `golang.org/x/crypto/openpgp`, which skali does not import; govulncheck reports no called vulnerable symbols. |
+| BuildKit | v0.33.1 → v0.34.1 (`sha256:99368f3e…da5c`), mirrored; release workflow | 0/115/119/12/9 → 0/97/86/9/8 (amd64; arm64 0/93/82/5/8). Every remaining high/critical is in the bundled CNI plugins (Go 1.25.7 standard library), runc's or buildctl's x/net, or go-archive. The release builder runs on an ephemeral runner and builds only `build/skalid.release.Dockerfile` from pinned inputs, so no untrusted build context or network-namespaced build reaches them. |
+| binfmt/QEMU | unchanged `qemu-v10.2.3` (`sha256:400a4873…f0`) | No newer QEMU build is published; the `-68` build tag has the same digest. It runs once, privileged, on the ephemeral runner to register handlers. |
+| GoReleaser | `~> v2` → exact `v2.18.3` in release and CI | The newest release. Its Linux binary (Go 1.27.1, checksum verified) has 15 symbol-level IDs, mainly standard-library TLS/x509/HTTP including GO-2026-6809. It reads the repository and talks to GitHub and GHCR with the job's token; no newer build exists. Pinning records the exact version for the release. |
+| sqlc | unchanged 1.30.0 | The CI binary (Go 1.25.0) has 99 symbol-level IDs; 1.31.1 (Go 1.26.2) still has 46. sqlc only generates Go from the repository's own SQL in CI and is not shipped, and changing it rewrites the generated store. Kept; revisit with the next sqlc that clears the standard-library findings. |
+| Node build image | unchanged `node:22-alpine` (`sha256:fe4f6d74…9914` on 2026-10-22), dev and e2e Dockerfile only | 0/11/9/1/0, all in npm's own bundled packages. The release builds Studio with `actions/setup-node@v5` (Node 22) and `npm ci` from the lockfile, not this image. |
+| CI PostgreSQL | unchanged mirror of `postgres:17.11` (`sha256:2d2b8998…e3`) | The current upstream digest (`sha256:b8faeff7…08fe`) scans the same, 2/86/140/141/5. A test-only service container on the runner. |
+
+Floating builder and example tags resolved on 2026-10-22:
+`golang:1.26.10-alpine` and `golang:1.26-alpine` `sha256:27f2d3b8…7cba`,
+`alpine:3.22` `sha256:d406446b…a654`, `python:3.12-alpine`
+`sha256:b658b05c…815d`, `node:22-alpine` `sha256:fe4f6d74…9914`.
 
 ## Downloaded and local tool binaries
 
@@ -325,3 +345,6 @@ where the counts agree they are shown once for readability.
 | `registry:2.8.3` | runtime | amd64, arm64 | 2/29/50/4/0 |
 | `skali-dependency-review:184-amd64` | candidate | amd64 | 0/0/1/0/3 |
 | `skali-dependency-review:184-arm64` | candidate | arm64 | 0/0/1/0/3 |
+| `alpine:3.24.3@sha256:b3413572228e34bd1c9245f5565e6cd127005655e8a7899aef33d8e83255c9e6` (D8, 2026-10-22) | build | amd64, arm64 | 0/0/0/0/0 |
+| `moby/buildkit:v0.34.1@sha256:99368f3e46177c6405b9740e4461d91cee004128daeecca78d4ceac50ec1da5c` (D6, 2026-10-22) | build | amd64, arm64 | amd64: 0/97/86/9/8; arm64: 0/93/82/5/8 |
+| Local rc.8 release image on Alpine 3.24.3, BuildKit v0.34.1 (D8, 2026-10-22) | candidate | amd64, arm64 | 0/0/0/0/1 |

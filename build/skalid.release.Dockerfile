@@ -6,7 +6,7 @@
 # in .github/mirrored-images.txt first. Pulled from our GHCR copy of the
 # official image (same digest): anonymous pulls from public registries hit
 # the shared runners' IP limits and failed releases.
-FROM ghcr.io/hinkolas/mirror/alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+FROM ghcr.io/hinkolas/mirror/alpine:3.24.3@sha256:b3413572228e34bd1c9245f5565e6cd127005655e8a7899aef33d8e83255c9e6
 RUN apk add --no-cache ca-certificates
 COPY skalid /usr/local/bin/skalid
 EXPOSE 7070

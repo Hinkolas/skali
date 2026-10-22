@@ -41,7 +41,7 @@ jobs:
           image: ghcr.io/hinkolas/mirror/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
       - uses: docker/setup-buildx-action@v4
         with:
-          driver-opts: image=ghcr.io/hinkolas/mirror/buildkit:v0.33.1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
+          driver-opts: image=ghcr.io/hinkolas/mirror/buildkit:v0.34.1@sha256:99368f3e46177c6405b9740e4461d91cee004128daeecca78d4ceac50ec1da5c
 
       - uses: docker/login-action@v4
         with:
@@ -52,7 +52,9 @@ jobs:
       - uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
-          version: "~> v2"
+          # Exact so a release records which GoReleaser built it; bump it
+          # together with the ci.yml rehearsal.
+          version: v2.18.3
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
