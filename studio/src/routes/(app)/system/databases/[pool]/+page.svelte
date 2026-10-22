@@ -5,6 +5,7 @@
 	import { poolCharts, poolStats } from '$lib/models/pools';
 	import type { MetricsWindow } from '$lib/types/metrics';
 	import type { PoolMetrics } from '$lib/types/pools';
+	import PoolConnectionsCard from '$lib/components/system/PoolConnectionsCard.svelte';
 	import PoolDatabasesCard from '$lib/components/system/PoolDatabasesCard.svelte';
 	import PoolInstancesPanel from '$lib/components/system/PoolInstancesPanel.svelte';
 	import Card from '$lib/components/ui/Card.svelte';
@@ -42,6 +43,8 @@
 <svelte:head>
 	<title>{data.pool.name} · Databases — skali</title>
 </svelte:head>
+
+<PoolConnectionsCard pool={data.pool} />
 
 <div class="mb-6.5 grid grid-cols-2 gap-3.5 @4xl:grid-cols-4">
 	{#each stats as stat (stat.label)}

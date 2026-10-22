@@ -23,7 +23,7 @@ import (
 const clusterHealthyPhase = "Cluster in healthy state"
 
 // ensurePool applies one pool's CNPG Cluster from its row plus the live
-// tenant roles and its tuned parameter set. Idempotent server-side apply
+// tenant roles, the connection check's role, and its tuned parameter set. Idempotent server-side apply
 // under the platform manager. On a managed cluster the pool waits (requeue)
 // until a database node's memory is observed: applying an untuned spec
 // first and the tuned one a minute later would restart the pool twice.
@@ -39,10 +39,13 @@ func (c *Controller) ensurePool(ctx context.Context, pool store.DatabaseCluster,
 	if err != nil {
 		return 0, err
 	}
-	roles := make([]cnpg.Role, 0, len(tenants))
+	roles := make([]cnpg.Role, 0, len(tenants)+1)
 	for _, tenant := range tenants {
 		roles = append(roles, tenantRoles(tenant, now)...)
 	}
+	// The connection check logs in as an ordinary role of its own; see
+	// connections.go.
+	roles = append(roles, cnpg.ProbeRoleSpec())
 	budgets, ok, err := c.PoolBudgets(ctx)
 	if err != nil {
 		return 0, err

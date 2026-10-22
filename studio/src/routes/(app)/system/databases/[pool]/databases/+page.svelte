@@ -15,7 +15,7 @@
 	// platform's own show as system.
 	let { data }: { data: PageData } = $props();
 
-	const grid = 'grid-cols-[1.6fr_1.4fr_1.1fr_1fr_1fr_0.8fr]';
+	const grid = 'grid-cols-[1.6fr_1.4fr_1.1fr_1fr_1fr_0.8fr_0.8fr]';
 
 	// Project databases first (by project, environment, name), system last.
 	const rows = $derived(
@@ -53,7 +53,10 @@
 
 <div class="pb-6">
 	{#if rows.length > 0}
-		<Table columns={['Database', 'Project', 'Service', 'Status', 'Size', 'Created']} {grid}>
+		<Table
+			columns={['Database', 'Project', 'Service', 'Status', 'Size', 'Connections', 'Created']}
+			{grid}
+		>
 			{#each rows as database (database.database_name)}
 				{@const phase = databasePhase(database.phase)}
 				{@const project = projectHref(database)}
@@ -109,6 +112,9 @@
 							<span class="text-text-faint font-mono text-xs">
 								of {formatBytes(database.storage_bytes)}
 							</span>
+						</div>
+						<div class="text-text-secondary pr-3 font-mono text-md" title="client connections">
+							{database.connections ?? '–'}
 						</div>
 					</div>
 					<div

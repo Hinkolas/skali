@@ -30,6 +30,35 @@ export interface DatabasePoolObserved {
 	primary?: string;
 }
 
+/** One stretch of time a pool refused new connections; closed_at is null
+ * while it lasts. */
+export interface DatabasePoolIncident {
+	id: string;
+	code: string;
+	/** The server's refusal. */
+	message: string;
+	opened_at: string;
+	closed_at: string | null;
+}
+
+export type DatabasePoolConnectionState = 'available' | 'saturated' | 'refusing' | 'unknown';
+
+/**
+ * Whether a new ordinary login to the pool succeeds, checked about every
+ * 15 seconds the way an application connects. Usage is the newest
+ * successful check's reading; limit is what ordinary roles may reach.
+ */
+export interface DatabasePoolConnections {
+	state: DatabasePoolConnectionState;
+	reason?: string;
+	since: string | null;
+	checked_at: string | null;
+	used: number | null;
+	limit: number | null;
+	max_connections: number | null;
+	incident: DatabasePoolIncident | null;
+}
+
 /** One managed PostgreSQL pool from GET /v1/system/database-pools. */
 export interface DatabasePool {
 	name: string;
@@ -44,6 +73,8 @@ export interface DatabasePool {
 	memory: DatabasePoolMemory;
 	parameters: DatabasePoolParameters;
 	observed: DatabasePoolObserved | null;
+	/** Null where nothing checks connections and before the first check. */
+	connections: DatabasePoolConnections | null;
 	created_at: string;
 	updated_at: string;
 }
@@ -77,6 +108,8 @@ export interface DatabasePoolDatabase {
 	phase: string;
 	storage_bytes: number;
 	used_bytes: number | null;
+	/** Client connections at the newest connection check. */
+	connections: number | null;
 	created_at: string;
 }
 
@@ -84,6 +117,8 @@ export interface DatabasePoolDatabase {
 export interface DatabasePoolDetail extends DatabasePool {
 	members: DatabasePoolMember[];
 	databases: DatabasePoolDatabase[];
+	/** The newest connection incidents, newest first. */
+	incidents: DatabasePoolIncident[];
 }
 
 export interface DatabasePoolDetailResponse {
@@ -163,6 +198,39 @@ export function poolPhase(pool: DatabasePool): {
 		return { text: `healthy · ${ready}`, tone: 'success' };
 	}
 	return { text: `${observed.phase.toLowerCase()} · ${ready}`, tone: 'warning' };
+}
+
+const CONNECTION_TEXT: Record<DatabasePoolConnectionState, string> = {
+	available: 'accepting connections',
+	saturated: 'near connection limit',
+	refusing: 'refusing connections',
+	unknown: 'connections unchecked'
+};
+
+const CONNECTION_TONE: Record<
+	DatabasePoolConnectionState,
+	'success' | 'warning' | 'danger' | 'neutral'
+> = {
+	available: 'success',
+	saturated: 'warning',
+	refusing: 'danger',
+	unknown: 'neutral'
+};
+
+/** The pill text, tone and hover reason for a pool's connection check; null
+ * where nothing checks connections. */
+export function poolConnections(pool: DatabasePool): {
+	text: string;
+	tone: 'success' | 'warning' | 'danger' | 'neutral';
+	title?: string;
+} | null {
+	const connections = pool.connections;
+	if (!connections) return null;
+	let text = CONNECTION_TEXT[connections.state];
+	if (connections.used != null && connections.limit != null) {
+		text += ` · ${connections.used}/${connections.limit}`;
+	}
+	return { text, tone: CONNECTION_TONE[connections.state], title: connections.reason };
 }
 
 /** Whether two override maps name the same keys with the same values. */

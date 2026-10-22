@@ -56,9 +56,10 @@ type Object struct {
 	// them. Snapshots include the shared objects their environment
 	// references, and shared-object changes fan out to every referencing
 	// environment.
-	SharedKey       string
-	DatabaseCluster *module.DatabaseClusterStatus
-	DatabaseTenant  *module.DatabaseTenantStatus
+	SharedKey           string
+	DatabaseCluster     *module.DatabaseClusterStatus
+	DatabaseTenant      *module.DatabaseTenantStatus
+	DatabaseConnections *module.DatabaseConnectionsStatus
 
 	// Source names the observation source that owns this object; empty means
 	// the kubernetes watch. Poll-based provider sources set their name so
@@ -109,7 +110,7 @@ type Store struct {
 	nodeCapabilities map[string]map[string]bool
 	nodeRecords      map[string]NodeRecord
 	events           map[objectKey][]EventRecord
-	sharedObjects    map[string]objectKey              // shared key -> platform object
+	sharedObjects    map[string]map[string]objectKey   // shared key -> kind -> platform object
 	sharedRefs       map[string]map[uuid.UUID]int      // shared key -> referencing environments
 	bySource         map[string]map[objectKey]struct{} // named provider sources only
 
@@ -135,7 +136,7 @@ func NewStore(clock func() time.Time) *Store {
 		nodeCapabilities: make(map[string]map[string]bool),
 		nodeRecords:      make(map[string]NodeRecord),
 		events:           make(map[objectKey][]EventRecord),
-		sharedObjects:    make(map[string]objectKey),
+		sharedObjects:    make(map[string]map[string]objectKey),
 		sharedRefs:       make(map[string]map[uuid.UUID]int),
 		bySource:         make(map[string]map[objectKey]struct{}),
 		sources: map[string]*sourceRecord{
@@ -179,15 +180,28 @@ func compareProjection(previous *Object, next Object) projectionChange {
 		return unchanged
 	case previous.Bucket != nil && next.Bucket != nil && reflect.DeepEqual(withoutUsage(*previous), withoutUsage(next)):
 		return usageOnly
+	case previous.DatabaseConnections != nil && next.DatabaseConnections != nil &&
+		reflect.DeepEqual(withoutUsage(*previous), withoutUsage(next)):
+		return usageOnly
 	}
 	return changed
 }
 
-// withoutUsage clears a bucket projection's usage counters for comparison.
+// withoutUsage clears a bucket's usage counters, or a pool connection
+// check's counts and check time, for comparison.
 func withoutUsage(obj Object) Object {
-	bucket := *obj.Bucket
-	bucket.UsedBytes, bucket.DiskBytes, bucket.EntryCount = 0, 0, 0
-	obj.Bucket = &bucket
+	if obj.Bucket != nil {
+		bucket := *obj.Bucket
+		bucket.UsedBytes, bucket.DiskBytes, bucket.EntryCount = 0, 0, 0
+		obj.Bucket = &bucket
+	}
+	if obj.DatabaseConnections != nil {
+		connections := *obj.DatabaseConnections
+		connections.CheckedAt = time.Time{}
+		connections.Used, connections.Limit, connections.Max = 0, 0, 0
+		connections.Databases = nil
+		obj.DatabaseConnections = &connections
+	}
 	return obj
 }
 
@@ -242,18 +256,23 @@ func (s *Store) removeLocked(key objectKey) []uuid.UUID {
 	return affected
 }
 
-// sharedResource reports whether an object is the shared resource its key
-// names: a database pool's Cluster or the object store, which every
-// environment referencing the key reads. A platform-scoped object can
-// carry the key only as a reference: the object store's own metadata
-// database is a system tenant on a shared pool, labelled with the pool
-// like every tenant. Letting it register under the key replaced the pool
-// for every environment on it until the pool's next status update.
+// sharedResource reports whether an object is a shared resource its key
+// names: a database pool's Cluster and connection check, or the object
+// store, which every environment referencing the key reads. A
+// platform-scoped object can carry the key only as a reference: the object
+// store's own metadata database is a system tenant on a shared pool,
+// labelled with the pool like every tenant. Letting it register under the
+// key replaced the pool for every environment on it until the pool's next
+// status update.
 func sharedResource(obj Object) bool {
 	if obj.Environment != uuid.Nil || obj.SharedKey == "" {
 		return false
 	}
-	return obj.Kind == module.KindDatabaseCluster || obj.Kind == module.KindObjectStore
+	switch obj.Kind {
+	case module.KindDatabaseCluster, module.KindDatabaseConnections, module.KindObjectStore:
+		return true
+	}
+	return false
 }
 
 // ReplaceSource reconciles one named source's object set to exactly the
@@ -338,7 +357,10 @@ func (s *Store) indexLocked(key objectKey, obj *Object) {
 		return
 	}
 	if sharedResource(*obj) {
-		s.sharedObjects[obj.SharedKey] = key
+		if s.sharedObjects[obj.SharedKey] == nil {
+			s.sharedObjects[obj.SharedKey] = make(map[string]objectKey)
+		}
+		s.sharedObjects[obj.SharedKey][obj.Kind] = key
 	}
 }
 
@@ -382,8 +404,11 @@ func (s *Store) unindexLocked(key objectKey, obj *Object) {
 		}
 		return
 	}
-	if sharedResource(*obj) && s.sharedObjects[obj.SharedKey] == key {
-		delete(s.sharedObjects, obj.SharedKey)
+	if kinds := s.sharedObjects[obj.SharedKey]; sharedResource(*obj) && kinds[obj.Kind] == key {
+		delete(kinds, obj.Kind)
+		if len(kinds) == 0 {
+			delete(s.sharedObjects, obj.SharedKey)
+		}
 	}
 }
 
@@ -517,12 +542,13 @@ func (s Snapshot) ForService(key string) []module.ObservedResource {
 			continue
 		}
 		switch obj.Kind {
-		case module.KindDatabaseCluster, module.KindObjectStore:
+		case module.KindDatabaseCluster, module.KindDatabaseConnections, module.KindObjectStore:
 			resources = append(resources, module.ObservedResource{
-				Kind:            obj.Kind,
-				Name:            obj.Name,
-				DatabaseCluster: obj.DatabaseCluster,
-				ObjectStore:     obj.ObjectStore,
+				Kind:                obj.Kind,
+				Name:                obj.Name,
+				DatabaseCluster:     obj.DatabaseCluster,
+				DatabaseConnections: obj.DatabaseConnections,
+				ObjectStore:         obj.ObjectStore,
 			})
 		}
 	}
@@ -544,7 +570,7 @@ func (s *Store) Snapshot(environmentID uuid.UUID) Snapshot {
 			snapshot.Objects = append(snapshot.Objects, *obj)
 			if obj.SharedKey != "" && !shared[obj.SharedKey] {
 				shared[obj.SharedKey] = true
-				if sharedKey, ok := s.sharedObjects[obj.SharedKey]; ok {
+				for _, sharedKey := range s.sharedObjects[obj.SharedKey] {
 					if sharedObj := s.objects[sharedKey]; sharedObj != nil {
 						snapshot.Objects = append(snapshot.Objects, *sharedObj)
 					}
@@ -657,13 +683,14 @@ func (s *Store) SmallestCapableNodeMemory(capability string) (string, int64) {
 	return name, bytes
 }
 
-// SharedObject returns the platform-scoped object registered under a shared
-// key: a database pool's CNPG Cluster is keyed by the pool name. The copy is
-// safe to keep after the lock is released.
-func (s *Store) SharedObject(sharedKey string) (Object, bool) {
+// SharedObject returns the platform-scoped object of one kind registered
+// under a shared key: a database pool's CNPG Cluster and connection check
+// are keyed by the pool name. The copy is safe to keep after the lock is
+// released.
+func (s *Store) SharedObject(sharedKey, kind string) (Object, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	key, ok := s.sharedObjects[sharedKey]
+	key, ok := s.sharedObjects[sharedKey][kind]
 	if !ok {
 		return Object{}, false
 	}

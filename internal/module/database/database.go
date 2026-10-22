@@ -110,8 +110,9 @@ func (s *service) Evaluate(observed []module.ObservedResource) module.Evaluation
 }
 
 // evaluateProvisioned composes a provisioned claim with the observed tenant
-// and pool: healthy only when the tenant is reconciled and the pool serves.
-// Missing projections read as progressing (informer lag), never healthy.
+// and pool: healthy only when the tenant is reconciled, the pool serves,
+// and its connection check logs in. Missing projections read as
+// progressing (informer lag), never healthy.
 func evaluateProvisioned(observed []module.ObservedResource) module.Evaluation {
 	var tenant *module.DatabaseTenantStatus
 	for _, resource := range observed {
@@ -138,6 +139,7 @@ func evaluateProvisioned(observed []module.ObservedResource) module.Evaluation {
 			break
 		}
 	}
+	evaluation := module.Evaluation{Health: module.HealthHealthy}
 	switch {
 	case pool == nil:
 		return progressing("pool-unobserved", "waiting for the pool observation to catch up")
@@ -147,13 +149,89 @@ func evaluateProvisioned(observed []module.ObservedResource) module.Evaluation {
 			Message: "no ready database instances on pool " + tenant.Pool,
 		}}}
 	case pool.ReadyInstances < pool.Instances:
-		return module.Evaluation{Health: module.HealthDegraded, Diagnostics: []module.Diagnostic{{
+		evaluation = module.Evaluation{Health: module.HealthDegraded, Diagnostics: []module.Diagnostic{{
 			Severity: "warning", Code: "pool-degraded",
 			Message: fmt.Sprintf("%d/%d instances ready on pool %s (primary %s)",
 				pool.ReadyInstances, pool.Instances, tenant.Pool, pool.Primary),
 		}}}
 	}
-	return module.Evaluation{Health: module.HealthHealthy}
+	if connections, checked := evaluateConnections(observed, tenant.Pool); checked {
+		evaluation = combine(evaluation, connections)
+	}
+	return evaluation
+}
+
+// evaluateConnections judges the pool's connection check, the one signal
+// that a new application login succeeds. checked is false where nothing
+// checks connections (API-only mode, tests), which leaves the pool's
+// instances as the whole verdict. Only a confirmed refusal is a fault of
+// the database; a pool close to its limit and a check that cannot run are
+// advisory, shown but never holding a rollout. Messages name the pool,
+// which the database's own host already does, and never another tenant's
+// usage.
+func evaluateConnections(observed []module.ObservedResource, pool string) (module.Evaluation, bool) {
+	source := module.SourceNamed(observed, module.SourceDatabaseConnections)
+	if source == nil {
+		return module.Evaluation{}, false
+	}
+	unknown := func(message string) (module.Evaluation, bool) {
+		return module.Evaluation{Health: module.HealthUnknown, Advisory: true, Diagnostics: []module.Diagnostic{{
+			Severity: "warning", Code: "connections-unchecked", Message: message,
+		}}}, true
+	}
+	if source.State != module.SourceFresh {
+		if !source.StaleSince.IsZero() {
+			return unknown("the connection check of pool " + pool + " is stale since " +
+				source.StaleSince.UTC().Format(time.RFC3339) + "; whether applications can connect is unknown")
+		}
+		return unknown("the connection check of pool " + pool + " has not completed yet")
+	}
+	var status *module.DatabaseConnectionsStatus
+	for _, resource := range observed {
+		if resource.Kind == module.KindDatabaseConnections && resource.Name == pool && resource.DatabaseConnections != nil {
+			status = resource.DatabaseConnections
+			break
+		}
+	}
+	if status == nil {
+		return unknown("the connection check of pool " + pool + " has not completed yet")
+	}
+	switch status.State {
+	case module.ConnectionsAvailable:
+		return module.Evaluation{Health: module.HealthHealthy}, true
+	case module.ConnectionsRefusing:
+		return module.Evaluation{Health: module.HealthUnhealthy, Diagnostics: []module.Diagnostic{{
+			Severity: "error", Code: "connections-exhausted",
+			Message: fmt.Sprintf("pool %s refuses new connections (%s): applications cannot open database "+
+				"connections until connections on the pool are released or an operator raises its max_connections",
+				pool, status.Reason),
+		}}}, true
+	case module.ConnectionsSaturated:
+		return module.Evaluation{Health: module.HealthDegraded, Advisory: true, Diagnostics: []module.Diagnostic{{
+			Severity: "warning", Code: "connections-high",
+			Message: "pool " + pool + " is close to its connection limit; new connections are refused once it is reached",
+		}}}, true
+	}
+	return unknown("the connection check of pool " + pool + " cannot run: " + status.Reason)
+}
+
+// combine joins two evaluations of one database: the worse health, every
+// diagnostic, and advisory only while everything below healthy is.
+func combine(left, right module.Evaluation) module.Evaluation {
+	out := module.Evaluation{
+		Health:      module.WorstHealth([]module.Health{left.Health, right.Health}),
+		Diagnostics: append(append([]module.Diagnostic{}, left.Diagnostics...), right.Diagnostics...),
+		Advisory:    true,
+	}
+	for _, part := range []module.Evaluation{left, right} {
+		if part.Health != module.HealthHealthy && !part.Advisory {
+			out.Advisory = false
+		}
+	}
+	if out.Health == module.HealthHealthy {
+		out.Advisory = false
+	}
+	return out
 }
 
 func progressing(code, message string) module.Evaluation {

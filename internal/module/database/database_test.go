@@ -2,6 +2,7 @@ package database
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -61,7 +62,7 @@ func tenant(status module.DatabaseTenantStatus) module.ObservedResource {
 		Name: "db_data", DatabaseTenant: &status}
 }
 
-func pool(status module.DatabaseClusterStatus) module.ObservedResource {
+func poolResource(status module.DatabaseClusterStatus) module.ObservedResource {
 	return module.ObservedResource{Kind: module.KindDatabaseCluster,
 		Name: "pg17-shared", DatabaseCluster: &status}
 }
@@ -100,19 +101,19 @@ func TestEvaluate(t *testing.T) {
 
 	healthy := service.Evaluate([]module.ObservedResource{fresh(), provisionedClaim(),
 		tenant(module.DatabaseTenantStatus{Applied: true, Pool: "pg17-shared"}),
-		pool(module.DatabaseClusterStatus{Instances: 1, ReadyInstances: 1, Primary: "pg17-shared-1"})})
+		poolResource(module.DatabaseClusterStatus{Instances: 1, ReadyInstances: 1, Primary: "pg17-shared-1"})})
 	require.Equal(t, module.HealthHealthy, healthy.Health)
 	require.Empty(t, healthy.Diagnostics)
 
 	degraded := service.Evaluate([]module.ObservedResource{fresh(), provisionedClaim(),
 		tenant(module.DatabaseTenantStatus{Applied: true, Pool: "pg17-shared"}),
-		pool(module.DatabaseClusterStatus{Instances: 2, ReadyInstances: 1, Primary: "pg17-shared-1"})})
+		poolResource(module.DatabaseClusterStatus{Instances: 2, ReadyInstances: 1, Primary: "pg17-shared-1"})})
 	require.Equal(t, module.HealthDegraded, degraded.Health)
 	require.Contains(t, degraded.Diagnostics[0].Message, "1/2 instances ready")
 
 	down := service.Evaluate([]module.ObservedResource{fresh(), provisionedClaim(),
 		tenant(module.DatabaseTenantStatus{Applied: true, Pool: "pg17-shared"}),
-		pool(module.DatabaseClusterStatus{Instances: 1, ReadyInstances: 0})})
+		poolResource(module.DatabaseClusterStatus{Instances: 1, ReadyInstances: 0})})
 	require.Equal(t, module.HealthUnhealthy, down.Health)
 
 	releasing := service.Evaluate([]module.ObservedResource{fresh(), {
@@ -121,4 +122,87 @@ func TestEvaluate(t *testing.T) {
 	}})
 	require.Equal(t, module.HealthProgressing, releasing.Health)
 	require.Equal(t, "claim-releasing", releasing.Diagnostics[0].Code)
+}
+
+func connectionSource(state string) module.ObservedResource {
+	status := module.SourceStatus{State: state}
+	if state == module.SourceStale {
+		status.StaleSince = time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	}
+	return module.ObservedResource{Kind: module.KindSource, Name: module.SourceDatabaseConnections, Source: &status}
+}
+
+func connections(state, reason string) module.ObservedResource {
+	return module.ObservedResource{Kind: module.KindDatabaseConnections, Name: "pg17-shared",
+		DatabaseConnections: &module.DatabaseConnectionsStatus{State: state, Reason: reason, Used: 95, Limit: 97}}
+}
+
+// A ready pool is not a pool applications can connect to: the connection
+// check decides. Only a confirmed refusal is a fault that holds a rollout;
+// a pool close to its limit and a check that cannot run are advisory, and
+// none of them reads as healthy.
+func TestEvaluateConnections(t *testing.T) {
+	t.Parallel()
+	service := decodeService(t)
+	evaluate := func(pool module.DatabaseClusterStatus, extra ...module.ObservedResource) module.Evaluation {
+		observed := []module.ObservedResource{fresh(), provisionedClaim(),
+			tenant(module.DatabaseTenantStatus{Applied: true, Pool: "pg17-shared"})}
+		observed = append(observed, extra...)
+		return service.Evaluate(append(observed, poolResource(pool)))
+	}
+	ready := module.DatabaseClusterStatus{Instances: 1, ReadyInstances: 1, Primary: "pg17-shared-1"}
+
+	// Nothing checks connections (API-only, a test): the instances decide.
+	require.Equal(t, module.HealthHealthy, evaluate(ready).Health)
+
+	healthy := evaluate(ready, connectionSource(module.SourceFresh), connections(module.ConnectionsAvailable, ""))
+	require.Equal(t, module.Evaluation{Health: module.HealthHealthy, Diagnostics: []module.Diagnostic{}}, healthy)
+
+	refusing := evaluate(ready, connectionSource(module.SourceFresh),
+		connections(module.ConnectionsRefusing, "remaining connection slots are reserved for roles with the SUPERUSER attribute"))
+	require.Equal(t, module.HealthUnhealthy, refusing.Health)
+	require.False(t, refusing.Advisory, "applications cannot connect: the database is at fault")
+	require.Len(t, refusing.Diagnostics, 1)
+	require.Equal(t, "connections-exhausted", refusing.Diagnostics[0].Code)
+	require.Equal(t, "error", refusing.Diagnostics[0].Severity)
+	require.Contains(t, refusing.Diagnostics[0].Message, "pool pg17-shared refuses new connections "+
+		"(remaining connection slots are reserved for roles with the SUPERUSER attribute)")
+	require.NotContains(t, refusing.Diagnostics[0].Message, "95", "the pool's usage is an operator's view")
+
+	saturated := evaluate(ready, connectionSource(module.SourceFresh), connections(module.ConnectionsSaturated, "90% or more"))
+	require.Equal(t, module.HealthDegraded, saturated.Health)
+	require.True(t, saturated.Advisory)
+	require.Equal(t, "connections-high", saturated.Diagnostics[0].Code)
+
+	unknown := evaluate(ready, connectionSource(module.SourceFresh), connections(module.ConnectionsUnknown, "no ready primary instance to check"))
+	require.Equal(t, module.HealthUnknown, unknown.Health)
+	require.True(t, unknown.Advisory)
+	require.Contains(t, unknown.Diagnostics[0].Message, "no ready primary instance to check")
+
+	// A stale or never-completed check is unknown, never the last verdict.
+	stale := evaluate(ready, connectionSource(module.SourceStale), connections(module.ConnectionsAvailable, ""))
+	require.Equal(t, module.HealthUnknown, stale.Health)
+	require.True(t, stale.Advisory)
+	require.Contains(t, stale.Diagnostics[0].Message, "stale since 2026-10-22T12:00:00Z")
+	pending := evaluate(ready, connectionSource(module.SourceUnknown))
+	require.Equal(t, module.HealthUnknown, pending.Health)
+	missing := evaluate(ready, connectionSource(module.SourceFresh))
+	require.Equal(t, module.HealthUnknown, missing.Health)
+	require.Contains(t, missing.Diagnostics[0].Message, "has not completed yet")
+
+	// A degraded pool is a fault of its own; joined with an advisory
+	// verdict the result is no longer advisory.
+	short := module.DatabaseClusterStatus{Instances: 2, ReadyInstances: 1, Primary: "pg17-shared-1"}
+	both := evaluate(short, connectionSource(module.SourceFresh), connections(module.ConnectionsSaturated, ""))
+	require.Equal(t, module.HealthDegraded, both.Health)
+	require.False(t, both.Advisory)
+	require.Len(t, both.Diagnostics, 2)
+	worse := evaluate(short, connectionSource(module.SourceFresh), connections(module.ConnectionsRefusing, "sorry, too many clients already"))
+	require.Equal(t, module.HealthUnhealthy, worse.Health)
+
+	// No ready instance at all needs no connection check to explain it.
+	down := evaluate(module.DatabaseClusterStatus{Instances: 1}, connectionSource(module.SourceFresh),
+		connections(module.ConnectionsUnknown, "no ready primary instance to check"))
+	require.Equal(t, module.HealthUnhealthy, down.Health)
+	require.Equal(t, "pool-unavailable", down.Diagnostics[0].Code)
 }

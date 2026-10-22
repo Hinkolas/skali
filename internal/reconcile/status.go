@@ -76,6 +76,16 @@ type ServiceStatus struct {
 	// so activation and batch gating never wait on a workload that
 	// deliberately does not exist.
 	Intercepted bool
+	// Advisory carries the module's advisory flag: the health below
+	// healthy reports on shared capacity or monitoring, and activation
+	// does not wait on it.
+	Advisory bool
+}
+
+// blocksActivation reports whether the service keeps the target revision
+// from activating: anything below healthy that is not advisory.
+func (s ServiceStatus) blocksActivation() bool {
+	return s.Health != module.HealthHealthy && !s.Advisory
 }
 
 // RouteStatus is one public route of an application. Certificate is nil
@@ -380,6 +390,7 @@ func (k *Kernel) evaluateServices(environmentID uuid.UUID, rev *revision.Revisio
 		evaluation := service.Evaluate(observed)
 		status.Health = evaluation.Health
 		status.Diagnostics = evaluation.Diagnostics
+		status.Advisory = evaluation.Advisory
 		statuses = append(statuses, status)
 	}
 	return statuses

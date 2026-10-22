@@ -65,14 +65,14 @@ cluster. Cluster restart has a separate opt-in described below.
 | `task test:live:reconcile` | Environment deployment, healing, isolation, ownership, and rollout behavior, including prompt rollout handoffs while other environments keep the workers busy. |
 | `task test:live:backup` | Backup and restore Jobs: a cancel interrupts a real Job wait and removes the Job and its target Secret; a real `pg_restore` that fails halfway leaves the database as it was; a bucket restored on the pinned SeaweedFS lists exactly its snapshot's keys. |
 | `task test:live:substrate` | All substrate scenarios, including all six bucket contracts. |
-| `task test:live:substrate:database` | User claims, system claims, pgvector, database credential rotation, and the release of a dropped database. |
+| `task test:live:substrate:database` | User claims, system claims, pgvector, database credential rotation, the release of a dropped database, and connection exhaustion. |
 | `task test:live:substrate:bootstrap` | Cold object-store bootstrap and cold bucket provisioning. |
 | `task test:live:substrate:buckets` | Permissions, CORS/uploads, quota, restore fence, rotation, and destructive removal on one store. |
 | `task test:live:substrate:observation` | SeaweedFS usage, outage/staleness, and recovery on its own store; idle bucket environments whose identical storage polls queue no environment pass and no substrate work. |
 | `task test:live:substrate:network` | Platform claim-holder access, denied bystanders, host NodePorts, and revocation. |
 | `task test:live:substrate:legacy` | Removal of legacy public S3 edge resources; lazily installs cert-manager. |
 
-The database suite keeps five independently selectable fresh-fixture tests:
+The database suite keeps six independently selectable fresh-fixture tests:
 
 | Selector | Main assertions |
 | --- | --- |
@@ -81,6 +81,7 @@ The database suite keeps five independently selectable fresh-fixture tests:
 | `^TestLiveVectorExtension$` | A tenant requesting pgvector can use it; a plain tenant on the same pool does not gain the extension. |
 | `^TestLiveDatabaseCredentialRotation$` | Two credential rotations, overlap/retirement, actual SQL login/ownership, stable instances, leak audit, and role cleanup. |
 | `^TestLiveDroppedDatabaseWaitsForActivation$` | A database the revision dropped keeps its rows and CNPG object through claim passes and a fallback until a pass allows its release, which then tears it down. |
+| `^TestLivePoolConnectionExhaustion$` | Tenant sessions take every ordinary slot so new logins fail with 53300 while the instances stay ready and an open connection keeps answering; the connection check confirms the refusal in two rounds and opens an incident, then closes it after the sessions are released and two checks log in, without touching the pool. |
 
 All live tasks disable Go's result cache with `-count=1`. The full command keeps
 its 90-minute watchdog and the full substrate command 45 minutes; focused

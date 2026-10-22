@@ -149,7 +149,10 @@ can remove them. Invalid YAML diagnostics identify the configuration file to edi
   host runs, a revealed copy) must fetch them again. Rotating again inside
   the window retires the older login role at once.
 - `skali database list`, `show <pool>` and `set <pool>` inspect and tune
-  the database pools (admin only).
+  the database pools (admin only). The connections column is the pool's
+  connection check: `refusing` means new application logins fail for lack
+  of connection slots, and `show` names the open incident and which
+  databases hold the connections.
 - `skali sql [database] [--environment <name>]` runs SQL against
   `databases.<database>` (the manifest's sole database when omitted) with
   that database's own credentials, in a short-lived client the platform

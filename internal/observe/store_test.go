@@ -211,24 +211,24 @@ func TestSmallestCapableNodeMemory(t *testing.T) {
 func TestSharedObject(t *testing.T) {
 	t.Parallel()
 	store := NewStore(nil)
-	_, ok := store.SharedObject("pg17-shared")
+	_, ok := store.SharedObject("pg17-shared", module.KindDatabaseCluster)
 	require.False(t, ok)
 
 	ref := kube.ObjectRef{GVK: schema.GroupVersionKind{Group: "postgresql.cnpg.io", Version: "v1", Kind: "Cluster"},
 		Namespace: "skali-platform", Name: "pg17-shared"}
 	store.Upsert(Object{Ref: ref, Kind: module.KindDatabaseCluster, Name: "pg17-shared", SharedKey: "pg17-shared",
 		DatabaseCluster: &module.DatabaseClusterStatus{Instances: 2, ReadyInstances: 1, Phase: "Upgrading cluster"}})
-	obj, ok := store.SharedObject("pg17-shared")
+	obj, ok := store.SharedObject("pg17-shared", module.KindDatabaseCluster)
 	require.True(t, ok)
 	require.Equal(t, "Upgrading cluster", obj.DatabaseCluster.Phase)
 
 	// Environment-owned objects carrying the shared key are references, not
 	// the shared object itself.
-	_, ok = store.SharedObject("other")
+	_, ok = store.SharedObject("other", module.KindDatabaseCluster)
 	require.False(t, ok)
 
 	store.Remove(ref)
-	_, ok = store.SharedObject("pg17-shared")
+	_, ok = store.SharedObject("pg17-shared", module.KindDatabaseCluster)
 	require.False(t, ok)
 }
 
@@ -252,7 +252,7 @@ func TestSystemTenantDoesNotReplaceItsPool(t *testing.T) {
 	store.Upsert(Object{Ref: system, Kind: module.KindDatabaseTenant, Name: "seaweed",
 		SharedKey: "pg17-shared", DatabaseTenant: &module.DatabaseTenantStatus{Applied: true, Pool: "pg17-shared"}})
 
-	obj, ok := store.SharedObject("pg17-shared")
+	obj, ok := store.SharedObject("pg17-shared", module.KindDatabaseCluster)
 	require.True(t, ok)
 	require.Equal(t, module.KindDatabaseCluster, obj.Kind, "the pool keeps its key after the system tenant updated")
 	pools := 0
@@ -264,8 +264,59 @@ func TestSystemTenantDoesNotReplaceItsPool(t *testing.T) {
 	require.Equal(t, 1, pools, "the environment's snapshot carries the pool")
 
 	store.Remove(system)
-	_, ok = store.SharedObject("pg17-shared")
+	_, ok = store.SharedObject("pg17-shared", module.KindDatabaseCluster)
 	require.True(t, ok, "removing the system tenant leaves the pool in place")
+}
+
+// A pool's connection check shares the pool's key beside its Cluster:
+// both reach every environment with a database on the pool, a verdict
+// change wakes those environments, and moving counts alone wake nobody.
+func TestPoolConnectionsShareThePoolKey(t *testing.T) {
+	t.Parallel()
+	store := NewStore(nil)
+	environment := uuid.New()
+	cluster := kube.ObjectRef{GVK: schema.GroupVersionKind{Group: "postgresql.cnpg.io", Version: "v1", Kind: "Cluster"},
+		Namespace: "skali-platform", Name: "pg17-shared"}
+	store.Upsert(Object{Ref: cluster, Kind: module.KindDatabaseCluster, Name: "pg17-shared", SharedKey: "pg17-shared",
+		DatabaseCluster: &module.DatabaseClusterStatus{Instances: 1, ReadyInstances: 1}})
+	store.Upsert(Object{Ref: kube.ObjectRef{GVK: schema.GroupVersionKind{Group: "postgresql.cnpg.io", Version: "v1", Kind: "Database"},
+		Namespace: "skali-platform", Name: "db-app"},
+		Kind: module.KindDatabaseTenant, Name: "app", Environment: environment, Service: "databases.data",
+		SharedKey: "pg17-shared", DatabaseTenant: &module.DatabaseTenantStatus{Applied: true, Pool: "pg17-shared"}})
+
+	check := func(state string, used int32) []Object {
+		return []Object{DatabaseConnectionsObject("pg17-shared", module.DatabaseConnectionsStatus{
+			State: state, Used: used, Limit: 97, Max: 100, CheckedAt: time.Unix(int64(used), 0),
+			Databases: map[string]int32{"app": used},
+		})}
+	}
+	require.Equal(t, []uuid.UUID{environment}, store.ReplaceSource(module.SourceDatabaseConnections,
+		check(module.ConnectionsAvailable, 10)), "the first check reaches the pool's environments")
+
+	kinds := map[string]bool{}
+	for _, resource := range store.Snapshot(environment).ForService("databases.data") {
+		kinds[resource.Kind] = true
+		if resource.Kind == module.KindDatabaseConnections {
+			require.Equal(t, int32(10), resource.DatabaseConnections.Used)
+		}
+	}
+	require.True(t, kinds[module.KindDatabaseCluster], "the pool keeps its place beside the check")
+	require.True(t, kinds[module.KindDatabaseConnections])
+
+	require.Empty(t, store.ReplaceSource(module.SourceDatabaseConnections, check(module.ConnectionsAvailable, 40)),
+		"counts moving under the same verdict wake no pass")
+	obj, ok := store.SharedObject("pg17-shared", module.KindDatabaseConnections)
+	require.True(t, ok)
+	require.Equal(t, int32(40), obj.DatabaseConnections.Used, "the stored usage still follows the check")
+	require.Equal(t, []uuid.UUID{environment}, store.ReplaceSource(module.SourceDatabaseConnections,
+		check(module.ConnectionsRefusing, 40)), "a verdict change wakes the pool's environments")
+
+	store.Remove(cluster)
+	_, ok = store.SharedObject("pg17-shared", module.KindDatabaseConnections)
+	require.True(t, ok, "removing one shared kind leaves the other")
+	require.Equal(t, []uuid.UUID{environment}, store.ReplaceSource(module.SourceDatabaseConnections, nil))
+	_, ok = store.SharedObject("pg17-shared", module.KindDatabaseConnections)
+	require.False(t, ok)
 }
 
 func TestStalenessEvaluation(t *testing.T) {

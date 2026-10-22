@@ -3,6 +3,7 @@ import {
 	formatGiB,
 	overridesEqual,
 	parseGiB,
+	poolConnections,
 	poolPhase,
 	restartRequired,
 	type DatabasePool
@@ -29,11 +30,50 @@ function pool(overrides: Partial<DatabasePool> = {}): DatabasePool {
 			allowed: ['shared_buffers', 'work_mem', 'max_connections']
 		},
 		observed: null,
+		connections: null,
 		created_at: '2026-09-16T00:00:00Z',
 		updated_at: '2026-09-16T00:00:00Z',
 		...overrides
 	};
 }
+
+test('the connection pill names the state, its usage and its reason', () => {
+	expect(poolConnections(pool())).toBeNull();
+	const connections = {
+		state: 'available' as const,
+		since: '2026-09-16T00:00:00Z',
+		checked_at: '2026-09-16T00:01:00Z',
+		used: 12,
+		limit: 97,
+		max_connections: 100,
+		incident: null
+	};
+	expect(poolConnections(pool({ connections }))).toEqual({
+		text: 'accepting connections · 12/97',
+		tone: 'success',
+		title: undefined
+	});
+	const reason = 'remaining connection slots are reserved for roles with the SUPERUSER attribute';
+	expect(
+		poolConnections(pool({ connections: { ...connections, state: 'refusing', reason } }))
+	).toEqual({ text: 'refusing connections · 12/97', tone: 'danger', title: reason });
+	// Before any successful check there is no usage to show.
+	expect(
+		poolConnections(
+			pool({
+				connections: {
+					...connections,
+					state: 'unknown',
+					reason: 'no ready primary instance to check',
+					checked_at: null,
+					used: null,
+					limit: null,
+					max_connections: null
+				}
+			})
+		)?.text
+	).toBe('connections unchecked');
+});
 
 test('GiB input parses to whole MiB and formats back without trailing zeros', () => {
 	expect(parseGiB('4')).toBe(4096 * MIB);
@@ -118,6 +158,7 @@ function detail(overrides: Partial<DatabasePoolDetail> = {}): DatabasePoolDetail
 		...pool({ parameters: { ...pool().parameters, allowed: ALLOWED } }),
 		members: [],
 		databases: [],
+		incidents: [],
 		...overrides
 	};
 }

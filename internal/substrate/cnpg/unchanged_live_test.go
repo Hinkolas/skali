@@ -48,6 +48,7 @@ func TestLivePoolApplySendsNothingUnchanged(t *testing.T) {
 		Roles: []cnpg.Role{
 			{Name: "u_data_abcd1234", DisablePassword: true},
 			{Name: "u_data_abcd1234_v2", SecretName: "dbcred-abcd1234-v2", Login: true, InRoles: []string{"u_data_abcd1234"}},
+			cnpg.ProbeRoleSpec(),
 		},
 		Parameters: map[string]string{"max_connections": "100"},
 	})

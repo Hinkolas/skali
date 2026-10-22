@@ -367,3 +367,49 @@ func TestDroppedClaimsSurviveFallback(t *testing.T) {
 	require.Equal(t, []bool{false}, claims.releases)
 	require.Equal(t, []string{"databases.data"}, claims.dropped, "nothing was released")
 }
+
+// A pool close to its connection limit shows in the environment's health
+// but never holds a rollout: the deployment activates. A pool that refuses
+// new connections holds it, since the new revision could not connect.
+func TestPoolConnectionsHoldActivationOnlyWhenRefusing(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		state     string
+		health    module.Health
+		activates bool
+	}{
+		{module.ConnectionsSaturated, module.HealthDegraded, true},
+		{module.ConnectionsUnknown, module.HealthUnknown, true},
+		{module.ConnectionsRefusing, module.HealthUnhealthy, false},
+	} {
+		t.Run(tc.state, func(t *testing.T) {
+			t.Parallel()
+			f := newKernelFixture(t, Config{RolloutDeadline: time.Hour})
+			ctx := context.Background()
+			f.kernel.deps.Claims = &fakeClaims{states: []ClaimState{{Service: "databases.data", Provisioned: true}}}
+			f.executeDeploymentManifest(t, databaseManifest)
+			f.fake.SetFresh()
+			f.fake.SetDatabaseClaim(f.environmentID, "databases.data", uuid.Must(uuid.NewV7()),
+				module.ClaimStatus{Phase: "provisioned"})
+			f.fake.SetDatabaseTenant(f.environmentID, "databases.data", "pg17-shared", "db_data",
+				module.DatabaseTenantStatus{Applied: true})
+			f.fake.SetDatabasePool("pg17-shared",
+				module.DatabaseClusterStatus{Instances: 1, ReadyInstances: 1, Primary: "pg17-shared-1"})
+			f.fake.SetSourceFresh(module.SourceDatabaseConnections)
+			f.fake.SetDatabaseConnections("pg17-shared", module.DatabaseConnectionsStatus{
+				State: tc.state, Reason: "sorry, too many clients already",
+			})
+
+			_, err := f.kernel.reconcileEnvironment(ctx, f.environmentID)
+			require.NoError(t, err)
+			f.markHealthy(t)
+			_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
+			require.NoError(t, err)
+
+			require.Equal(t, tc.activates, f.target(t).ActiveRevisionID != nil)
+			health, ok := f.kernel.EnvironmentHealth(f.environmentID)
+			require.True(t, ok)
+			require.Equal(t, tc.health, health.Health, "the rollup shows the pool's state either way")
+		})
+	}
+}

@@ -592,6 +592,22 @@ func runServe() error {
 				slog.Error("seaweed observer stopped", "err", err)
 			}
 		})
+		// The pool connection observer: a fresh ordinary login per pool
+		// each interval, so a pool that refuses new application
+		// connections turns its databases unhealthy while its instances
+		// still look ready.
+		connectionPoll := observe.NewPollSource(observed, substrateCtl.ConnectionProbe(), observe.PollOptions{
+			Source:         module.SourceDatabaseConnections,
+			Interval:       substrate.ConnectionCheckInterval,
+			StaleThreshold: substrate.ConnectionCheckStale,
+			Timeout:        substrate.ConnectionCheckTimeout,
+			Enqueue:        func(environmentID uuid.UUID) { kernel.EnqueueFor(environmentID, reconcile.ReasonPoll) },
+		})
+		loops.Go(func() {
+			if err := connectionPoll.Run(loopCtx); err != nil && !errors.Is(err, context.Canceled) {
+				slog.Error("pool connection observer stopped", "err", err)
+			}
+		})
 	}
 
 	// Staged values and pending artifact records are normally closed

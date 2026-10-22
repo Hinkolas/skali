@@ -216,12 +216,12 @@ tasks:
           LIVE_TIMEOUT: '{{.TIMEOUT | default "45m"}}'
 
   test:live:substrate:database:
-    desc: Run database provisioning, system claims, vector, credential rotation, and dropped-database release
+    desc: Run database provisioning, system claims, vector, credential rotation, dropped-database release, and connection exhaustion
     cmds:
       - task: _test:live
         vars:
           PACKAGES: './internal/substrate'
-          RUN: '^TestLive(ClaimProvisioning|SystemClaimSameSubstrate|VectorExtension|DatabaseCredentialRotation|DroppedDatabaseWaitsForActivation)$'
+          RUN: '^TestLive(ClaimProvisioning|SystemClaimSameSubstrate|VectorExtension|DatabaseCredentialRotation|DroppedDatabaseWaitsForActivation|PoolConnectionExhaustion)$'
           LIVE_TIMEOUT: '{{.TIMEOUT | default "30m"}}'
 
   test:live:substrate:bootstrap:

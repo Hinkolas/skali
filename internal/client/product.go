@@ -1187,12 +1187,40 @@ type DatabasePool struct {
 	Memory       DatabasePoolMemory     `json:"memory"`
 	Parameters   DatabasePoolParameters `json:"parameters"`
 	Observed     *DatabasePoolObserved  `json:"observed"`
-	CreatedAt    string                 `json:"created_at"`
-	UpdatedAt    string                 `json:"updated_at"`
-	// Members and Databases come with GET /v1/system/database-pools/{name}
-	// only; the list leaves them empty.
+	// Connections is the pool's connection check; nil where nothing checks
+	// connections and before the first check.
+	Connections *DatabasePoolConnections `json:"connections"`
+	CreatedAt   string                   `json:"created_at"`
+	UpdatedAt   string                   `json:"updated_at"`
+	// Members, Databases and Incidents come with
+	// GET /v1/system/database-pools/{name} only; the list leaves them empty.
 	Members   []DatabasePoolMember   `json:"members"`
 	Databases []DatabasePoolDatabase `json:"databases"`
+	Incidents []DatabasePoolIncident `json:"incidents"`
+}
+
+// DatabasePoolConnections is whether a new ordinary login to the pool
+// succeeds (available, saturated, refusing, unknown) with the newest
+// successful check's usage; Incident is the open refusal incident.
+type DatabasePoolConnections struct {
+	State     string                `json:"state"`
+	Reason    string                `json:"reason,omitempty"`
+	Since     *string               `json:"since"`
+	CheckedAt *string               `json:"checked_at"`
+	Used      *int                  `json:"used"`
+	Limit     *int                  `json:"limit"`
+	Max       *int                  `json:"max_connections"`
+	Incident  *DatabasePoolIncident `json:"incident"`
+}
+
+// DatabasePoolIncident is one stretch of time a pool refused new
+// connections; ClosedAt is nil while it lasts.
+type DatabasePoolIncident struct {
+	ID       string  `json:"id"`
+	Code     string  `json:"code"`
+	Message  string  `json:"message"`
+	OpenedAt string  `json:"opened_at"`
+	ClosedAt *string `json:"closed_at"`
 }
 
 // DatabasePoolMember is one instance pod of a pool.
@@ -1226,7 +1254,10 @@ type DatabasePoolDatabase struct {
 	Phase        string `json:"phase"`
 	StorageBytes int64  `json:"storage_bytes"`
 	UsedBytes    *int64 `json:"used_bytes"`
-	CreatedAt    string `json:"created_at"`
+	// Connections counts the database's client connections at the newest
+	// connection check.
+	Connections *int   `json:"connections"`
+	CreatedAt   string `json:"created_at"`
 }
 
 // DatabasePoolMemory is a pool's memory budget. Bytes is nil while the

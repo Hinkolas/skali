@@ -400,7 +400,7 @@ func (k *Kernel) reconcileEnvironment(ctx context.Context, environmentID uuid.UU
 	pass.Mark("health")
 	healthy := k.deps.Observed.Source().State == module.SourceFresh
 	for _, status := range statuses {
-		if status.Health != module.HealthHealthy {
+		if status.blocksActivation() {
 			healthy = false
 		}
 	}
@@ -1194,7 +1194,7 @@ func rolloutFailure(tls tlsOutcome, statuses []ServiceStatus, withheld map[strin
 	}
 	unhealthy := make([]ServiceStatus, 0, len(statuses))
 	for _, status := range statuses {
-		if status.Health != module.HealthHealthy {
+		if status.blocksActivation() {
 			unhealthy = append(unhealthy, status)
 		}
 	}

@@ -92,10 +92,15 @@ func TestRenderClusterSingle(t *testing.T) {
 	require.Equal(t, "off", hibernation,
 		"the annotation stays an explicit off for one release so SSA wakes previously hibernated pools")
 
-	// Single instance renders no synchronous block; local shape renders no
-	// node selector.
-	_, found, _ := unstructured.NestedMap(object, "spec", "postgresql")
+	// Single instance renders no synchronous block, an untuned pool no
+	// parameters, and the local shape no node selector. Every pool admits
+	// the connection check's login over the local socket.
+	_, found, _ := unstructured.NestedMap(object, "spec", "postgresql", "synchronous")
 	require.False(t, found)
+	_, found, _ = unstructured.NestedMap(object, "spec", "postgresql", "parameters")
+	require.False(t, found)
+	ident, _, _ := unstructured.NestedStringSlice(object, "spec", "postgresql", "pg_ident")
+	require.Equal(t, []string{"local postgres skali_probe"}, ident)
 	_, found, _ = unstructured.NestedMap(object, "spec", "affinity")
 	require.False(t, found)
 

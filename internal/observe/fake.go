@@ -216,6 +216,14 @@ func (f *Fake) SetDatabasePool(name string, status module.DatabaseClusterStatus)
 	})
 }
 
+// SetDatabaseConnections records the platform-scoped connection check of
+// one pool, published by the named connection source.
+func (f *Fake) SetDatabaseConnections(pool string, status module.DatabaseConnectionsStatus) {
+	obj := DatabaseConnectionsObject(pool, status)
+	obj.Source = module.SourceDatabaseConnections
+	f.Upsert(obj)
+}
+
 // SetBucketClaim records the substrate's claim projection for a bucket
 // service; service uses the dotted "buckets.<key>" form.
 func (f *Fake) SetBucketClaim(environmentID uuid.UUID, service string, claimID uuid.UUID, status module.ClaimStatus) {

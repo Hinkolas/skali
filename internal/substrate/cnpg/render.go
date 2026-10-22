@@ -137,10 +137,12 @@ func RenderCluster(spec ClusterSpec) *unstructured.Unstructured {
 			},
 		}
 	}
-	// One postgresql block carries both the parameter set and the quorum
-	// replication switch; it is assigned only when something is in it so
-	// an untuned single pool renders exactly as before.
-	postgresql := map[string]any{}
+	// One postgresql block carries the parameter set, the quorum
+	// replication switch, and the ident line admitting the connection
+	// check's login over the local socket.
+	postgresql := map[string]any{
+		"pg_ident": []any{probeIdentMap},
+	}
 	if len(spec.Parameters) > 0 {
 		parameters := make(map[string]any, len(spec.Parameters))
 		for key, value := range spec.Parameters {
@@ -151,9 +153,7 @@ func RenderCluster(spec ClusterSpec) *unstructured.Unstructured {
 	if spec.Synchronous {
 		postgresql["synchronous"] = map[string]any{"method": "any", "number": int64(1)}
 	}
-	if len(postgresql) > 0 {
-		clusterSpec["postgresql"] = postgresql
-	}
+	clusterSpec["postgresql"] = postgresql
 	if spec.MemoryRequestBytes > 0 {
 		clusterSpec["resources"] = map[string]any{
 			"requests": map[string]any{

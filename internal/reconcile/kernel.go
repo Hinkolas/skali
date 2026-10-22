@@ -584,12 +584,25 @@ func (k *Kernel) Nodes() []observe.NodeRecord {
 // DatabaseCluster returns the observed status of one pool's CNPG Cluster,
 // keyed by pool name, without leaking the observed store.
 func (k *Kernel) DatabaseCluster(name string) (*module.DatabaseClusterStatus, bool) {
-	obj, ok := k.deps.Observed.SharedObject(name)
+	obj, ok := k.deps.Observed.SharedObject(name, module.KindDatabaseCluster)
 	if !ok || obj.DatabaseCluster == nil {
 		return nil, false
 	}
 	status := *obj.DatabaseCluster
 	return &status, true
+}
+
+// DatabaseConnections returns one pool's newest connection check, keyed by
+// pool name, and the connection observer's freshness. ok is false before
+// the first check, and in API-only mode where nothing checks.
+func (k *Kernel) DatabaseConnections(name string) (*module.DatabaseConnectionsStatus, module.SourceStatus, bool) {
+	source, registered := k.deps.Observed.SourceNamed(module.SourceDatabaseConnections)
+	obj, ok := k.deps.Observed.SharedObject(name, module.KindDatabaseConnections)
+	if !registered || !ok || obj.DatabaseConnections == nil {
+		return nil, source, false
+	}
+	status := *obj.DatabaseConnections
+	return &status, source, true
 }
 
 func (k *Kernel) Observation() ObservationInfo {

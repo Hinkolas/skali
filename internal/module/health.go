@@ -54,6 +54,13 @@ type Diagnostic struct {
 type Evaluation struct {
 	Health      Health
 	Diagnostics []Diagnostic
+	// Advisory marks a verdict below healthy that reports on shared
+	// capacity or on the monitoring itself, not a fault of this service: a
+	// pool close to its connection limit, a connection check that could not
+	// run. It shows in health everywhere but never holds a rollout, which
+	// would otherwise stall every deployment on the pool for as long as the
+	// pool stays busy.
+	Advisory bool
 }
 
 // ObservedResource kinds. The vocabulary is skali's, not Kubernetes': the
@@ -78,6 +85,11 @@ const (
 	// mechanism.
 	KindDatabaseCluster = "database-cluster"
 	KindDatabaseTenant  = "database-tenant"
+	// KindDatabaseConnections is the substrate's connection check of one
+	// pool through the poll-based connection observer: whether a new
+	// ordinary login succeeds and how much of the shared limit is in use.
+	// Platform-scoped like the pool's Cluster, under the same shared key.
+	KindDatabaseConnections = "database-connections"
 	// KindBucketClaim is the substrate's provider observation of one bucket
 	// claim's durable phase, published like KindDatabaseClaim.
 	KindBucketClaim = "bucket-claim"
@@ -108,6 +120,10 @@ const (
 	KindEdge = "edge"
 )
 
+// SourceDatabaseConnections names the poll-based observer that checks
+// every pool's connections; the database module reads its freshness.
+const SourceDatabaseConnections = "database-connections"
+
 // Observation source states. Anything but fresh means the projection may lag
 // the cluster and modules must report unknown rather than guess.
 const (
@@ -133,18 +149,19 @@ type ObservedResource struct {
 	// serving color on Services. Empty on uncolored objects.
 	Color string
 
-	Source          *SourceStatus
-	Rollout         *RolloutStatus
-	Edge            *EdgeReach
-	Workload        *WorkloadStatus
-	Pod             *PodStatus
-	Autoscaler      *AutoscalerStatus
-	Claim           *ClaimStatus
-	DatabaseCluster *DatabaseClusterStatus
-	DatabaseTenant  *DatabaseTenantStatus
-	ObjectStore     *ObjectStoreStatus
-	Bucket          *BucketStatus
-	Certificate     *CertificateStatus
+	Source              *SourceStatus
+	Rollout             *RolloutStatus
+	Edge                *EdgeReach
+	Workload            *WorkloadStatus
+	Pod                 *PodStatus
+	Autoscaler          *AutoscalerStatus
+	Claim               *ClaimStatus
+	DatabaseCluster     *DatabaseClusterStatus
+	DatabaseTenant      *DatabaseTenantStatus
+	DatabaseConnections *DatabaseConnectionsStatus
+	ObjectStore         *ObjectStoreStatus
+	Bucket              *BucketStatus
+	Certificate         *CertificateStatus
 }
 
 // EdgeReach is the kernel's verdict on one route domain, keyed by the
@@ -277,6 +294,43 @@ type DatabaseClusterStatus struct {
 	ReadyInstances int32
 	Phase          string
 	Primary        string
+}
+
+// Connection check states of a pool. Available and saturated mean an
+// ordinary login succeeded; refusing means the server turned it away for
+// lack of connection slots; unknown means the check could not run or gave
+// an answer that proves nothing either way.
+const (
+	ConnectionsAvailable = "available"
+	ConnectionsSaturated = "saturated"
+	ConnectionsRefusing  = "refusing"
+	ConnectionsUnknown   = "unknown"
+)
+
+// DatabaseConnectionsStatus is one pool's connection check: a fresh login
+// as an ordinary role, the way an application connects, plus the pool's
+// connection usage read over that login. State changes only once the same
+// verdict repeated (the substrate's connection monitor), so one slow check
+// does not flip health back and forth.
+type DatabaseConnectionsStatus struct {
+	State string
+	// Reason explains any state but available: the server's refusal, the
+	// share of the limit in use, or why the check could not run.
+	Reason string
+	// Since is when the current state was confirmed.
+	Since time.Time
+
+	// Usage from the newest successful check. Counts moving on their own
+	// change no verdict and wake no pass.
+	CheckedAt time.Time
+	// Used counts client connections, superusers included: they take the
+	// same slots. Limit is what ordinary roles may reach before the server
+	// refuses them (max_connections less the reserved slots).
+	Used  int32
+	Limit int32
+	Max   int32
+	// Databases counts client connections per database, for operators.
+	Databases map[string]int32
 }
 
 // DatabaseTenantStatus projects one CNPG Database object: whether the
