@@ -145,6 +145,56 @@ and measured size. The exporter figures are the primary's view: replica
 reads are not observed. `skali database show <name>` prints the same
 instances and databases.
 
+## Connection health
+
+A ready pool is not proof that applications can connect. Once the ordinary
+connection slots are taken (`max_connections` less the slots PostgreSQL
+keeps for superusers), the server refuses every new application login
+with `53300` while its instances stay ready and connections that are
+already open keep working. So skalid checks every pool about every 15
+seconds with a fresh login, the way an application connects: as
+`skali_probe`, an ordinary role with no privileges beyond counting
+sessions (`pg_monitor`), run inside the primary instance over its local
+socket. The check needs no password and no network path, holds one
+connection for the length of one query, and keeps working while the
+pool's other consumers are starved.
+
+The check reads as one of four states:
+
+| State | Meaning | Database health |
+| --- | --- | --- |
+| `available` | The login succeeded. | healthy |
+| `saturated` | The login succeeded, and 90% or more of the connections applications may open are in use. | degraded |
+| `refusing` | The server refused the login for lack of connection slots: applications cannot connect. | unhealthy |
+| `unknown` | The check could not run (no ready primary, a timeout, the check's role not set up yet) or has not completed for 45 seconds. | unknown |
+
+A state changes only after two checks in a row agree, so a pool that
+starts or stops refusing shows within about 30 seconds (two checks, plus
+up to 10 seconds for a slow one), and one slow check never flips health.
+Every database on the pool takes the state into its health, and with it
+every environment and project using one, with the server's reason in the
+service's diagnostics. Members see that the pool refuses connections and
+why, never other projects' usage. A refusing pool holds a rollout, since
+the new revision could not connect either; `saturated` and `unknown` are
+shown but never hold one, so a busy pool does not stall every deployment
+on it.
+
+A confirmed refusal opens an incident: an id, the refusal and its start,
+kept in the platform database. It closes only after two checks in a row
+logged in again, and survives a skalid restart, which neither forgets it
+nor recovers it on a single login. Nothing has to be redeployed:
+applications reconnect on their own, and health follows the next checks.
+Admins see the state, the open incident, the recent incidents and each
+database's connection count with `skali database show <pool>` and on the
+pool's Studio page; `skali database list` and the pool list carry the
+state. To recover, release connections (restart or fix the application
+holding them, as the per-database counts show) or raise the pool's
+`max_connections`, which restarts its instances.
+
+The usage charts read the pool's metrics exporter. That exporter logs in
+as an ordinary role too, so it loses access during the same exhaustion:
+its gaps chart as gaps, never as zero connections.
+
 ## SQL access
 
 `skali sql [database]` runs SQL against one database of an environment,

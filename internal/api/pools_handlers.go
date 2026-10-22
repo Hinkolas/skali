@@ -15,6 +15,7 @@ import (
 
 	"github.com/Hinkolas/skali/internal/dbstore"
 	"github.com/Hinkolas/skali/internal/metrics"
+	"github.com/Hinkolas/skali/internal/module"
 	"github.com/Hinkolas/skali/internal/pgtune"
 	"github.com/Hinkolas/skali/internal/reconcile"
 	"github.com/Hinkolas/skali/internal/store"
@@ -76,6 +77,39 @@ type poolObservedPayload struct {
 	Primary        string `json:"primary,omitempty"`
 }
 
+// poolConnectionsPayload is the pool's connection check: whether a new
+// ordinary login succeeds (state), why not (reason), since when, and the
+// usage the newest successful check read. state is unknown while the
+// check cannot run or its observer is stale; usage then stays at its last
+// reading, with checked_at telling its age. incident is the open refusal
+// incident, null while the pool accepts connections.
+type poolConnectionsPayload struct {
+	State     string               `json:"state"`
+	Reason    string               `json:"reason,omitempty"`
+	Since     *time.Time           `json:"since"`
+	CheckedAt *time.Time           `json:"checked_at"`
+	Used      *int32               `json:"used"`
+	Limit     *int32               `json:"limit"`
+	Max       *int32               `json:"max_connections"`
+	Incident  *poolIncidentPayload `json:"incident"`
+}
+
+// poolIncidentPayload is one stretch of time the pool refused new
+// connections; closed_at is null while it lasts.
+type poolIncidentPayload struct {
+	ID       string     `json:"id"`
+	Code     string     `json:"code"`
+	Message  string     `json:"message"`
+	OpenedAt time.Time  `json:"opened_at"`
+	ClosedAt *time.Time `json:"closed_at"`
+}
+
+func incidentPayload(row store.PoolConnectionIncident) *poolIncidentPayload {
+	return &poolIncidentPayload{
+		ID: row.ID.String(), Code: row.Code, Message: row.Message, OpenedAt: row.OpenedAt, ClosedAt: row.ClosedAt,
+	}
+}
+
 type poolPayload struct {
 	Name         string                `json:"name"`
 	Class        string                `json:"class"`
@@ -89,8 +123,11 @@ type poolPayload struct {
 	Memory       poolMemoryPayload     `json:"memory"`
 	Parameters   poolParametersPayload `json:"parameters"`
 	Observed     *poolObservedPayload  `json:"observed"`
-	CreatedAt    time.Time             `json:"created_at"`
-	UpdatedAt    time.Time             `json:"updated_at"`
+	// Connections is null where nothing checks connections (API-only
+	// mode) and before the first check of the pool.
+	Connections *poolConnectionsPayload `json:"connections"`
+	CreatedAt   time.Time               `json:"created_at"`
+	UpdatedAt   time.Time               `json:"updated_at"`
 }
 
 // budgets resolves the live pools' budgets, or nothing when the substrate
@@ -106,7 +143,10 @@ func (h *poolsHandlers) budgets(r *http.Request) (map[uuid.UUID]pgtune.Budget, e
 	return budgets, nil
 }
 
-func (h *poolsHandlers) payload(r *http.Request, pool store.DatabaseCluster, budgets map[uuid.UUID]pgtune.Budget) poolPayload {
+// payload projects one pool. incidents maps pools to their open incident;
+// nil skips the connection check (callers that only need the tuning).
+func (h *poolsHandlers) payload(r *http.Request, pool store.DatabaseCluster, budgets map[uuid.UUID]pgtune.Budget,
+	incidents map[uuid.UUID]store.PoolConnectionIncident) poolPayload {
 	overrides := dbstore.ClusterParameters(pool)
 	out := poolPayload{
 		Name:         pool.Name,
@@ -148,8 +188,53 @@ func (h *poolsHandlers) payload(r *http.Request, pool store.DatabaseCluster, bud
 				Primary:        status.Primary,
 			}
 		}
+		if incidents != nil {
+			out.Connections = h.connections(pool, incidents)
+		}
 	}
 	return out
+}
+
+// connections projects the pool's connection check. A stale observer reads
+// as unknown: the last verdict may no longer hold, in either direction.
+func (h *poolsHandlers) connections(pool store.DatabaseCluster, incidents map[uuid.UUID]store.PoolConnectionIncident) *poolConnectionsPayload {
+	status, source, ok := h.reconcile.DatabaseConnections(pool.Name)
+	if !ok {
+		return nil
+	}
+	out := &poolConnectionsPayload{State: status.State, Reason: status.Reason}
+	if !status.Since.IsZero() {
+		since := status.Since
+		out.Since = &since
+	}
+	if !status.CheckedAt.IsZero() {
+		checked, used, limit, maximum := status.CheckedAt, status.Used, status.Limit, status.Max
+		out.CheckedAt, out.Used, out.Limit, out.Max = &checked, &used, &limit, &maximum
+	}
+	if source.State != module.SourceFresh {
+		out.State, out.Since = module.ConnectionsUnknown, nil
+		out.Reason = "the connection check has not completed recently"
+		if !source.StaleSince.IsZero() {
+			out.Reason = "the connection check is stale since " + source.StaleSince.UTC().Format(time.RFC3339)
+		}
+	}
+	if incident, open := incidents[pool.ID]; open {
+		out.Incident = incidentPayload(incident)
+	}
+	return out
+}
+
+// openIncidents maps every pool with an open connection incident to it.
+func (h *poolsHandlers) openIncidents(r *http.Request) (map[uuid.UUID]store.PoolConnectionIncident, error) {
+	rows, err := h.db.OpenConnectionIncidents(r.Context())
+	if err != nil {
+		return nil, err
+	}
+	incidents := make(map[uuid.UUID]store.PoolConnectionIncident, len(rows))
+	for _, row := range rows {
+		incidents[row.ClusterID] = row
+	}
+	return incidents, nil
 }
 
 // list serves every live pool with its resolved budget and effective
@@ -165,11 +250,16 @@ func (h *poolsHandlers) list(w http.ResponseWriter, r *http.Request) {
 		writeInternalError(r.Context(), w, "size database pools", err)
 		return
 	}
+	incidents, err := h.openIncidents(r)
+	if err != nil {
+		writeInternalError(r.Context(), w, "list database pool incidents", err)
+		return
+	}
 	payload := struct {
 		Pools []poolPayload `json:"pools"`
 	}{Pools: make([]poolPayload, 0, len(pools))}
 	for _, pool := range pools {
-		payload.Pools = append(payload.Pools, h.payload(r, pool, budgets))
+		payload.Pools = append(payload.Pools, h.payload(r, pool, budgets, incidents))
 	}
 	writeJSON(w, http.StatusOK, payload)
 }
@@ -210,15 +300,24 @@ type poolDatabasePayload struct {
 	StorageBytes int64               `json:"storage_bytes"`
 	// UsedBytes is the newest measured logical size, null before the
 	// sampler has seen the database.
-	UsedBytes *int64    `json:"used_bytes"`
-	CreatedAt time.Time `json:"created_at"`
+	UsedBytes *int64 `json:"used_bytes"`
+	// Connections counts the database's client connections at the newest
+	// connection check, null before one succeeded.
+	Connections *int32    `json:"connections"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 type poolDetailPayload struct {
 	poolPayload
 	Members   []poolMemberPayload   `json:"members"`
 	Databases []poolDatabasePayload `json:"databases"`
+	// Incidents are the pool's newest connection incidents, open or
+	// closed, newest first.
+	Incidents []*poolIncidentPayload `json:"incidents"`
 }
+
+// poolIncidentHistory bounds the incidents a pool's detail lists.
+const poolIncidentHistory = 10
 
 // livePool resolves the path's pool or writes the 404; released pools
 // are gone from the API's point of view.
@@ -248,10 +347,29 @@ func (h *poolsHandlers) get(w http.ResponseWriter, r *http.Request) {
 		writeInternalError(r.Context(), w, "size database pools", err)
 		return
 	}
+	history, err := h.db.ConnectionIncidents(r.Context(), pool.ID, poolIncidentHistory)
+	if err != nil {
+		writeInternalError(r.Context(), w, "list database pool incidents", err)
+		return
+	}
+	incidents := map[uuid.UUID]store.PoolConnectionIncident{}
+	if len(history) > 0 && history[0].ClosedAt == nil {
+		incidents[pool.ID] = history[0]
+	}
 	payload := poolDetailPayload{
-		poolPayload: h.payload(r, *pool, budgets),
+		poolPayload: h.payload(r, *pool, budgets, incidents),
 		Members:     []poolMemberPayload{},
 		Databases:   []poolDatabasePayload{},
+		Incidents:   make([]*poolIncidentPayload, 0, len(history)),
+	}
+	for _, row := range history {
+		payload.Incidents = append(payload.Incidents, incidentPayload(row))
+	}
+	var perDatabase map[string]int32
+	if h.reconcile != nil {
+		if status, _, ok := h.reconcile.DatabaseConnections(pool.Name); ok && !status.CheckedAt.IsZero() {
+			perDatabase = status.Databases
+		}
 	}
 	if h.pools != nil {
 		members, err := h.pools.PoolMembers(r.Context(), pool.Name)
@@ -286,6 +404,10 @@ func (h *poolsHandlers) get(w http.ResponseWriter, r *http.Request) {
 			StorageBytes: row.StorageBytes,
 			UsedBytes:    row.UsedBytes,
 			CreatedAt:    row.CreatedAt,
+		}
+		if perDatabase != nil {
+			count := perDatabase[row.DatabaseName]
+			entry.Connections = &count
 		}
 		if row.ProjectID != nil && row.ProjectName != nil {
 			entry.Project = &poolProjectRef{ID: row.ProjectID.String(), Name: *row.ProjectName}
@@ -383,7 +505,7 @@ func (h *poolsHandlers) poolMetrics(w http.ResponseWriter, r *http.Request) {
 			writeInternalError(r.Context(), w, "size database pools", err)
 			return
 		}
-		facts := h.payload(r, *pool, budgets)
+		facts := h.payload(r, *pool, budgets, nil)
 		payload.Current = &poolMetricsCurrentPayload{
 			SampledAt:         current.SampledAt,
 			CPUMillicores:     current.CPUMillicores,
@@ -511,7 +633,12 @@ func (h *poolsHandlers) putSettings(w http.ResponseWriter, r *http.Request) {
 		writeInternalError(r.Context(), w, "size database pools", err)
 		return
 	}
+	incidents, err := h.openIncidents(r)
+	if err != nil {
+		writeInternalError(r.Context(), w, "list database pool incidents", err)
+		return
+	}
 	writeJSON(w, http.StatusOK, struct {
 		Pool poolPayload `json:"pool"`
-	}{h.payload(r, *updated, budgets)})
+	}{h.payload(r, *updated, budgets, incidents)})
 }

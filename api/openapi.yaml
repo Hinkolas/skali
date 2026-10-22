@@ -6096,7 +6096,7 @@ components:
         the budget every parameter derives from; memory.auto reports it was
         sized from the node named in memory.node, memory.capped that the
         automatic share was reduced so the live pools fit the node.
-      required: [name, class, engine, major, instances, storage_bytes, image, node_port, state, memory, parameters, observed, created_at, updated_at]
+      required: [name, class, engine, major, instances, storage_bytes, image, node_port, state, memory, parameters, observed, connections, created_at, updated_at]
       properties:
         name:
           type: string
@@ -6164,11 +6164,80 @@ components:
               type: integer
             primary:
               type: string
+        connections:
+          description: |
+            The pool's connection check, null where nothing checks
+            connections (API-only mode) and before the pool's first check.
+          oneOf:
+            - $ref: "#/components/schemas/DatabasePoolConnections"
+            - type: "null"
         created_at:
           type: string
           format: date-time
         updated_at:
           type: string
+          format: date-time
+
+    DatabasePoolConnections:
+      type: object
+      description: |
+        Whether a new ordinary login to the pool succeeds, checked about
+        every 15 seconds with a fresh login the way an application
+        connects. available and saturated mean the login succeeded,
+        saturated that 90% or more of the connections applications may open
+        are in use. refusing means the server turned the login away for
+        lack of connection slots (SQLSTATE 53300): applications cannot
+        connect, and an incident is open. unknown means the check could not
+        run or has not completed recently; it never reads as recovered. A
+        state changes only after two checks in a row agree. used, limit and
+        max_connections are the newest successful check's reading, with
+        checked_at its time; limit is what ordinary roles may reach
+        (max_connections less the reserved slots).
+      required: [state, since, checked_at, used, limit, max_connections, incident]
+      properties:
+        state:
+          type: string
+          enum: [available, saturated, refusing, unknown]
+        reason:
+          type: string
+        since:
+          type: [string, "null"]
+          format: date-time
+        checked_at:
+          type: [string, "null"]
+          format: date-time
+        used:
+          type: [integer, "null"]
+        limit:
+          type: [integer, "null"]
+        max_connections:
+          type: [integer, "null"]
+        incident:
+          description: The open incident while the pool refuses connections.
+          oneOf:
+            - $ref: "#/components/schemas/DatabasePoolIncident"
+            - type: "null"
+
+    DatabasePoolIncident:
+      type: object
+      description: |
+        One stretch of time a pool refused new ordinary connections,
+        opened when the refusal was confirmed and closed only after the
+        check logged in again. closed_at is null while it lasts.
+      required: [id, code, message, opened_at, closed_at]
+      properties:
+        id: { type: string, format: uuid }
+        code:
+          type: string
+          description: connections-exhausted
+        message:
+          type: string
+          description: The server's refusal.
+        opened_at:
+          type: string
+          format: date-time
+        closed_at:
+          type: [string, "null"]
           format: date-time
 
     DatabasePoolDetail:
@@ -6177,7 +6246,7 @@ components:
       allOf:
         - $ref: "#/components/schemas/DatabasePool"
         - type: object
-          required: [members, databases]
+          required: [members, databases, incidents]
           properties:
             members:
               type: array
@@ -6185,6 +6254,10 @@ components:
             databases:
               type: array
               items: { $ref: "#/components/schemas/DatabasePoolDatabase" }
+            incidents:
+              type: array
+              description: The pool's newest connection incidents, newest first, at most 10.
+              items: { $ref: "#/components/schemas/DatabasePoolIncident" }
 
     DatabasePoolMember:
       type: object
@@ -6210,8 +6283,10 @@ components:
         declared database (project, environment and service_key set) or
         system for the platform's own (system_key set, project and
         environment null). used_bytes is the newest measured logical size,
-        null before the sampler has seen the database.
-      required: [database_name, role_name, owner, project, environment, phase, storage_bytes, used_bytes, created_at]
+        null before the sampler has seen the database. connections counts
+        its client connections at the newest connection check, null before
+        one succeeded.
+      required: [database_name, role_name, owner, project, environment, phase, storage_bytes, used_bytes, connections, created_at]
       properties:
         database_name: { type: string }
         role_name: { type: string }
@@ -6240,6 +6315,8 @@ components:
         used_bytes:
           type: [integer, "null"]
           format: int64
+        connections:
+          type: [integer, "null"]
         created_at:
           type: string
           format: date-time

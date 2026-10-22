@@ -17,6 +17,7 @@ import (
 	"github.com/Hinkolas/skali/internal/dbstore"
 	"github.com/Hinkolas/skali/internal/kube"
 	"github.com/Hinkolas/skali/internal/layout"
+	"github.com/Hinkolas/skali/internal/module"
 	"github.com/Hinkolas/skali/internal/observe"
 	"github.com/Hinkolas/skali/internal/pgtune"
 	"github.com/Hinkolas/skali/internal/store"
@@ -418,4 +419,71 @@ func TestDatabasePoolMetrics(t *testing.T) {
 	require.EqualValues(t, 2, current["instances_ready"])
 	require.EqualValues(t, 3328<<20, current["memory_budget_bytes"], "the shared pool's automatic budget on that node")
 	require.EqualValues(t, 100, current["max_connections"])
+}
+
+// The pool's connection check reaches the pool views with its open
+// incident; the detail lists the incident history. A stale check reads as
+// unknown, not as the last verdict.
+func TestDatabasePoolConnections(t *testing.T) {
+	a, _ := poolsTestAPI(t)
+	a.createAdmin("admin@example.com", "hunter2hunter2")
+	admin := a.login("admin@example.com", "hunter2hunter2")
+	seedPool(t, a, "pg17-shared", pgtune.ClassShared)
+	ctx := context.Background()
+	db := dbstore.New(a.st)
+	row, err := db.LiveClusterByName(ctx, "pg17-shared")
+	require.NoError(t, err)
+
+	status, body := a.do("GET", "/v1/system/database-pools", admin, nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Nil(t, body["pools"].([]any)[0].(map[string]any)["connections"], "nothing checked yet")
+
+	since := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	refusal := "remaining connection slots are reserved for roles with the SUPERUSER attribute"
+	closed, err := db.OpenConnectionIncident(ctx, row.ID, substrate.ConnectionIncidentCode, refusal, since.Add(-time.Hour))
+	require.NoError(t, err)
+	require.NoError(t, db.CloseConnectionIncident(ctx, row.ID, since.Add(-30*time.Minute)))
+	open, err := db.OpenConnectionIncident(ctx, row.ID, substrate.ConnectionIncidentCode, refusal, since)
+	require.NoError(t, err)
+	a.observed.SetSourceFresh(module.SourceDatabaseConnections)
+	a.observed.SetDatabaseConnections("pg17-shared", module.DatabaseConnectionsStatus{
+		State: module.ConnectionsRefusing, Reason: refusal, Since: since,
+		CheckedAt: since.Add(-time.Minute), Used: 96, Limit: 97, Max: 100,
+	})
+
+	status, body = a.do("GET", "/v1/system/database-pools", admin, nil)
+	require.Equal(t, http.StatusOK, status)
+	connections := body["pools"].([]any)[0].(map[string]any)["connections"].(map[string]any)
+	require.Equal(t, "refusing", connections["state"])
+	require.Equal(t, refusal, connections["reason"])
+	require.Equal(t, "2026-10-22T12:00:00Z", connections["since"])
+	require.EqualValues(t, 96, connections["used"])
+	require.EqualValues(t, 97, connections["limit"])
+	require.EqualValues(t, 100, connections["max_connections"])
+	incident := connections["incident"].(map[string]any)
+	require.Equal(t, open.String(), incident["id"])
+	require.Equal(t, "connections-exhausted", incident["code"])
+	require.Nil(t, incident["closed_at"])
+
+	status, body = a.do("GET", "/v1/system/database-pools/pg17-shared", admin, nil)
+	require.Equal(t, http.StatusOK, status)
+	detail := body["pool"].(map[string]any)
+	require.Equal(t, open.String(), detail["connections"].(map[string]any)["incident"].(map[string]any)["id"])
+	history := detail["incidents"].([]any)
+	require.Len(t, history, 2)
+	require.Equal(t, open.String(), history[0].(map[string]any)["id"], "newest first")
+	require.Equal(t, closed.String(), history[1].(map[string]any)["id"])
+	require.NotNil(t, history[1].(map[string]any)["closed_at"])
+
+	// The observer went quiet: the verdict is unknown, the usage keeps its
+	// age, and the incident stays open.
+	a.observed.SetSourceStale(module.SourceDatabaseConnections)
+	status, body = a.do("GET", "/v1/system/database-pools", admin, nil)
+	require.Equal(t, http.StatusOK, status)
+	connections = body["pools"].([]any)[0].(map[string]any)["connections"].(map[string]any)
+	require.Equal(t, "unknown", connections["state"])
+	require.Contains(t, connections["reason"], "stale since")
+	require.Nil(t, connections["since"])
+	require.EqualValues(t, 96, connections["used"])
+	require.NotNil(t, connections["incident"])
 }

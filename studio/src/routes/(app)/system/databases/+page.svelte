@@ -8,7 +8,7 @@
 	import Pill from '$lib/components/ui/Pill.svelte';
 	import Table from '$lib/components/ui/Table.svelte';
 	import { formatBytes } from '$lib/format';
-	import { poolPhase, type DatabasePool } from '$lib/types/pools';
+	import { poolConnections, poolPhase, type DatabasePool } from '$lib/types/pools';
 	import type { PageData } from './$types';
 
 	// Every managed pool with its budget; each row opens the pool's own
@@ -43,6 +43,7 @@
 		>
 			{#each data.pools as pool (pool.name)}
 				{@const phase = poolPhase(pool)}
+				{@const connections = poolConnections(pool)}
 				<div
 					class="border-border-subtle flex flex-wrap items-center gap-x-4 gap-y-1.5 border-b px-4.5 py-3 transition-colors last:border-b-0 hover:bg-white/2 @2xl:grid @2xl:gap-x-0 {grid}"
 				>
@@ -64,7 +65,12 @@
 							<Pill text={pool.memory.capped ? 'auto · capped' : 'auto'} />
 						{/if}
 					</span>
-					<span class="@max-2xl:ml-auto"><Pill text={phase.text} tone={phase.tone} /></span>
+					<span class="flex flex-wrap items-center gap-1.5 @max-2xl:ml-auto">
+						<Pill text={phase.text} tone={phase.tone} />
+						{#if connections && pool.connections?.state !== 'available'}
+							<Pill text={connections.text} tone={connections.tone} title={connections.title} />
+						{/if}
+					</span>
 					<span class="flex justify-end">
 						<Button size="sm" variant="ghost" href={poolHref(pool)} title="Open this pool">
 							Manage

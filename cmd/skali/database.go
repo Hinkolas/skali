@@ -223,10 +223,10 @@ func newDatabaseListCommand() *cobra.Command {
 				rows = append(rows, []string{
 					pool.Name, pool.Class, pool.Engine + " " + strconv.Itoa(pool.Major),
 					strconv.Itoa(pool.Instances), utils.FormatBytes(pool.StorageBytes),
-					poolMemoryCell(pool.Memory), poolPhaseCell(pool),
+					poolMemoryCell(pool.Memory), poolPhaseCell(pool), poolConnectionsCell(pool.Connections),
 				})
 			}
-			renderColumns(out, []string{"NAME", "CLASS", "ENGINE", "INSTANCES", "STORAGE", "MEMORY", "PHASE"}, rows)
+			renderColumns(out, []string{"NAME", "CLASS", "ENGINE", "INSTANCES", "STORAGE", "MEMORY", "PHASE", "CONNECTIONS"}, rows)
 			return nil
 		},
 	}
@@ -497,10 +497,65 @@ func printDatabasePool(out io.Writer, master string, pool *client.DatabasePool) 
 		headerRow{"engine", pool.Engine + " " + strconv.Itoa(pool.Major), pool.Image},
 		headerRow{"instances", strconv.Itoa(pool.Instances), poolPhaseCell(*pool)},
 		headerRow{"storage", utils.FormatBytes(pool.StorageBytes), ""},
-		headerRow{"memory", memory, note})
+		headerRow{"memory", memory, note},
+		headerRow{"connections", poolConnectionsCell(pool.Connections), poolConnectionsNote(pool.Connections)})
 	printDatabasePoolMembers(out, pool.Members)
 	printDatabasePoolDatabases(out, style, pool.Databases)
+	printDatabasePoolIncidents(out, pool.Incidents)
 	printDatabasePoolParameters(out, style, pool)
+}
+
+// poolConnectionsCell renders the connection check: its state and, once a
+// check succeeded, how much of what applications may open is in use.
+func poolConnectionsCell(connections *client.DatabasePoolConnections) string {
+	if connections == nil {
+		return "not checked"
+	}
+	cell := connections.State
+	if connections.Used != nil && connections.Limit != nil {
+		cell += fmt.Sprintf(", %d/%d in use", *connections.Used, *connections.Limit)
+	}
+	return cell
+}
+
+// poolConnectionsNote explains a state other than available and dates it.
+func poolConnectionsNote(connections *client.DatabasePoolConnections) string {
+	if connections == nil || connections.State == "available" {
+		return ""
+	}
+	note := connections.Reason
+	if connections.Since != nil {
+		if at, err := time.Parse(time.RFC3339, *connections.Since); err == nil {
+			note += " (since " + poolAge(time.Since(at)) + ")"
+		}
+	}
+	if connections.Incident != nil {
+		note += "; incident " + connections.Incident.ID
+	}
+	return strings.TrimPrefix(note, " ")
+}
+
+// printDatabasePoolIncidents lists the pool's newest connection incidents.
+func printDatabasePoolIncidents(out io.Writer, incidents []client.DatabasePoolIncident) {
+	if len(incidents) == 0 {
+		return
+	}
+	rows := make([][]string, 0, len(incidents))
+	for _, incident := range incidents {
+		opened, closed := incident.OpenedAt, "open"
+		if at, err := time.Parse(time.RFC3339, incident.OpenedAt); err == nil {
+			opened = at.Local().Format("2006-01-02 15:04:05")
+		}
+		if incident.ClosedAt != nil {
+			closed = *incident.ClosedAt
+			if at, err := time.Parse(time.RFC3339, *incident.ClosedAt); err == nil {
+				closed = at.Local().Format("2006-01-02 15:04:05")
+			}
+		}
+		rows = append(rows, []string{incident.ID, opened, closed, incident.Message})
+	}
+	fmt.Fprintln(out)
+	renderColumns(out, []string{"INCIDENT", "OPENED", "CLOSED", "REFUSAL"}, rows)
 }
 
 // printDatabasePoolMembers lists the instance pods; the list route carries
@@ -552,10 +607,14 @@ func printDatabasePoolDatabases(out io.Writer, style *clirender.Style, databases
 		if database.UsedBytes != nil {
 			used = utils.FormatBytes(*database.UsedBytes)
 		}
+		connections := "-"
+		if database.Connections != nil {
+			connections = strconv.Itoa(*database.Connections)
+		}
 		rows = append(rows, []string{database.DatabaseName, owner, environment,
-			utils.FormatBytes(database.StorageBytes), used, database.Phase})
+			utils.FormatBytes(database.StorageBytes), used, connections, database.Phase})
 	}
-	renderColumns(out, []string{"DATABASE", "OWNER", "ENVIRONMENT", "SIZE", "USED", "PHASE"}, rows)
+	renderColumns(out, []string{"DATABASE", "OWNER", "ENVIRONMENT", "SIZE", "USED", "CONNECTIONS", "PHASE"}, rows)
 }
 
 func printDatabasePoolParameters(out io.Writer, style *clirender.Style, pool *client.DatabasePool) {

@@ -16,6 +16,23 @@ var (
 	bucketClaimGVK = schema.GroupVersionKind{Group: "claims.skali.dev", Version: "v1", Kind: "BucketClaim"}
 )
 
+// DatabaseConnectionsGVK keys the substrate's synthetic connection check of
+// a pool, which exists in the observed store only.
+var DatabaseConnectionsGVK = schema.GroupVersionKind{Group: "claims.skali.dev", Version: "v1", Kind: "PoolConnections"}
+
+// DatabaseConnectionsObject builds the platform-scoped connection check of
+// one pool. It carries the pool name as its shared key, like the pool's
+// Cluster, so every environment with a database on the pool reads it.
+func DatabaseConnectionsObject(pool string, status module.DatabaseConnectionsStatus) Object {
+	return Object{
+		Ref:                 kube.ObjectRef{GVK: DatabaseConnectionsGVK, Name: pool},
+		Kind:                module.KindDatabaseConnections,
+		Name:                pool,
+		SharedKey:           pool,
+		DatabaseConnections: &status,
+	}
+}
+
 // ClaimRef addresses one database claim's synthetic projection.
 func ClaimRef(claimID uuid.UUID) kube.ObjectRef {
 	return kube.ObjectRef{GVK: claimGVK, Name: "claim-" + claimID.String()}

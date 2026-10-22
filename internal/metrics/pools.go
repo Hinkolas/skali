@@ -54,11 +54,15 @@ func (c poolCounters) delta(prev poolCounters) (poolCounters, bool) {
 }
 
 // poolExporterReading is one scrape of a pool's exporter reduced to the
-// pool-wide numbers the sampler stores.
+// pool-wide numbers the sampler stores. A family the exposition lacks is
+// nil, never zero: the exporter leaves out a query that failed (its own
+// login refused while the pool has no free connection slot, a timeout),
+// and storing zero connections for that would chart an idle pool through
+// an outage. counters is nil unless all four counter families came back.
 type poolExporterReading struct {
-	connections   int64
-	counters      poolCounters
-	databaseBytes int64
+	connections   *int64
+	counters      *poolCounters
+	databaseBytes *int64
 }
 
 // parsePoolExporter reduces a CNPG exporter exposition to pool totals: every
@@ -69,10 +73,10 @@ func parsePoolExporter(body []byte) (poolExporterReading, error) {
 	if err != nil {
 		return poolExporterReading{}, err
 	}
-	sum := func(name string) int64 {
+	sum := func(name string) *int64 {
 		mf, ok := families[name]
-		if !ok {
-			return 0
+		if !ok || len(mf.GetMetric()) == 0 {
+			return nil
 		}
 		total := 0.0
 		for _, metric := range mf.GetMetric() {
@@ -83,18 +87,19 @@ func parsePoolExporter(body []byte) (poolExporterReading, error) {
 				total += metric.GetGauge().GetValue()
 			}
 		}
-		return int64(math.Round(total))
+		value := int64(math.Round(total))
+		return &value
 	}
-	return poolExporterReading{
-		connections: sum(familyBackends),
-		counters: poolCounters{
-			commit:   sum(familyXactCommit),
-			rollback: sum(familyXactRollback),
-			blksHit:  sum(familyBlksHit),
-			blksRead: sum(familyBlksRead),
-		},
+	reading := poolExporterReading{
+		connections:   sum(familyBackends),
 		databaseBytes: sum(databaseSizeFamily),
-	}, nil
+	}
+	commit, rollback := sum(familyXactCommit), sum(familyXactRollback)
+	hit, read := sum(familyBlksHit), sum(familyBlksRead)
+	if commit != nil && rollback != nil && hit != nil && read != nil {
+		reading.counters = &poolCounters{commit: *commit, rollback: *rollback, blksHit: *hit, blksRead: *read}
+	}
+	return reading, nil
 }
 
 // poolPodUsage sums instance PodMetrics per pool (the cnpg.io/cluster
@@ -131,8 +136,9 @@ type unstructuredItem struct {
 
 // samplePools appends one row per live pool: the instances' summed
 // PodMetrics and ready count plus the primary's exporter reading. Pools
-// are few, so rows insert one at a time; a failed exporter scrape stores
-// NULL exporter columns rather than dropping the pod side.
+// are few, so rows insert one at a time; a failed exporter scrape, or a
+// family missing from it, stores NULL exporter columns rather than
+// dropping the pod side or recording zero.
 func (s *Sampler) samplePools(ctx context.Context, now time.Time) error {
 	if s.DB == nil {
 		return nil
@@ -192,18 +198,23 @@ func (s *Sampler) samplePools(ctx context.Context, now time.Time) error {
 			params.CpuMillicores, params.MemoryBytes, params.Instances = row.cpu, row.mem, row.pods
 		}
 		if reading, ok := s.scrapePoolExporter(ctx, pool.Name); ok {
-			connections, size := reading.connections, reading.databaseBytes
-			params.Connections = &connections
-			params.DatabaseBytes = &size
-			if prev, seen := s.lastPool[pool.ID]; seen {
-				if delta, ok := reading.counters.delta(prev); ok {
-					commit, rollback, hit, read := delta.commit, delta.rollback, delta.blksHit, delta.blksRead
-					params.XactCommit, params.XactRollback, params.BlksHit, params.BlksRead = &commit, &rollback, &hit, &read
-				} else {
-					slog.DebugContext(ctx, "pool counters reset", "pool", pool.Name)
+			params.Connections = reading.connections
+			params.DatabaseBytes = reading.databaseBytes
+			if reading.counters == nil {
+				// No baseline across a gap: the next full reading starts
+				// one rather than spanning the missing interval.
+				delete(s.lastPool, pool.ID)
+			} else {
+				if prev, seen := s.lastPool[pool.ID]; seen {
+					if delta, ok := reading.counters.delta(prev); ok {
+						commit, rollback, hit, read := delta.commit, delta.rollback, delta.blksHit, delta.blksRead
+						params.XactCommit, params.XactRollback, params.BlksHit, params.BlksRead = &commit, &rollback, &hit, &read
+					} else {
+						slog.DebugContext(ctx, "pool counters reset", "pool", pool.Name)
+					}
 				}
+				s.lastPool[pool.ID] = *reading.counters
 			}
-			s.lastPool[pool.ID] = reading.counters
 		}
 		if err := s.Store.InsertPoolMetricSample(ctx, params); err != nil {
 			return fmt.Errorf("insert pool sample %s: %w", pool.Name, err)

@@ -441,6 +441,15 @@ type ObjectStore struct {
 	UpdatedAt          time.Time
 }
 
+type PoolConnectionIncident struct {
+	ID        uuid.UUID
+	ClusterID uuid.UUID
+	Code      string
+	Message   string
+	OpenedAt  time.Time
+	ClosedAt  *time.Time
+}
+
 type Project struct {
 	ID          uuid.UUID
 	Name        string

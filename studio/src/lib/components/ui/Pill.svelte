@@ -4,11 +4,16 @@
 		text,
 		tone = 'neutral',
 		title
-	}: { text: string; tone?: 'success' | 'warning' | 'neutral'; title?: string } = $props();
+	}: {
+		text: string;
+		tone?: 'success' | 'warning' | 'danger' | 'neutral';
+		title?: string;
+	} = $props();
 
 	const toneClass: Record<string, string> = {
 		success: 'text-status-success bg-status-success/10',
 		warning: 'text-status-warning bg-status-warning/10',
+		danger: 'text-status-danger bg-status-danger/10',
 		neutral: 'text-text-muted bg-white/6'
 	};
 </script>
