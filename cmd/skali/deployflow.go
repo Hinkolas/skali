@@ -1420,11 +1420,45 @@ func verifyAction(ctx context.Context, api *client.Client, opened *client.Opened
 
 // failDeployment reports the client-side failure and returns the original
 // error; values, target, and active revision stay untouched server-side.
+// A report the server never received comes back as an
+// *unreportedFailure: the deployment then still holds the environment.
 func failDeployment(ctx context.Context, api *client.Client, opened *client.OpenedDeployment, cause error) error {
 	if err := api.FailDeployment(ctx, opened.Deployment.ID, cause.Error()); err != nil {
-		return fmt.Errorf("%w (additionally, failing the deployment: %v)", cause, err)
+		return &unreportedFailure{cause: cause, report: err}
 	}
 	return cause
+}
+
+// unreportedFailure is a client-side deployment failure the server was not
+// told about, typically because the connection that failed the upload
+// failed the report too. Its run keeps the environment's operation slot
+// until someone cancels it or the server's stale-build sweep fails it.
+type unreportedFailure struct {
+	cause, report error
+}
+
+func (e *unreportedFailure) Error() string {
+	return fmt.Sprintf("%v (additionally, failing the deployment: %v)", e.cause, e.report)
+}
+
+func (e *unreportedFailure) Unwrap() error { return e.cause }
+
+// reportArtifactFailure prints a failed artifact window and what it left
+// behind. Only a failure the server recorded left the environment as it
+// was; an unreported one still holds it, so the run and the command that
+// frees it are named.
+func reportArtifactFailure(out io.Writer, runID, remoteHint string, err error) {
+	style := clirender.StyleFor(out)
+	fmt.Fprintf(out, "\n%srun %s %s: %v\n", style.Cross(), runID, style.Red("failed"), err)
+	var unreported *unreportedFailure
+	if errors.As(err, &unreported) {
+		fmt.Fprintln(out, "\n"+style.Yellow("The server was not told: run "+runID+" still holds the environment, "+
+			"blocking other deployments until it is cancelled or the server fails it for lack of build "+
+			"progress (after 30 minutes by default). The active revision is untouched."))
+		fmt.Fprintf(out, "  cancel  %s\n", runCancelHint(remoteHint, runID))
+		return
+	}
+	fmt.Fprintln(out, "\n"+style.Dim("The environment is unchanged: staged values discarded, target and active revision untouched."))
 }
 
 // windowSignals end the artifact window: Ctrl-C, the terminal going away,
@@ -2087,9 +2121,7 @@ func runDeployFlow(command *cobra.Command, opts *deployOptions, planOnly bool) (
 				// Interrupted, not failed: the window's owner reports it.
 				return err
 			}
-			fmt.Fprintf(out, "\n%srun %s %s: %v\n", style.Cross(),
-				opened.Deployment.RunID, style.Red("failed"), err)
-			fmt.Fprintln(out, "\n"+style.Dim("The environment is unchanged: staged values discarded, target and active revision untouched."))
+			reportArtifactFailure(out, opened.Deployment.RunID, opts.Remote, err)
 			return errors.New("deployment failed")
 		}
 		_, err := api.CompleteDeployment(ctx, opened.Deployment.ID)

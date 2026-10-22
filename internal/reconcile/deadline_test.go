@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/Hinkolas/skali/internal/compiler"
 	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/module"
 	"github.com/Hinkolas/skali/internal/observe"
@@ -52,6 +53,64 @@ func TestDeadlineFallbackWithoutRun(t *testing.T) {
 	require.NotNil(t, runs[0].Failure)
 	require.Contains(t, *runs[0].Failure, "rollout deadline exceeded")
 	require.Equal(t, "failed", f.runStepStatuses(t, runs[0].ID)["verify"])
+}
+
+// A declared rollout timeout shorter than the kernel default is the
+// budget: the rollout falls back once it passes, not at the default.
+func TestDeadlineHonoursShortDeclaredTimeout(t *testing.T) {
+	t.Parallel()
+	f := newKernelFixture(t, Config{RolloutDeadline: time.Hour})
+	ctx := context.Background()
+	first := f.deployActive(t)
+
+	second := f.deployChanged(t, kernelManifest+`    deployment:
+      rollout:
+        timeout: 1m
+`)
+	f.setWebWorkload(t, "", module.WorkloadStatus{Desired: 1, Ready: 0, Updated: 1})
+	_, err := f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	require.Equal(t, second.RevisionID, *f.target(t).TargetRevisionID, "within its declared timeout the rollout goes on")
+
+	f.startRolloutAgo(t, 2*time.Minute)
+	_, err = f.kernel.reconcileEnvironment(ctx, f.environmentID)
+	require.NoError(t, err)
+	require.Equal(t, first.RevisionID, *f.target(t).TargetRevisionID, "past the declared timeout the target falls back")
+	run, err := f.st.GetRunByID(ctx, second.RunID)
+	require.NoError(t, err)
+	require.Equal(t, "failed", run.Status)
+	require.NotNil(t, run.Failure)
+	require.Contains(t, *run.Failure, "rollout deadline exceeded")
+}
+
+func TestRolloutBudget(t *testing.T) {
+	t.Parallel()
+	app := func(timeout time.Duration) compiler.Application {
+		var application compiler.Application
+		application.Deployment.Rollout.TimeoutMillis = timeout.Milliseconds()
+		return application
+	}
+	definition := func(applications ...compiler.Application) compiler.ProjectDefinition {
+		result := compiler.ProjectDefinition{Applications: map[string]compiler.Application{}}
+		for i, application := range applications {
+			result.Applications[string(rune('a'+i))] = application
+		}
+		return result
+	}
+	fallback := 10 * time.Minute
+	for name, tc := range map[string]struct {
+		definition compiler.ProjectDefinition
+		want       time.Duration
+	}{
+		"no applications":        {compiler.ProjectDefinition{}, fallback},
+		"none declared":          {definition(app(0)), fallback},
+		"shorter declared":       {definition(app(time.Minute)), time.Minute},
+		"longer declared":        {definition(app(time.Hour)), time.Hour},
+		"undeclared one governs": {definition(app(time.Minute), app(0)), fallback},
+		"longest declared":       {definition(app(time.Minute), app(3*time.Minute)), 3 * time.Minute},
+	} {
+		require.Equal(t, tc.want, rolloutBudget(tc.definition, fallback), name)
+	}
 }
 
 // A first deployment whose run is gone has nothing to fall back to and no

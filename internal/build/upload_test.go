@@ -364,7 +364,21 @@ func TestUploadCancellationIsReported(t *testing.T) {
 	require.Error(t, err)
 	require.ErrorIs(t, err, context.Canceled)
 	require.True(t, strings.HasPrefix(sink.lastLine(), "upload cancelled after "), sink.lastLine())
-	require.Zero(t, sink.final(t).Failures, "a cancellation is not a registry failure")
+	final := sink.final(t)
+	require.Zero(t, final.Failures, "a cancellation is not a registry failure")
+	require.Greater(t, final.Wire, final.Sent, "the cancelled body was sent but not kept")
+	require.Contains(t, sink.lastLine(), "kept by the registry")
+}
+
+// An interrupted push names the bytes it sent apart from the bytes the
+// registry kept, which lose the cancelled attempt's body.
+func TestDescribeSent(t *testing.T) {
+	t.Parallel()
+	require.Equal(t, "17.2MiB sent, 1.1KiB of 96.0MiB kept by the registry", describeSent(UploadStatus{
+		Blobs: 4, Total: 100 << 20, Reused: 4 << 20, Sent: 1126, Wire: 18035507}))
+	require.Equal(t, "16.0KiB of 16.0KiB sent", describeSent(UploadStatus{
+		Blobs: 1, Total: 16 << 10, Sent: 16 << 10, Wire: 16 << 10}))
+	require.Equal(t, "2.0KiB sent", describeSent(UploadStatus{Sent: 2 << 10, Wire: 2 << 10}))
 }
 
 // Imports report the managed-registry side of the copy the same way.
