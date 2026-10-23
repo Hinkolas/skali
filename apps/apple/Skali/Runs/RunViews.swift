@@ -61,11 +61,14 @@ struct RunRow: View {
             RunStatusTile(status: run.status)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    // The kind never wraps; the id gives way first.
                     Text(run.kindLabel)
                         .font(.headline)
+                        .fixedSize()
                     Text(run.shortID)
                         .font(.caption.monospaced())
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
                 // A run in flight counts its time up.
                 TimelineView(.periodic(from: .now, by: run.isActive ? 1 : 3600)) { context in
@@ -91,22 +94,24 @@ struct RunRow: View {
     }
 }
 
-/// "● succeeded": a run's status in its color, as the sheet's title shows it.
-struct RunStatusCapsule: View {
-    let status: String
-
-    var body: some View {
-        StatusCapsule(text: status, tint: RunStatusStyle.tint(status))
-    }
-}
-
 /// The glyph for a step's status; a step in flight spins.
 struct StepStatusIcon: View {
-    let step: RunStep
+    let status: String
+    /// A skipped TLS checkpoint reads as a warning.
+    var deferred = false
+
+    init(step: RunStep) {
+        status = step.status
+        deferred = step.isDeferredTLS
+    }
+
+    init(status: String) {
+        self.status = status
+    }
 
     var body: some View {
         Group {
-            if step.status == "running" {
+            if status == "running" {
                 ProgressView().controlSize(.small)
             } else {
                 Image(systemName: symbol)
@@ -115,12 +120,12 @@ struct StepStatusIcon: View {
             }
         }
         .frame(width: 22)
-        .accessibilityLabel(step.status)
+        .accessibilityLabel(status)
     }
 
     private var symbol: String {
-        if step.isDeferredTLS { return "exclamationmark.circle" }
-        switch step.status {
+        if deferred { return "exclamationmark.circle" }
+        switch status {
         case "succeeded": return "checkmark.circle"
         case "failed": return "xmark.circle"
         case "skipped": return "minus.circle"
@@ -131,8 +136,8 @@ struct StepStatusIcon: View {
     }
 
     private var tint: Color {
-        if step.isDeferredTLS { return .orange }
-        switch step.status {
+        if deferred { return .orange }
+        switch status {
         case "succeeded": return .green
         case "failed": return .red
         case "waiting": return .orange
@@ -182,19 +187,7 @@ extension [RunStep] {
     }
 }
 
-/// A run to show in a sheet.
-struct RunSheetItem: Identifiable, Hashable {
+/// A run to open from a list.
+struct RunLink: Hashable {
     let id: String
-}
-
-/// A run in a sheet of its own, with a close button.
-struct RunSheet: View {
-    let runID: String
-    let model: ProjectModel
-
-    var body: some View {
-        NavigationStack {
-            RunDetailView(runID: runID, model: model, closable: true)
-        }
-    }
 }

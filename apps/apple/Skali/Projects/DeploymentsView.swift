@@ -2,14 +2,13 @@ import SkaliKit
 import SwiftUI
 
 /// The environment's run history by day: its rollouts (deploys,
-/// rollbacks, restarts, stops), or every run. A run opens in a sheet that
-/// follows it live.
+/// rollbacks, restarts, stops), or every run. A run opens to its own page,
+/// which follows it live.
 struct DeploymentsView: View {
     let model: ProjectModel
 
     @Environment(\.openURL) private var openURL
     @AppStorage("deployments.filter") private var filter: RunFilter = .rollouts
-    @State private var shownRun: RunSheetItem?
 
     var body: some View {
         EnvironmentGate(model: model) { environment in
@@ -32,7 +31,6 @@ struct DeploymentsView: View {
                 }
             }
         }
-        .sheet(item: $shownRun) { RunSheet(runID: $0.id, model: model) }
     }
 
     private var runs: [Run] {
@@ -65,17 +63,9 @@ struct DeploymentsView: View {
                 ForEach(runs.groupedByDay(), id: \.day) { group in
                     Section {
                         ForEach(group.runs) { run in
-                            Button {
-                                shownRun = RunSheetItem(id: run.id)
-                            } label: {
-                                HStack(spacing: 10) {
-                                    RunRow(run: run, directory: model.directory)
-                                    Image(systemName: "chevron.right")
-                                        .font(.footnote.weight(.semibold))
-                                        .foregroundStyle(.tertiary)
-                                }
+                            NavigationLink(value: ProjectRoute.run(run.id)) {
+                                RunRow(run: run, directory: model.directory)
                             }
-                            .tint(.primary)
                         }
                     } header: {
                         Text(group.day, format: .dateTime.month(.abbreviated).day().year())

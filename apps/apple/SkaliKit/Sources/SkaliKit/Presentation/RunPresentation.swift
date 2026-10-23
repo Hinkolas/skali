@@ -162,3 +162,124 @@ extension RunTree {
         return count(steps)
     }
 }
+
+// MARK: Progress per service
+
+/// A run's work for one service, the way the CLI lists a deploy: the
+/// steps that do it, where it stands, and how long it took. Port of the
+/// Studio's serviceProgress (studio/src/lib/models/runservices.ts).
+public struct ServiceProgress: Hashable, Sendable, Identifiable {
+    /// The dotted name; nil for the environment's own work (validate,
+    /// render, prune, verify, activate).
+    public let service: String?
+    /// Nil for the environment and for a collection this app does not know.
+    public let kind: ServiceKind?
+    /// The bare key ("web"), or "environment".
+    public let name: String
+    /// The steps that do the work, in journal order; parents only group.
+    public let steps: [RunStep]
+    public let status: String
+    /// The step the row names: the one in flight, else the one waiting or
+    /// queued, else the one that failed, else the last.
+    public let current: RunStep
+    public let startedAt: Date?
+    /// Nil while any of the work is unsettled.
+    public let finishedAt: Date?
+
+    public var id: String { service ?? "" }
+
+    public func duration(now: Date = .now) -> String? {
+        startedAt.map { formatDuration(from: $0, to: finishedAt ?? now) }
+    }
+}
+
+extension RunTree {
+    /// The steps grouped by the service each records: applications,
+    /// databases, buckets (each by key), the environment last. Nil when no
+    /// step names a service (a backup, a run from an older daemon): the
+    /// step tree is then the only view.
+    public var serviceProgress: [ServiceProgress]? {
+        var order: [String?] = []
+        var groups: [String?: (leaves: [RunStep], parents: [RunStep])] = [:]
+        var tagged = false
+        func walk(_ steps: [RunStep], inherited: String?) {
+            for step in steps {
+                let service = step.service ?? inherited
+                if service != nil { tagged = true }
+                if groups[service] == nil {
+                    groups[service] = ([], [])
+                    order.append(service)
+                }
+                if let children = step.children, !children.isEmpty {
+                    // A parent that names its service (an application's
+                    // artifacts) still counts toward its status.
+                    if step.service != nil { groups[service]?.parents.append(step) }
+                    walk(children, inherited: service)
+                } else {
+                    groups[service]?.leaves.append(step)
+                }
+            }
+        }
+        walk(steps, inherited: nil)
+        guard tagged else { return nil }
+
+        let kindOrder: [ServiceKind?] = [.application, .database, .bucket, nil]
+        return order.compactMap { service -> ServiceProgress? in
+            guard let group = groups[service], !group.leaves.isEmpty else { return nil }
+            return Self.summarize(service, steps: group.leaves, counted: group.leaves + group.parents)
+        }
+        .sorted { a, b in
+            if (a.service == nil) != (b.service == nil) { return b.service == nil }
+            let ka = kindOrder.firstIndex(of: a.kind) ?? 3, kb = kindOrder.firstIndex(of: b.kind) ?? 3
+            return ka != kb ? ka < kb : a.name < b.name
+        }
+    }
+
+    private static func summarize(_ service: String?, steps: [RunStep], counted: [RunStep]) -> ServiceProgress {
+        let statusOrder = ["failed", "running", "waiting", "pending", "cancelled", "succeeded", "skipped"]
+        let status = statusOrder.first { status in counted.contains { $0.status == status } } ?? "pending"
+        let current = steps.first { $0.status == "running" } ?? steps.first { $0.status == "waiting" }
+            ?? steps.first { $0.status == "pending" } ?? steps.first { $0.status == "failed" } ?? steps[steps.count - 1]
+        let started = counted.filter { $0.status != "pending" }.compactMap(\.createdAt).min()
+        let unsettled = counted.contains { ["pending", "waiting", "running"].contains($0.status) }
+        let finished = unsettled ? nil : counted.compactMap(\.finishedAt).max()
+        let (kind, name) = service.map(Self.split) ?? (nil, "environment")
+        return ServiceProgress(
+            service: service, kind: kind, name: name, steps: steps, status: status, current: current,
+            startedAt: started, finishedAt: finished)
+    }
+
+    /// "applications.web" is the application "web"; an unknown collection
+    /// keeps its dotted name.
+    private static func split(_ service: String) -> (ServiceKind?, String) {
+        guard let dot = service.firstIndex(of: ".") else { return (nil, service) }
+        let kind: ServiceKind? = switch service[..<dot] {
+        case "applications": .application
+        case "databases": .database
+        case "buckets": .bucket
+        default: nil
+        }
+        return kind == nil ? (nil, service) : (kind, String(service[service.index(after: dot)...]))
+    }
+
+    /// The step the run is on: the deepest one in flight, else waiting.
+    public var currentStep: RunStep? {
+        func find(_ steps: [RunStep], _ status: String) -> RunStep? {
+            for step in steps {
+                if let inner = find(step.children ?? [], status) { return inner }
+                if step.status == status { return step }
+            }
+            return nil
+        }
+        return find(steps, "running") ?? find(steps, "waiting")
+    }
+
+    /// Leaf steps that reached an end, of all leaf steps: "5 of 12 steps".
+    public var leafCounts: (done: Int, total: Int) {
+        func leaves(_ steps: [RunStep]) -> [RunStep] {
+            steps.flatMap { ($0.children ?? []).isEmpty ? [$0] : leaves($0.children ?? []) }
+        }
+        let all = leaves(steps)
+        return (all.filter { !["pending", "waiting", "running"].contains($0.status) }.count, all.count)
+    }
+}

@@ -5,6 +5,8 @@ import SwiftUI
 enum ProjectRoute: Hashable {
     case service(ServiceKind, String)
     case deployments, backups, settings
+    /// One run of the environment, by id.
+    case run(String)
 }
 
 /// A project's overview for one environment: how it is doing, what it
@@ -38,6 +40,7 @@ private struct ProjectOverviewScreen: View {
                 switch route {
                 case .deployments: DeploymentsView(model: model)
                 case .backups: ProjectBackupsView(model: model)
+                case .run(let id): RunDetailView(runID: id, model: model)
                 default: ProjectRoutePlaceholder(route: route)
                 }
             }
@@ -266,6 +269,7 @@ private struct ProjectRoutePlaceholder: View {
         case .deployments: "Deployments"
         case .backups: "Backups"
         case .settings: "Settings"
+        case .run: "Run"
         }
     }
 
@@ -275,6 +279,7 @@ private struct ProjectRoutePlaceholder: View {
         case .deployments: "paperplane"
         case .backups: "archivebox"
         case .settings: "slider.horizontal.3"
+        case .run: "paperplane"
         }
     }
 }

@@ -126,13 +126,16 @@ public struct RunStep: Codable, Hashable, Sendable, Identifiable {
     public let status: String
     public let progressCurrent: Int64?
     public let progressTotal: Int64?
+    /// When the step was first observed: a step that waits (a claim
+    /// provisioning) is only stamped started once it completes.
+    public let createdAt: Date?
     public let startedAt: Date?
     public let finishedAt: Date?
     public let children: [RunStep]?
 
     public init(
         id: String, key: String, title: String, service: String? = nil, status: String,
-        progressCurrent: Int64? = nil, progressTotal: Int64? = nil, startedAt: Date? = nil,
+        progressCurrent: Int64? = nil, progressTotal: Int64? = nil, createdAt: Date? = nil, startedAt: Date? = nil,
         finishedAt: Date? = nil, children: [RunStep]? = nil
     ) {
         self.id = id
@@ -142,6 +145,7 @@ public struct RunStep: Codable, Hashable, Sendable, Identifiable {
         self.status = status
         self.progressCurrent = progressCurrent
         self.progressTotal = progressTotal
+        self.createdAt = createdAt ?? startedAt
         self.startedAt = startedAt
         self.finishedAt = finishedAt
         self.children = children

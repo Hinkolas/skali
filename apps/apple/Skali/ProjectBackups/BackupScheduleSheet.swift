@@ -216,7 +216,7 @@ struct BackupActivitySheet: View {
                         ForEach(runs.groupedByDay(), id: \.day) { group in
                             Section {
                                 ForEach(group.runs) { run in
-                                    NavigationLink(value: RunSheetItem(id: run.id)) {
+                                    NavigationLink(value: RunLink(id: run.id)) {
                                         RunRow(run: run, directory: model.directory)
                                     }
                                 }
@@ -229,7 +229,7 @@ struct BackupActivitySheet: View {
             }
             .navigationTitle("Activity")
             .largeSubtitle("backup and restore runs · \(environment.name)", monospaced: true)
-            .navigationDestination(for: RunSheetItem.self) { RunDetailView(runID: $0.id, model: model) }
+            .navigationDestination(for: RunLink.self) { RunDetailView(runID: $0.id, model: model) }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(role: .close) { dismiss() }

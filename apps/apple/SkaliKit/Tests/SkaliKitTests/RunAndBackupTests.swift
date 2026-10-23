@@ -216,3 +216,65 @@ struct RunAndBackupTests {
         #expect(logs.logs.last?.level == "error")
     }
 }
+
+struct ServiceProgressTests {
+    private func step(
+        _ key: String, service: String? = nil, status: String = "succeeded", created: Double = 0, finished: Double? = 1,
+        children: [RunStep]? = nil
+    ) -> RunStep {
+        RunStep(
+            id: key, key: key, title: key, service: service, status: status,
+            createdAt: Date(timeIntervalSince1970: created), startedAt: Date(timeIntervalSince1970: created),
+            finishedAt: finished.map { Date(timeIntervalSince1970: $0) }, children: children)
+    }
+
+    private func tree(_ steps: [RunStep]) -> RunTree {
+        RunTree(run: Run(id: "r", kind: "deployment", status: "running", createdAt: .now), steps: steps)
+    }
+
+    @Test func groupsStepsByServiceWithTheEnvironmentLast() throws {
+        let progress = try #require(tree([
+            step("validate"),
+            step("artifacts", children: [
+                step("artifacts:web", service: "applications.web", created: 1, finished: 9, children: [
+                    step("build", created: 1, finished: 8),
+                    step("verify", created: 8, finished: 9),
+                ]),
+            ]),
+            step("rollout", status: "running", finished: nil, children: [
+                step("provision:main", service: "databases.main", created: 10, finished: 12),
+                step("apply:web", service: "applications.web", status: "running", created: 12, finished: nil),
+                step("cache", service: "caches.redis", status: "pending", created: 0, finished: nil),
+            ]),
+            step("activate", status: "pending", finished: nil),
+        ]).serviceProgress)
+        #expect(progress.map(\.name) == ["web", "main", "caches.redis", "environment"])
+        let web = progress[0]
+        #expect(web.kind == .application)
+        #expect(web.steps.map(\.key) == ["build", "verify", "apply:web"])
+        #expect(web.status == "running")
+        #expect(web.current.key == "apply:web")
+        #expect(web.finishedAt == nil)
+        #expect(progress[1].status == "succeeded")
+        #expect(progress[1].finishedAt == Date(timeIntervalSince1970: 12))
+        #expect(progress[2].kind == nil)
+        #expect(progress[3].steps.map(\.key) == ["validate", "activate"])
+        #expect(progress[3].status == "pending")
+    }
+
+    @Test func runsWithoutServicesHaveOnlyTheTree() {
+        #expect(tree([step("target"), step("manifest")]).serviceProgress == nil)
+    }
+
+    @Test func findsTheCurrentStepAndCountsLeaves() {
+        let running = tree([
+            step("a"),
+            step("rollout", status: "running", finished: nil, children: [
+                step("b"), step("c", status: "running", finished: nil), step("d", status: "pending", finished: nil),
+            ]),
+        ])
+        #expect(running.currentStep?.key == "c")
+        #expect(running.leafCounts.done == 2)
+        #expect(running.leafCounts.total == 4)
+    }
+}

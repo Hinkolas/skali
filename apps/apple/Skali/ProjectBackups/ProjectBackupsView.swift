@@ -11,7 +11,8 @@ struct ProjectBackupsView: View {
     @Environment(AppModel.self) private var app
     @State private var scope: SnapshotScope = .environment
     @State private var confirmingBackup = false
-    @State private var shownRun: RunSheetItem?
+    /// A backup started here, shown as its run's page.
+    @State private var startedRun: String?
     @State private var shownSnapshot: BackupSnapshot?
     @State private var showingSchedule = false
     @State private var showingActivity = false
@@ -30,7 +31,7 @@ struct ProjectBackupsView: View {
             model, title: "Backups", subtitle: "snapshots on the backup target", monospaced: true,
             also: { await model.loadSnapshots() })
         .toolbar { toolbar }
-        .sheet(item: $shownRun) { RunSheet(runID: $0.id, model: model) }
+        .navigationDestination(item: $startedRun) { RunDetailView(runID: $0, model: model) }
         .sheet(item: $shownSnapshot) { SnapshotSheet(snapshot: $0, model: model) }
         .sheet(isPresented: $showingSchedule) {
             if let environment = model.environment {
@@ -247,7 +248,7 @@ struct ProjectBackupsView: View {
     private func backUp() {
         Task {
             do {
-                shownRun = RunSheetItem(id: try await model.startBackup())
+                startedRun = try await model.startBackup()
             } catch is CancellationError {
             } catch {
                 self.error = ("Could Not Back Up", error.localizedDescription)
