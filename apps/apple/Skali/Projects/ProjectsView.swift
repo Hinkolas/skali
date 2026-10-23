@@ -94,16 +94,25 @@ struct ProjectsView: View {
                 .padding(.top, 4)
         }
         ToolbarItem(placement: .primaryAction) {
+            // As the Music app's playlist menu: sorting is a submenu that
+            // names the current order, and the scope a single toggle.
             Menu {
-                Picker("Sort By", selection: $sort) {
-                    ForEach(ProjectSort.allCases) { sort in
-                        Text(sort.menuLabel).tag(sort)
+                Section {
+                    Picker(selection: $sort) {
+                        ForEach(ProjectSort.allCases) { sort in
+                            Text(sort.menuLabel).tag(sort)
+                        }
+                    } label: {
+                        Label("Sort By", systemImage: "arrow.up.arrow.down")
                     }
+                    .pickerStyle(.menu)
                 }
+                // Only instance admins see projects they are not members of.
                 if session.user.isAdmin {
-                    Picker("Show", selection: $mineOnly) {
-                        Text("All Projects").tag(false)
-                        Text("My Projects").tag(true)
+                    Section {
+                        Toggle(isOn: Binding { !mineOnly } set: { mineOnly = !$0 }) {
+                            Label("Show All Projects", systemImage: "square.stack")
+                        }
                     }
                 }
             } label: {
