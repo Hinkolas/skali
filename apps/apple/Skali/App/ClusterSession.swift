@@ -20,6 +20,9 @@ final class ClusterSession {
     /// the last document stays on screen.
     private(set) var updatesDisconnected = false
 
+    /// Every account on the cluster (admins only), oldest first.
+    private(set) var users: [User]?
+
     /// The newest usage sample per pool name.
     private(set) var poolUsage: [String: DatabasePoolMetrics.Current] = [:]
     /// Each opened pool's instances, databases and incidents, by name.
@@ -72,6 +75,7 @@ final class ClusterSession {
             return
         }
         async let nodes = try? api.nodes()
+        async let users = try? api.users()
         async let pools = try? api.databasePools()
         async let updates = try? api.updateStatus()
         async let backup = Result { try await api.backupTarget() }
@@ -82,6 +86,7 @@ final class ClusterSession {
         }
         system = SystemOverview(
             nodes: await nodes, pools: await pools, updates: await updates, backup: target)
+        if let users = await users { self.users = users }
         if let meta = await meta { self.meta = meta }
     }
 
@@ -158,7 +163,37 @@ final class ClusterSession {
         }
     }
 
+    func loadUsers() async {
+        do {
+            users = try await api.users()
+        } catch {
+            _ = handleUnauthorized(error)
+        }
+    }
+
     // MARK: Changes
+
+    func createUser(_ new: NewUser) async throws -> User {
+        let user = try await gated { try await self.api.createUser(new) }
+        users?.append(user)
+        return user
+    }
+
+    func updateUser(id: String, _ patch: UserPatch) async throws {
+        let user = try await gated { try await self.api.updateUser(id: id, patch) }
+        if let index = users?.firstIndex(where: { $0.id == id }) { users?[index] = user }
+        if user.id == self.user.id { self.user = user }
+    }
+
+    func deleteUser(id: String) async throws {
+        try await gated { try await self.api.deleteUser(id: id) }
+        users?.removeAll { $0.id == id }
+    }
+
+    /// Signs the user out everywhere.
+    func resetPassword(userID: String, newPassword: String) async throws {
+        try await gated { try await self.api.resetPassword(userID: userID, newPassword: newPassword) }
+    }
 
     func scanForUpdates() async throws {
         system.updates = try await gated { try await self.api.scanForUpdates() }

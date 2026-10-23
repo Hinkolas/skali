@@ -39,5 +39,8 @@ struct RollupTests {
 
     @Test func initials() {
         #expect(DemoCluster.user.initials == "AL")
+        let bot = User(id: "b", email: "ci-bot@example.com", name: "", role: "member",
+                       createProjects: false, twoFactorEnabled: false, createdAt: .now)
+        #expect(bot.initials == "CI")
     }
 }

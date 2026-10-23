@@ -21,7 +21,8 @@ struct SettingsView: View {
         .navigationDestination(for: SettingsRoute.self) { route in
             switch route {
             case .account: AccountView()
-            case .users: PlaceholderView(title: "Users", systemImage: "person.2")
+            case .users: UsersView()
+            case .user(let id): UserDetailView(id: id)
             case .nodes: NodesView()
             case .node(let name): NodeDetailView(name: name)
             case .databases: DatabasePoolsView()
@@ -37,7 +38,11 @@ struct SettingsView: View {
     private var systemSection: some View {
         Section {
             NavigationLink(value: SettingsRoute.users) {
-                Label { Text("Users") } icon: { SettingsIcon(systemImage: "person.2", tint: .serviceApplication) }
+                LabeledContent {
+                    if let users = session.users { Text("\(users.count) users") }
+                } label: {
+                    Label { Text("Users") } icon: { SettingsIcon(systemImage: "person.2", tint: .serviceApplication) }
+                }
             }
             NavigationLink(value: SettingsRoute.nodes) {
                 LabeledContent {
@@ -224,6 +229,8 @@ enum SettingsRoute: Hashable {
     case node(String)
     /// One database pool, by name.
     case pool(String)
+    /// One user, by id.
+    case user(String)
 
     /// Parses `softwareUpdate`, `node:skali-app-04` or `pool:shared`
     /// (debug launch arguments).
@@ -234,6 +241,10 @@ enum SettingsRoute: Hashable {
         }
         if argument.hasPrefix("pool:") {
             self = .pool(String(argument.dropFirst(5)))
+            return
+        }
+        if argument.hasPrefix("user:") {
+            self = .user(String(argument.dropFirst(5)))
             return
         }
         let simple: [String: SettingsRoute] = [

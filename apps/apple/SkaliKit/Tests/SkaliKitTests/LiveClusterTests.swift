@@ -28,6 +28,8 @@ struct LiveClusterTests {
 
     @Test func readsTheAdminOverview() async throws {
         _ = try await api.nodes()
+        let users = try await api.users()
+        #expect(users.contains { $0.isAdmin })
         _ = try await api.nodeMetrics(window: .hour)
         _ = try await api.nodeStorage()
         let pools = try await api.databasePools()

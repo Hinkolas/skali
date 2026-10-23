@@ -38,6 +38,17 @@ public protocol ClusterAPI: Sendable {
     /// Revokes this session on the cluster.
     func logout() async throws
 
+    // MARK: Users (admin only; every change behind the sudo gate)
+
+    /// Every account, oldest first.
+    func users() async throws -> [User]
+    func createUser(_ user: NewUser) async throws -> User
+    func updateUser(id: String, _ patch: UserPatch) async throws -> User
+    /// Deleting yourself or the last admin is refused (409).
+    func deleteUser(id: String) async throws
+    /// Sets a new password and signs the user out everywhere.
+    func resetPassword(userID: String, newPassword: String) async throws
+
     // MARK: Account security
 
     /// The caller's unexpired sessions, newest first.
@@ -145,6 +156,29 @@ extension APIClient: ClusterAPI {
         try await post("v1/auth/logout")
     }
 
+    public func users() async throws -> [User] {
+        let response: UsersResponse = try await get("v1/users")
+        return response.users
+    }
+
+    public func createUser(_ user: NewUser) async throws -> User {
+        let response: UserResponse = try await post("v1/users", body: user)
+        return response.user
+    }
+
+    public func updateUser(id: String, _ patch: UserPatch) async throws -> User {
+        let response: UserResponse = try await self.patch("v1/users/\(id)", body: patch)
+        return response.user
+    }
+
+    public func deleteUser(id: String) async throws {
+        try await delete("v1/users/\(id)")
+    }
+
+    public func resetPassword(userID: String, newPassword: String) async throws {
+        try await post("v1/users/\(userID)/password", body: PasswordReset(newPassword: newPassword))
+    }
+
     public func sessions() async throws -> [Session] {
         let response: SessionsResponse = try await get("v1/auth/sessions")
         return response.sessions
@@ -174,6 +208,18 @@ extension APIClient: ClusterAPI {
         let response: BackupCodesResponse = try await post("v1/auth/2fa/backup-codes")
         return response.backupCodes
     }
+}
+
+private struct UsersResponse: Decodable {
+    let users: [User]
+}
+
+private struct UserResponse: Decodable {
+    let user: User
+}
+
+private struct PasswordReset: Encodable {
+    let newPassword: String
 }
 
 private struct PasswordChange: Encodable {

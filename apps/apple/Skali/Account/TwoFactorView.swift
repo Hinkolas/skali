@@ -31,11 +31,21 @@ struct TwoFactorView: View {
             if enabled {
                 Section {
                     Button("Regenerate Backup Codes") { confirmingRegenerate = true }
+                        .confirmationDialog("Regenerate backup codes?", isPresented: $confirmingRegenerate, titleVisibility: .visible) {
+                            Button("Regenerate") { run { backupCodes = BackupCodes(codes: try await session.regenerateBackupCodes()) } }
+                        } message: {
+                            Text("Your current backup codes stop working immediately.")
+                        }
                 } footer: {
                     Text("Your current backup codes stop working.")
                 }
                 Section {
                     Button("Turn Off Two-Factor Authentication", role: .destructive) { confirmingDisable = true }
+                        .confirmationDialog("Turn off two-factor authentication?", isPresented: $confirmingDisable, titleVisibility: .visible) {
+                            Button("Turn Off", role: .destructive) { run { try await session.disableTwoFactor() } }
+                        } message: {
+                            Text("Signing in falls back to your password alone, and your backup codes are deleted.")
+                        }
                 }
             } else {
                 Section {
@@ -47,16 +57,6 @@ struct TwoFactorView: View {
         .navigationBarTitleDisplayMode(.inline)
         .disabled(working)
         .overlay { if working { ProgressView() } }
-        .confirmationDialog("Turn off two-factor authentication?", isPresented: $confirmingDisable, titleVisibility: .visible) {
-            Button("Turn Off", role: .destructive) { run { try await session.disableTwoFactor() } }
-        } message: {
-            Text("Signing in falls back to your password alone, and your backup codes are deleted.")
-        }
-        .confirmationDialog("Regenerate backup codes?", isPresented: $confirmingRegenerate, titleVisibility: .visible) {
-            Button("Regenerate") { run { backupCodes = BackupCodes(codes: try await session.regenerateBackupCodes()) } }
-        } message: {
-            Text("Your current backup codes stop working immediately.")
-        }
         .alert("Something Went Wrong", isPresented: Binding { error != nil } set: { if !$0 { error = nil } }) {
             Button("OK") {}
         } message: {

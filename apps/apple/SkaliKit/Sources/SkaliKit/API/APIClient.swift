@@ -52,6 +52,10 @@ public struct APIClient: Sendable {
         try await send("PUT", path, body: body)
     }
 
+    public func patch<Body: Encodable, Response: Decodable>(_ path: String, body: Body) async throws -> Response {
+        try await send("PATCH", path, body: body)
+    }
+
     public func delete(_ path: String) async throws {
         let _: Empty = try await send("DELETE", path, body: Optional<Empty>.none)
     }

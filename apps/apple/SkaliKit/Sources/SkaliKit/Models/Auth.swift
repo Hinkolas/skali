@@ -26,14 +26,16 @@ public struct User: Codable, Hashable, Sendable, Identifiable {
 
     public var isAdmin: Bool { role == "admin" }
 
-    /// Up to two initials for the avatar: "Ada Lovelace" becomes "AL".
+    /// Up to two initials for the avatar, as the Studio makes them: the
+    /// first and last word of the name ("Ada Lovelace" is "AL"), else its
+    /// first two letters, else the email's ("ci-bot@…" is "CI").
     public var initials: String {
-        let source = name.isEmpty ? email : name
-        let letters = source
-            .split(whereSeparator: { $0 == " " || $0 == "." || $0 == "@" })
-            .prefix(2)
-            .compactMap(\.first)
-        return String(letters).uppercased()
+        let words = name.split(separator: " ")
+        if words.count > 1, let first = words.first?.first, let last = words.last?.first {
+            return String([first, last]).uppercased()
+        }
+        let base = words.first.map(String.init) ?? email
+        return String(base.filter { $0.isLetter || $0.isNumber }.prefix(2)).uppercased()
     }
 }
 
@@ -59,6 +61,49 @@ public struct Session: Codable, Hashable, Sendable, Identifiable {
     }
 
     public var isCurrent: Bool { current == true }
+}
+
+/// `POST /v1/users`: an account with its initial password; there is no
+/// invitation email by design.
+public struct NewUser: Encodable, Hashable, Sendable {
+    public var email: String
+    public var name: String
+    public var password: String
+    public var role: String
+    /// Whether a member may create projects; admins always may.
+    public var createProjects: Bool
+
+    public init(email: String, name: String, password: String, role: String, createProjects: Bool) {
+        self.email = email
+        self.name = name
+        self.password = password
+        self.role = role
+        self.createProjects = createProjects
+    }
+}
+
+/// `PATCH /v1/users/{id}`: only the fields that change.
+public struct UserPatch: Encodable, Hashable, Sendable {
+    public var name: String?
+    public var role: String?
+    public var createProjects: Bool?
+
+    public init(name: String? = nil, role: String? = nil, createProjects: Bool? = nil) {
+        self.name = name
+        self.role = role
+        self.createProjects = createProjects
+    }
+
+    public var isEmpty: Bool { name == nil && role == nil && createProjects == nil }
+
+    /// What changes from `user` to the edited values.
+    public init(from user: User, name: String, role: String, createProjects: Bool, mayChangeRole: Bool) {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        self.name = trimmed == user.name ? nil : trimmed
+        self.role = mayChangeRole && role != user.role ? role : nil
+        let projects = role == "admin" ? user.createProjects : createProjects
+        self.createProjects = projects == user.createProjects ? nil : projects
+    }
 }
 
 struct SessionsResponse: Decodable {

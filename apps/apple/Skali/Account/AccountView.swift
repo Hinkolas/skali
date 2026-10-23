@@ -16,7 +16,7 @@ struct AccountView: View {
     var body: some View {
         List {
             Section {
-                AccountHeader(user: session.user)
+                PersonHeader(user: session.user)
             }
             .listRowBackground(Color.clear)
 
@@ -47,6 +47,14 @@ struct AccountView: View {
             Section {
                 Button("Sign Out", role: .destructive) { confirmingSignOut = true }
                     .frame(maxWidth: .infinity)
+                    .confirmationDialog(
+                        "Sign out of \(session.account.displayName)?", isPresented: $confirmingSignOut,
+                        titleVisibility: .visible
+                    ) {
+                        Button("Sign Out", role: .destructive) {
+                            Task { await model.signOut(session.account) }
+                        }
+                    }
             } footer: {
                 Text("Signs this device out of \(session.account.displayName). Other clusters stay signed in.")
             }
@@ -55,14 +63,6 @@ struct AccountView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task { await session.loadAccount() }
         .refreshable { await session.loadAccount() }
-        .confirmationDialog(
-            "Sign out of \(session.account.displayName)?", isPresented: $confirmingSignOut,
-            titleVisibility: .visible
-        ) {
-            Button("Sign Out", role: .destructive) {
-                Task { await model.signOut(session.account) }
-            }
-        }
         .alert("Could Not Sign Out Session", isPresented: Binding { error != nil } set: { if !$0 { error = nil } }) {
             Button("OK") {}
         } message: {
@@ -139,34 +139,6 @@ struct AccountView: View {
                 self.error = error.localizedDescription
             }
         }
-    }
-}
-
-/// Avatar, name, email and the instance role.
-private struct AccountHeader: View {
-    let user: User
-
-    var body: some View {
-        VStack(spacing: 6) {
-            Avatar(initials: user.initials, size: 88)
-                .padding(.bottom, 6)
-            Text(user.name.isEmpty ? user.email : user.name)
-                .font(.title.weight(.bold))
-                .multilineTextAlignment(.center)
-            if !user.name.isEmpty {
-                Text(user.email)
-                    .foregroundStyle(.secondary)
-            }
-            Text(user.isAdmin ? "Instance Admin" : "Member")
-                .font(.caption.weight(.medium))
-                .foregroundStyle(.tint)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 4)
-                .background(Color.accentColor.opacity(0.15), in: .capsule)
-                .padding(.top, 4)
-        }
-        .frame(maxWidth: .infinity)
-        .accessibilityElement(children: .combine)
     }
 }
 

@@ -56,13 +56,14 @@ extension AppTab {
     /// Debug builds push the Settings screen named by `-SkaliRoute <route>`.
     static var initialSettingsPath: [SettingsRoute] {
         #if DEBUG
-        // `node:<name>` and `pool:<name>` push their list first.
+        // `node:<name>`, `pool:<name>` and `user:<id>` push their list first.
         guard let argument = UserDefaults.standard.string(forKey: "SkaliRoute"),
               let route = SettingsRoute(argument: argument)
         else { return [] }
         switch route {
         case .node: return [.nodes, route]
         case .pool: return [.databases, route]
+        case .user: return [.users, route]
         default: return [route]
         }
         #else

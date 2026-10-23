@@ -7,12 +7,14 @@ public struct DemoCluster: ClusterAPI {
     /// routes refuse as a real cluster would.
     public let user: User
     private let updates: DemoUpdates
+    private let directory: DemoUsers
 
     /// `update` picks where the cluster's update stands at launch; an
     /// update the demo runs advances with the clock.
     public init(member: Bool = false, update: DemoUpdates.Scenario = .current) {
         user = member ? Self.member : Self.user
         updates = DemoUpdates(scenario: update)
+        directory = DemoUsers(signedIn: member ? Self.member : Self.user)
     }
 
     public static let address = ClusterAddress(userInput: "skali.example.com")!
@@ -183,6 +185,30 @@ public struct DemoCluster: ClusterAPI {
     }
 
     public func logout() async throws {}
+
+    public func users() async throws -> [User] {
+        try requireAdmin()
+        return directory.list()
+    }
+
+    public func createUser(_ new: NewUser) async throws -> User {
+        try requireAdmin()
+        return try directory.create(new)
+    }
+
+    public func updateUser(id: String, _ patch: UserPatch) async throws -> User {
+        try requireAdmin()
+        return try directory.update(id: id, patch)
+    }
+
+    public func deleteUser(id: String) async throws {
+        try requireAdmin()
+        try directory.delete(id: id)
+    }
+
+    public func resetPassword(userID: String, newPassword: String) async throws {
+        try requireAdmin()
+    }
 
     public func sessions() async throws -> [Session] {
         func session(_ id: String, _ ua: String, ip: String?, days: Double, current: Bool = false) -> Session {

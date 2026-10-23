@@ -25,13 +25,3 @@ struct BackupTargetView: View {
         .navigationTitle("Backup Target")
     }
 }
-
-struct PlaceholderView: View {
-    let title: String
-    let systemImage: String
-
-    var body: some View {
-        ContentUnavailableView(title, systemImage: systemImage, description: Text("Coming soon."))
-            .navigationTitle(title)
-    }
-}

@@ -83,16 +83,16 @@ struct SessionDetailView: View {
                 Section {
                     Button("Sign Out This Session", role: .destructive) { confirming = true }
                         .frame(maxWidth: .infinity)
+                        .confirmationDialog("Sign out this session?", isPresented: $confirming, titleVisibility: .visible) {
+                            Button("Sign Out", role: .destructive) { revoke() }
+                        } message: {
+                            Text("\(device.title) is signed out immediately.")
+                        }
                 }
             }
         }
         .navigationTitle(device.title)
         .navigationBarTitleDisplayMode(.inline)
-        .confirmationDialog("Sign out this session?", isPresented: $confirming, titleVisibility: .visible) {
-            Button("Sign Out", role: .destructive) { revoke() }
-        } message: {
-            Text("\(device.title) is signed out immediately.")
-        }
         .alert("Could Not Sign Out Session", isPresented: Binding { error != nil } set: { if !$0 { error = nil } }) {
             Button("OK") {}
         } message: {
