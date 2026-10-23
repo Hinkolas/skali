@@ -13,41 +13,34 @@ enum ProjectRoute: Hashable {
 struct ProjectDetailView: View {
     let project: Project
 
+    @Environment(AppModel.self) private var app
     @Environment(ClusterSession.self) private var session
 
     var body: some View {
-        ProjectOverviewScreen(project: project, session: session)
+        ProjectOverviewScreen(model: app.projectModel(for: project, in: session))
             .id(project.id)
     }
 }
 
 private struct ProjectOverviewScreen: View {
-    @State private var model: ProjectModel
-    @Environment(ClusterSession.self) private var session
+    let model: ProjectModel
     @Environment(\.openURL) private var openURL
     @State private var showingStorage = false
     @State private var confirmingRestart = false
     @State private var actionError: String?
 
-    init(project: Project, session: ClusterSession) {
-        _model = State(initialValue: ProjectModel(project: project, session: session))
-    }
-
     var body: some View {
-        content
-            .navigationTitle(model.project.label)
-            // The bar's middle holds the environment, not the title.
-            .largeSubtitle(model.summary, dot: model.health?.tint, inline: false)
+        EnvironmentGate(model: model) { overview($0) }
+            .projectPage(
+                model, title: model.project.label, subtitle: model.summary, dot: model.health?.tint, followsStatus: true)
             .toolbar { toolbar }
-            .navigationDestination(for: ProjectRoute.self) { ProjectRoutePlaceholder(route: $0) }
-            .task { await model.followChanges() }
-            .task(id: model.environment?.id) {
-                guard model.environmentIsReadable, let id = model.environment?.id else { return }
-                async let usage: Void = model.loadEnvironment()
-                await model.followStatus(of: id)
-                await usage
+            .navigationDestination(for: ProjectRoute.self) { route in
+                switch route {
+                case .deployments: DeploymentsView(model: model)
+                case .backups: ProjectBackupsView(model: model)
+                default: ProjectRoutePlaceholder(route: route)
+                }
             }
-            .refreshable { await model.refresh() }
             .sheet(isPresented: $showingStorage) {
                 if let environment = model.environment {
                     NavigationStack {
@@ -63,60 +56,6 @@ private struct ProjectOverviewScreen: View {
             } message: {
                 Text(actionError ?? "")
             }
-    }
-
-    // MARK: States
-
-    @ViewBuilder private var content: some View {
-        if let ended = model.ended {
-            ContentUnavailableView(
-                ended == .deleted ? "Project Deleted" : "No Access",
-                systemImage: ended == .deleted ? "trash" : "lock",
-                description: Text(ended == .deleted
-                                  ? "\(model.project.label) no longer exists."
-                                  : "You no longer have access to \(model.project.label)."))
-        } else if model.project.deletingAt != nil {
-            ContentUnavailableView {
-                Label("Deleting Project", systemImage: "trash")
-            } description: {
-                Text("Its environments are being deleted; the project goes with the last of them.")
-            } actions: {
-                ProgressView()
-            }
-        } else if let environments = model.environments {
-            if let environment = model.environment {
-                if environment.isLocked {
-                    ContentUnavailableView(
-                        "Environment Locked", systemImage: "lock",
-                        description: Text("You can see that \(environment.name) exists, but not what runs in it. A project admin can give you access."))
-                } else if environment.state == "releasing" {
-                    ContentUnavailableView {
-                        Label("Deleting \(environment.name)", systemImage: "trash")
-                    } description: {
-                        Text("The environment and its data are being deleted.")
-                    } actions: {
-                        ProgressView()
-                    }
-                } else {
-                    overview(environment)
-                }
-            } else if environments.isEmpty {
-                ContentUnavailableView(
-                    "No Environments", systemImage: "square.stack.3d.up.slash",
-                    description: Text("Run skali deploy in the project's repository to create its first environment."))
-            }
-        } else if let error = model.loadError {
-            ContentUnavailableView {
-                Label("Project Unavailable", systemImage: "exclamationmark.triangle")
-            } description: {
-                Text(error)
-            } actions: {
-                Button("Try Again") { Task { await model.refresh() } }
-            }
-        } else {
-            ProgressView()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
     }
 
     // MARK: Overview
@@ -212,7 +151,7 @@ private struct ProjectOverviewScreen: View {
     @ViewBuilder private var deploymentsValue: some View {
         if let runs = model.runs {
             if let active = runs.first(where: { $0.isRollout && $0.isActive }) {
-                RunStateLabel(text: active.activeLabel, tint: .blue)
+                RunStateLabel(text: active.activeLabel, tint: .orange)
             } else if let last = runs.latestRollout {
                 RunStateLabel(
                     text: "\(compactAge(since: last.finishedAt ?? last.createdAt)) ago",
@@ -235,18 +174,11 @@ private struct ProjectOverviewScreen: View {
     // MARK: Toolbar
 
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
-        if let environments = model.environments, let environment = model.environment {
-            ToolbarItem(placement: .principal) {
-                EnvironmentPicker(environments: environments, selected: environment, health: model.health) {
-                    model.environmentName = $0.name
-                }
-            }
-        }
         ToolbarItem(placement: .primaryAction) {
             Menu {
                 Button("Restart Applications", systemImage: "arrow.clockwise") { confirmingRestart = true }
                     .disabled(!canRestart)
-                Button("Open in Studio", systemImage: "safari") { openURL(studioURL) }
+                Button("Open in Studio", systemImage: "safari") { openURL(model.studioURL()) }
             } label: {
                 Label("More", systemImage: "ellipsis")
             }
@@ -265,14 +197,6 @@ private struct ProjectOverviewScreen: View {
         guard model.environmentIsReadable, let environment = model.environment else { return false }
         return environment.role >= .deploy && environment.state == "active"
             && model.definition?.applications?.isEmpty == false
-    }
-
-    private var studioURL: URL {
-        var url = session.account.address.studioURL.appending(path: "projects/\(model.project.name)")
-        if let environment = model.environment {
-            url.append(queryItems: [URLQueryItem(name: "env", value: environment.name)])
-        }
-        return url
     }
 
     private func restart() {

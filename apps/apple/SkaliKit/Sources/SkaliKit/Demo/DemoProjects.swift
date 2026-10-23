@@ -269,34 +269,11 @@ enum DemoProjects {
             return services
         }
     }
-
-    static func runs(_ fixture: Fixture, environment: String) -> [Run] {
-        let deployed = fixture.activity
-        let health = environment == fixture.environments.first ? fixture.health : .healthy
-        var runs: [Run] = []
-        if health == .progressing {
-            let started = Date.now.addingTimeInterval(-140)
-            runs.append(Run(id: "\(fixture.id)-run-live", kind: "deployment", status: "running",
-                            createdAt: started, startedAt: started))
-        }
-        if fixture.backedUp.contains(environment) {
-            let backup = Calendar.current.startOfDay(for: .now).addingTimeInterval(3 * 3600)
-            let last = backup > .now ? backup.addingTimeInterval(-86_400) : backup
-            runs.append(Run(id: "\(fixture.id)-run-backup", kind: "backup", actor: "schedule:nightly",
-                            status: "succeeded", createdAt: last, startedAt: last, finishedAt: last.addingTimeInterval(95)))
-        }
-        runs.append(Run(id: "\(fixture.id)-run-12", kind: "deployment", status: "succeeded",
-                        createdAt: deployed, startedAt: deployed, finishedAt: deployed.addingTimeInterval(118)))
-        runs.append(Run(id: "\(fixture.id)-run-11", kind: "deployment", status: "failed",
-                        createdAt: deployed.addingTimeInterval(-3_600), startedAt: deployed.addingTimeInterval(-3_600),
-                        finishedAt: deployed.addingTimeInterval(-3_480), failure: "release command exited with status 1"))
-        return runs
-    }
 }
 
 extension DemoCluster {
     public func environments(projectID: String) async throws -> [ProjectEnvironment] {
-        try DemoProjects.environments(fixture(projectID))
+        try DemoProjects.environments(fixture(projectID)).map(activity.applySchedule)
     }
 
     public func projectDraft(projectID: String) async throws -> ProjectDraft? {
@@ -308,9 +285,24 @@ extension DemoCluster {
     }
 
     public func projectChanges(projectID: String) -> AsyncThrowingStream<ProjectChange, Error> {
-        // Nothing changes in the demo: the signal to read, then quiet
-        // until the screen goes away.
-        AsyncThrowingStream { $0.yield(.ready) }
+        // The signal to read, then one whenever something the person
+        // started settles or what they changed shows up.
+        let activity = activity
+        return AsyncThrowingStream { continuation in
+            continuation.yield(.ready)
+            let task = Task {
+                var seen = activity.signature(projectID: projectID)
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(1))
+                    let now = activity.signature(projectID: projectID)
+                    if now != seen {
+                        seen = now
+                        continuation.yield(.changed)
+                    }
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
     }
 
     public func environmentStatusUpdates(environmentID: String) -> AsyncThrowingStream<EnvironmentStatus, Error> {
@@ -330,23 +322,113 @@ extension DemoCluster {
 
     public func runs(environmentID: String) async throws -> [Run] {
         let (fixture, environment) = try fixture(environmentID: environmentID)
-        return DemoProjects.runs(fixture, environment: environment)
+        return activity.runs(fixture, environment: environment)
     }
 
     public func restartEnvironment(environmentID: String) async throws -> String {
-        _ = try fixture(environmentID: environmentID)
-        return "demo-restart"
+        let (fixture, environment) = try fixture(environmentID: environmentID)
+        return activity.start("restart", fixture: fixture, environment: environment, actor: user.id).id
     }
 
-    private static let notFound = APIError.server(status: 404, code: "not_found", message: "not found")
+    static let notFound = APIError.server(status: 404, code: "not_found", message: "not found")
 
-    private func fixture(_ projectID: String) throws -> DemoProjects.Fixture {
+    func fixture(_ projectID: String) throws -> DemoProjects.Fixture {
         guard let fixture = DemoProjects.fixture(projectID: projectID) else { throw Self.notFound }
         return fixture
     }
 
-    private func fixture(environmentID: String) throws -> (DemoProjects.Fixture, String) {
+    func fixture(environmentID: String) throws -> (DemoProjects.Fixture, String) {
         guard let found = DemoProjects.fixture(environmentID: environmentID) else { throw Self.notFound }
         return found
     }
+
+    // MARK: Runs
+
+    public func run(id: String) async throws -> RunTree {
+        guard let tree = activity.tree(runID: id) else { throw Self.notFound }
+        return tree
+    }
+
+    public func runUpdates(id: String) -> AsyncThrowingStream<RunTree, Error> {
+        let activity = activity
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                while !Task.isCancelled {
+                    guard let tree = activity.tree(runID: id) else {
+                        continuation.finish(throwing: Self.notFound)
+                        return
+                    }
+                    continuation.yield(tree)
+                    if !tree.run.isActive { break }
+                    try? await Task.sleep(for: .seconds(1))
+                }
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    public func cancelRun(id: String) async throws {
+        activity.cancel(runID: id)
+    }
+
+    public func stepLogs(stepID: String, after cursor: String?) async throws -> LogPage {
+        let logs = cursor == nil ? DemoActivity.logs(stepID: stepID) : []
+        return LogPage(logs: logs, next: logs.last.map { "\($0.attempt):\($0.seq)" } ?? cursor)
+    }
+
+    public func stepLogUpdates(stepID: String, after cursor: String?) -> AsyncThrowingStream<LogEntry, Error> {
+        // Demo steps write nothing more; the stream stays open until the
+        // screen goes away.
+        AsyncThrowingStream { _ in }
+    }
+
+    public func userDirectory() async throws -> [DirectoryUser] {
+        [Self.user, Self.member].map { DirectoryUser(id: $0.id, email: $0.email, name: $0.name) }
+    }
+
+    // MARK: Backups
+
+    public func snapshots(projectID: String) async throws -> [BackupSnapshot] {
+        let fixture = try fixture(projectID)
+        guard backups.current() != nil else { throw Self.noTarget }
+        return activity.snapshots(fixture)
+    }
+
+    public func startBackup(environmentID: String) async throws -> BackupStarted {
+        let (fixture, environment) = try fixture(environmentID: environmentID)
+        guard backups.current() != nil else { throw Self.noTarget }
+        guard !fixture.databases.isEmpty || !fixture.buckets.isEmpty else {
+            throw APIError.server(
+                status: 422, code: "nothing_to_back_up",
+                message: "the active revision declares no database, bucket, or volume to snapshot")
+        }
+        let run = activity.start("backup", fixture: fixture, environment: environment, actor: user.id)
+        return BackupStarted(runId: run.id, backupId: DemoActivity.uuid("snapshot-\(run.id)"))
+    }
+
+    public func restore(environmentID: String, snapshotID: String) async throws -> String {
+        let (fixture, environment) = try fixture(environmentID: environmentID)
+        guard let snapshot = activity.snapshots(fixture).first(where: { $0.id == snapshotID }) else {
+            throw APIError.server(status: 404, code: "snapshot_not_found", message: "no snapshot with this id")
+        }
+        return activity.start("restore", fixture: fixture, environment: environment, actor: user.id, snapshot: snapshot).id
+    }
+
+    public func deleteSnapshot(projectID: String, snapshotID: String) async throws {
+        _ = try fixture(projectID)
+        activity.deleteSnapshot(snapshotID)
+    }
+
+    public func setBackupSchedule(environmentID: String, _ schedule: BackupSchedule?) async throws -> ProjectEnvironment {
+        let (fixture, environment) = try fixture(environmentID: environmentID)
+        activity.setSchedule(schedule, environmentID: environmentID)
+        guard let updated = DemoProjects.environments(fixture).first(where: { $0.name == environment }) else {
+            throw Self.notFound
+        }
+        return activity.applySchedule(updated)
+    }
+
+    private static let noTarget = APIError.server(
+        status: 503, code: "backup_target_unconfigured", message: "no backup target is configured")
 }

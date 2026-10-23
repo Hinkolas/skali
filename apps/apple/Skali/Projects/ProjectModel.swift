@@ -20,6 +20,10 @@ final class ProjectModel {
     /// the caller's to see.
     private(set) var ended: ProjectChange?
 
+    /// The project's snapshots on the backup target, read by the Backups
+    /// page.
+    private(set) var snapshots: SnapshotsState = .unknown
+
     // Per environment id, so switching back shows the last state at once.
     private var statuses: [String: EnvironmentStatus] = [:]
     private var usage: [String: EnvironmentMetrics] = [:]
@@ -36,6 +40,19 @@ final class ProjectModel {
     }
 
     var api: any ClusterAPI { session.api }
+
+    /// Names for the user ids runs record.
+    var directory: [String: DirectoryUser] { session.directory }
+    var userID: String { session.user.id }
+    var isInstanceAdmin: Bool { session.user.isAdmin }
+
+    /// The project's page in the Studio, on the environment shown.
+    func studioURL(_ page: String? = nil) -> URL {
+        var url = session.account.address.studioURL.appending(path: "projects/\(initial.name)")
+        if let page { url.append(path: page) }
+        if let environment { url.append(queryItems: [URLQueryItem(name: "env", value: environment.name)]) }
+        return url
+    }
 
     // MARK: The environment on screen
 
@@ -90,7 +107,12 @@ final class ProjectModel {
         let shown = environment?.id
         await loadProject()
         if environment?.id == shown { await loadEnvironment() }
+        lastRefresh = .now
     }
+
+    /// When everything was last read: a page opening right after another
+    /// one read it skips the read its stream's `ready` asks for.
+    private var lastRefresh: Date?
 
     private func loadProject() async {
         let api = api
@@ -119,19 +141,35 @@ final class ProjectModel {
         async let runs = try? api.runs(environmentID: id)
         if let metrics = await metrics { usage[id] = metrics }
         if let runs = await runs { runLists[id] = runs }
+        environmentLoads[id] = .now
     }
+
+    /// The same, unless a page read it moments ago: pages opening one
+    /// after another do not each read it again.
+    func loadEnvironmentIfStale() async {
+        guard let id = environment?.id else { return }
+        if let loaded = environmentLoads[id], Date.now.timeIntervalSince(loaded) < 5 { return }
+        await loadEnvironment()
+    }
+
+    @ObservationIgnored private var environmentLoads: [String: Date] = [:]
 
     /// Follows the project's change signals until the screen goes away:
     /// every (re)connect and every change re-reads what is shown. Without
     /// the stream the screen still loads once.
-    func followChanges() async {
+    /// `also` re-reads what only the page on screen shows (the snapshots).
+    func followChanges(also: (() async -> Void)? = nil) async {
+        await session.loadDirectory()
         var delay = Duration.seconds(1)
         while !Task.isCancelled {
             do {
                 for try await change in api.projectChanges(projectID: initial.id) {
                     switch change {
+                    case .ready where lastRefresh.map({ Date.now.timeIntervalSince($0) < 5 }) == true:
+                        await also?()
                     case .ready, .changed:
                         await refresh()
+                        await also?()
                         delay = .seconds(1)
                     case .deleted, .revoked:
                         ended = change
@@ -140,7 +178,10 @@ final class ProjectModel {
                 }
             } catch {
                 if session.handleUnauthorized(error) { return }
-                if environments == nil { await refresh() }
+                if environments == nil {
+                    await refresh()
+                    await also?()
+                }
             }
             try? await Task.sleep(for: delay)
             delay = min(delay * 2, .seconds(15))
@@ -167,6 +208,20 @@ final class ProjectModel {
         }
     }
 
+    /// The project's snapshots, or why the backup target refuses to list
+    /// them.
+    func loadSnapshots() async {
+        do {
+            snapshots = .loaded(try await api.snapshots(projectID: initial.id))
+        } catch is CancellationError {
+        } catch let error as APIError {
+            if session.handleUnauthorized(error) { return }
+            snapshots = .refused(SnapshotsRefusal(error))
+        } catch {
+            snapshots = .refused(SnapshotsRefusal(code: nil, status: nil, message: error.localizedDescription))
+        }
+    }
+
     // MARK: Actions
 
     /// Recreates every application's pods with what is deployed.
@@ -175,4 +230,72 @@ final class ProjectModel {
         _ = try await session.gated { try await self.api.restartEnvironment(environmentID: id) }
         await loadEnvironment()
     }
+
+    /// Snapshots the environment on screen; returns the run to follow.
+    func startBackup() async throws -> String {
+        guard let id = environment?.id else { throw CancellationError() }
+        let started = try await session.gated { try await self.api.startBackup(environmentID: id) }
+        await loadEnvironment()
+        return started.runId
+    }
+
+    /// Restores a snapshot into an environment; returns the run to follow.
+    func restore(_ snapshot: BackupSnapshot, into environment: ProjectEnvironment) async throws -> String {
+        let runID = try await session.gated {
+            try await self.api.restore(environmentID: environment.id, snapshotID: snapshot.id)
+        }
+        await loadEnvironment()
+        return runID
+    }
+
+    func deleteSnapshot(_ snapshot: BackupSnapshot) async throws {
+        try await session.gated { try await self.api.deleteSnapshot(projectID: self.initial.id, snapshotID: snapshot.id) }
+        if case .loaded(let list) = snapshots {
+            snapshots = .loaded(list.filter { $0.id != snapshot.id })
+        }
+    }
+
+    /// Sets or (with nil) turns off the environment's automatic backups.
+    func setBackupSchedule(_ schedule: BackupSchedule?, for environment: ProjectEnvironment) async throws {
+        let updated = try await session.gated {
+            try await self.api.setBackupSchedule(environmentID: environment.id, schedule)
+        }
+        if let index = environments?.firstIndex(where: { $0.id == updated.id }) {
+            environments?[index] = updated
+        }
+    }
+
+    func cancelRun(_ run: Run) async throws {
+        try await session.gated { try await self.api.cancelRun(id: run.id) }
+    }
+}
+
+/// What the Backups page knows about the project's snapshots.
+enum SnapshotsState {
+    case unknown
+    case loaded([BackupSnapshot])
+    case refused(SnapshotsRefusal)
+}
+
+/// Why snapshots could not be listed, in the words the page uses.
+struct SnapshotsRefusal {
+    let code: String?
+    let status: Int?
+    let message: String
+
+    init(code: String?, status: Int?, message: String) {
+        self.code = code
+        self.status = status
+        self.message = message
+    }
+
+    init(_ error: APIError) {
+        self.init(code: error.code, status: error.status, message: error.localizedDescription)
+    }
+
+    /// No target is configured; an instance admin can set one.
+    var isUnconfigured: Bool { code == "backup_target_unconfigured" }
+    var isUnreachable: Bool { code == "backup_target_unreachable" }
+    /// The daemon has no backups route at all (API-only mode).
+    var isUnsupported: Bool { status == 404 && code == nil }
 }

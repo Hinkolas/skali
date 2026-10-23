@@ -38,7 +38,20 @@ struct LiveClusterTests {
             _ = try await api.projectDraft(projectID: project.id)
             _ = try await api.projectStorage(projectID: project.id)
             _ = try await api.environmentMetrics(environmentID: environment.id, window: .day)
-            _ = try await api.runs(environmentID: environment.id)
+            let runs = try await api.runs(environmentID: environment.id)
+            if let run = runs.first {
+                let tree = try await api.run(id: run.id)
+                #expect(tree.run.id == run.id)
+                if let step = tree.steps.first {
+                    _ = try await api.stepLogs(stepID: step.id, after: nil)
+                }
+            }
+            do {
+                _ = try await api.snapshots(projectID: project.id)
+            } catch let error as APIError where error.status == 503 || (error.status == 404 && error.code == nil) {
+                // No backup target, or an API-only daemon without the route.
+            }
+            #expect(try await api.userDirectory().isEmpty == false)
             var statuses = api.environmentStatusUpdates(environmentID: environment.id).makeAsyncIterator()
             let status = try await statuses.next()
             #expect(status?.environmentId == environment.id)

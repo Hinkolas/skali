@@ -52,8 +52,8 @@ extension APIClient {
     /// consuming task is cancelled. Reconnecting is the caller's call:
     /// every stream of the daemon starts with a full document (or a
     /// `ready` signal), so a new connection never needs a cursor.
-    public func events(_ path: String) -> AsyncThrowingStream<ServerSentEvent, Error> {
-        let request = makeRequest("GET", path, accept: "text/event-stream")
+    public func events(_ path: String, query: [URLQueryItem] = []) -> AsyncThrowingStream<ServerSentEvent, Error> {
+        let request = makeRequest("GET", path, query: query, accept: "text/event-stream")
         let session = session
         return AsyncThrowingStream { continuation in
             let task = Task {

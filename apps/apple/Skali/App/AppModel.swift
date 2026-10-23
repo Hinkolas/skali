@@ -10,7 +10,22 @@ import UIKit
 @Observable
 final class AppModel {
     private(set) var accounts: [ClusterAccount] = []
-    private(set) var session: ClusterSession?
+    private(set) var session: ClusterSession? {
+        // The open projects belong to the cluster being left.
+        didSet { if session !== oldValue { projectModels = [:] } }
+    }
+
+    /// One model per project opened on the selected cluster, so every page
+    /// of a project, and the project opened again, share what was read.
+    /// Kept here rather than on the session: the models hold the session.
+    @ObservationIgnored private var projectModels: [String: ProjectModel] = [:]
+
+    func projectModel(for project: Project, in session: ClusterSession) -> ProjectModel {
+        if let model = projectModels[project.id] { return model }
+        let model = ProjectModel(project: project, session: session)
+        projectModels[project.id] = model
+        return model
+    }
     /// Kept here rather than in the tab view so switching clusters stays
     /// on the tab the person was on.
     var selectedTab: AppTab = .initial

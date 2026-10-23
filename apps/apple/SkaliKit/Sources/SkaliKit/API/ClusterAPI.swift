@@ -29,6 +29,37 @@ public protocol ClusterAPI: Sendable {
     /// Recreates every application's pods with what is deployed; returns
     /// the run's id.
     func restartEnvironment(environmentID: String) async throws -> String
+
+    // MARK: Runs
+
+    func run(id: String) async throws -> RunTree
+    /// The run document, then a new one on every change; ends once the
+    /// run has settled.
+    func runUpdates(id: String) -> AsyncThrowingStream<RunTree, Error>
+    /// Before promotion the run stops cleanly; after it the target is
+    /// reverted.
+    func cancelRun(id: String) async throws
+    /// One page of a step's log after `cursor` (from the start without one).
+    func stepLogs(stepID: String, after cursor: String?) async throws -> LogPage
+    /// A step's log entries as they are written, after `cursor`.
+    func stepLogUpdates(stepID: String, after cursor: String?) -> AsyncThrowingStream<LogEntry, Error>
+    /// Every account's id, name and email, to name the actors of runs.
+    func userDirectory() async throws -> [DirectoryUser]
+
+    // MARK: A project's backups
+
+    /// Every environment's snapshots, newest first, read from the backup
+    /// target; 503 without a target or when it does not answer.
+    func snapshots(projectID: String) async throws -> [BackupSnapshot]
+    /// Snapshots every database, bucket and volume of the environment.
+    func startBackup(environmentID: String) async throws -> BackupStarted
+    /// Sudo: replaces the environment's data with the snapshot's; returns
+    /// the run's id.
+    func restore(environmentID: String, snapshotID: String) async throws -> String
+    /// Sudo: removes the snapshot from the backup target for good.
+    func deleteSnapshot(projectID: String, snapshotID: String) async throws
+    /// Environment admin, sudo: nil turns automatic backups off.
+    func setBackupSchedule(environmentID: String, _ schedule: BackupSchedule?) async throws -> ProjectEnvironment
     /// Admin only.
     func nodes() async throws -> [ClusterNode]
     /// Admin only: CPU and memory per node over `window`.
@@ -164,6 +195,58 @@ extension APIClient: ClusterAPI {
     public func restartEnvironment(environmentID: String) async throws -> String {
         let response: RunStarted = try await post("v1/environments/\(environmentID)/restart")
         return response.runId
+    }
+
+    public func run(id: String) async throws -> RunTree {
+        try await get("v1/runs/\(id)")
+    }
+
+    public func runUpdates(id: String) -> AsyncThrowingStream<RunTree, Error> {
+        .decoding(events("v1/runs/\(id)/stream"), event: "run")
+    }
+
+    public func cancelRun(id: String) async throws {
+        try await post("v1/runs/\(id)/cancel")
+    }
+
+    public func stepLogs(stepID: String, after cursor: String?) async throws -> LogPage {
+        try await get("v1/steps/\(stepID)/logs", query: cursor.map { [URLQueryItem(name: "after", value: $0)] } ?? [])
+    }
+
+    public func stepLogUpdates(stepID: String, after cursor: String?) -> AsyncThrowingStream<LogEntry, Error> {
+        .decoding(
+            events("v1/steps/\(stepID)/logs/stream", query: cursor.map { [URLQueryItem(name: "after", value: $0)] } ?? []),
+            event: "log")
+    }
+
+    public func userDirectory() async throws -> [DirectoryUser] {
+        let response: DirectoryResponse = try await get("v1/users")
+        return response.users
+    }
+
+    public func snapshots(projectID: String) async throws -> [BackupSnapshot] {
+        let response: SnapshotsResponse = try await get("v1/projects/\(projectID)/backups")
+        return response.snapshots
+    }
+
+    public func startBackup(environmentID: String) async throws -> BackupStarted {
+        try await post("v1/environments/\(environmentID)/backups")
+    }
+
+    public func restore(environmentID: String, snapshotID: String) async throws -> String {
+        let response: RunStarted = try await post(
+            "v1/environments/\(environmentID)/restore", body: RestoreRequest(snapshotId: snapshotID))
+        return response.runId
+    }
+
+    public func deleteSnapshot(projectID: String, snapshotID: String) async throws {
+        try await delete("v1/projects/\(projectID)/backups/\(snapshotID)")
+    }
+
+    public func setBackupSchedule(environmentID: String, _ schedule: BackupSchedule?) async throws -> ProjectEnvironment {
+        let response: EnvironmentResponse = try await patch(
+            "v1/environments/\(environmentID)", body: BackupSchedulePatch(backup: schedule))
+        return response.environment
     }
 
     public func nodes() async throws -> [ClusterNode] {
@@ -351,4 +434,27 @@ private struct DeviceStart: Encodable {
 
 private struct DevicePollRequest: Encodable {
     let deviceCode: String
+}
+
+private struct RestoreRequest: Encodable {
+    let snapshotId: String
+}
+
+/// Sends `backup` even when nil: an explicit null turns the schedule off,
+/// where an absent property would keep it.
+struct BackupSchedulePatch: Encodable {
+    let backup: BackupSchedule?
+
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(backup, forKey: .backup)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case backup
+    }
+}
+
+private struct EnvironmentResponse: Decodable {
+    let environment: ProjectEnvironment
 }

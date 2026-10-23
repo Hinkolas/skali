@@ -42,6 +42,10 @@ final class ClusterSession {
     /// opening the project again shows the same one.
     var environmentChoices: [String: String] = [:]
 
+    /// Every account's name by id, for the actors of runs; read once.
+    private(set) var directory: [String: DirectoryUser] = [:]
+    private var directoryLoaded = false
+
     private let reauthenticate: () async throws -> Void
     private let onUnauthorized: () -> Void
 
@@ -202,6 +206,15 @@ final class ClusterSession {
         try await gated { try await self.api.removeBackupTarget() }
         backups = .notConfigured
         system.backup = .none
+    }
+
+    /// The user directory, once per session; a failed read leaves ids
+    /// unresolved and is tried again next time.
+    func loadDirectory() async {
+        guard !directoryLoaded else { return }
+        guard let users = try? await api.userDirectory() else { return }
+        directory = Dictionary(users.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        directoryLoaded = true
     }
 
     func loadUsers() async {

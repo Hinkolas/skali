@@ -63,6 +63,20 @@ extension AppTab {
         #endif
     }
 
+    /// Debug builds go on to the project page named by
+    /// `-SkaliProjectRoute <page>`: `deployments` or `backups`.
+    static var initialProjectRoute: ProjectRoute? {
+        #if DEBUG
+        switch UserDefaults.standard.string(forKey: "SkaliProjectRoute") {
+        case "deployments": .deployments
+        case "backups": .backups
+        default: nil
+        }
+        #else
+        nil
+        #endif
+    }
+
     /// Debug builds push the Settings screen named by `-SkaliRoute <route>`.
     static var initialSettingsPath: [SettingsRoute] {
         #if DEBUG

@@ -56,7 +56,8 @@ Launch arguments (Edit Scheme > Run > Arguments):
 - `-SkaliTab settings` (Debug builds only) opens on the given tab: `projects`,
   `settings` or `search`.
 - `-SkaliProject birefnet-proxy` (Debug builds only) opens the project with
-  that name once the list has loaded.
+  that name once the list has loaded; `-SkaliProjectRoute deployments` (or
+  `backups`) goes on to that page.
 - `-SkaliRoute softwareUpdate` (Debug builds only) pushes a Settings screen:
   `account`, `users`, `nodes`, `databases`, `backups`, `softwareUpdate`,
   `node:<name>` for one node, `pool:<name>` for one database pool, or

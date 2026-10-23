@@ -8,7 +8,9 @@ public struct DemoCluster: ClusterAPI {
     public let user: User
     private let updates: DemoUpdates
     private let directory: DemoUsers
-    private let backups: DemoBackups
+    let backups: DemoBackups
+    /// Schedules, snapshots and runs the demo changed or started.
+    let activity = DemoActivity()
 
     /// `update` picks where the cluster's update stands at launch; an
     /// update the demo runs advances with the clock.

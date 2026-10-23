@@ -64,6 +64,7 @@ struct ProjectsView: View {
         else { return }
         Self.openedInitialProject = true
         model.projectsPath.append(project)
+        if let route = AppTab.initialProjectRoute { model.projectsPath.append(route) }
     }
 
     private static var openedInitialProject = false
