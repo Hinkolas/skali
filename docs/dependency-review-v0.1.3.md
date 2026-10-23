@@ -103,7 +103,7 @@ implementation/verification reference or an explicit, bounded decision.
 | ID | Priority and task | Required evidence before closing |
 | --- | --- | --- |
 | D1 | **Before stable: update PostgreSQL 17/18 system images and assess pgvector.** Pins moved from 17.9/18.4 to 17.11/18.6 on branch `fix/postgres-patch-updates`; see [PostgreSQL patch updates](postgres-patch-updates.md#2026-10-22-179--1711-and-184--186). | Choose maintained same-major images containing at least the applicable 17.11/18.6 core fixes; scan both architectures and extension/OS packages. Verify provisioning, extensions, role isolation, SQL, logical backup/restore, and existing-pool patch upgrades. Catalog changes affect newly created pools; persisted pools retain their copied image, so demonstrate how existing installs receive the fix too. **Done:** image comparison, release-note classification, scans (below), automatic serialized pool patch updates with unit, DB and k3d live tests. **Remaining:** rehearse an upgrade from v0.1.3-rc.7 with existing pools on the old images, covering provisioning, extensions, SQL and backup/restore after the move; publish the tenant follow-ups in the release notes. |
-| D2 | **After the next RC, before stable: address registry 2.8.3 with [#242](https://github.com/Hinkolas/skali/issues/242).** | Owner decision on 2026-10-22: combine the registry dependency work with the internal-S3 storage/replaceable-replica rework; retain the current registry for the next RC. Its binary uses Go 1.20.8 and its Alpine 3.18.12 base is end of support. Scan the selected maintained image and verify existing-data migration, token auth/signatures, push/pull, import/blob mounting, cross-replica behavior and the slow authenticated upload regression. Verify this substantive change in a later RC before v0.1.3 stable. Distribution 3.1.2 is a candidate to evaluate, not an approved drop-in upgrade. |
+| D2 | **Before stable: address registry 2.8.3.** Rescheduled on 2026-10-23 as a plain image update for rc.9; [#242](https://github.com/Hinkolas/skali/issues/242) moves to v0.1.4. | Original owner decision on 2026-10-22: combine the registry dependency work with the internal-S3 storage/replaceable-replica rework; retain the current registry for the next RC. Its binary uses Go 1.20.8 and its Alpine 3.18.12 base is end of support. Scan the selected maintained image and verify existing-data migration, token auth/signatures, push/pull, import/blob mounting, cross-replica behavior and the slow authenticated upload regression. Verify this substantive change in a later RC before v0.1.3 stable. Distribution 3.1.2 is a candidate to evaluate, not an approved drop-in upgrade. **Done for rc.9:** Distribution 3.1.2 on the existing filesystem storage; see [registry](#registry--2026-10-23). **Remaining:** rehearse the rc.8 → rc.9 upgrade with existing images and a slow authenticated push on khz. |
 | D3 | **Before stable: disposition k3s and its edge/runtime dependencies.** | Inspect the k3s, containerd/runc/CNI, Traefik, CoreDNS, Helm helper, local-path and metrics-server findings. Select a supported patch bundle or document advisory-specific non-applicability; update the installer/localdev/built-in inventory together. Rehearse cluster and dev upgrades, network policies, aliases/TLS, and slow pushes. **Done for rc.9:** k3s v1.36.5+k3s1 with Traefik 3.7.13; see [k3s and edge](#k3s-and-edge--2026-10-23). **Remaining:** rehearse the rc.8 → rc.9 upgrade and a slow authenticated push on khz. |
 | D4 | **Before stable: SeaweedFS and CNPG/cert-manager operator review.** | Scan maintained candidates/rebuilds and separate used server paths from unused bundled features. For SeaweedFS verify authenticated S3, bootstrap deny identity, credential rotation/retirement, bucket deletion/quota, restore and cancellation, and metadata/replication behavior. For operators verify bootstrap, reconciliation and ACME on the chosen versions. **Done for rc.9:** SeaweedFS 4.48 (telemetry off), CNPG 1.30.1, cert-manager 1.21.2; see [operators and object storage](#operators-and-object-storage--2026-10-23). **Remaining:** rehearse the rc.8 → rc.9 upgrade on khz. |
 | D5 | **Before a release supporting Longhorn: disposition its full image set.** | Manager/engine/instance/share/backing/support/UI and CSI images contain findings. Upgrade as a compatible set or document exact non-applicability. Verify existing-volume attach, read/write, restart, backup/restore, node disruption and upgrade. Local-path testing does not validate this driver. |
@@ -120,6 +120,9 @@ bounded deferral for that RC; D2 remains open for stable. #242 must include the
 dependency update and existing-data migration verification, followed by a
 later RC and affected regression checks. D1's PostgreSQL work remains the next
 recommended dependency task.
+
+Superseded on 2026-10-23: #242 moves to v0.1.4, after #257, and D2 becomes a
+plain registry image update on the existing filesystem storage in rc.9.
 
 D1 is supported by PostgreSQL's own notices, beyond scanner counts. For
 example, core regexp issue CVE-2026-14664 is fixed in 17.11 and 18.6, and
@@ -265,6 +268,34 @@ Verification on 2026-10-23: installer, Lima and local-dev unit tests;
 update through the selected Skali remote. The suites run the CLI with the
 developer's real configuration, so that step reaches whatever remote is
 selected; here the session had expired and the request was refused.
+
+### Registry — 2026-10-23
+
+D2 was taken up for rc.9 with Trivy 0.76.1 (advisory database of 2026-10-22
+19:14 UTC). Storage stays on the filesystem volume; S3 storage and replicas
+remain #242.
+
+| Input | Change | Evidence and decision |
+| --- | --- | --- |
+| Registry | `registry:2.8.3` → `registry:3.1.2` (`sha256:01cd312e…efd2`, Alpine 3.24.3) | 2/29/50/4/0 → 0/6/13/4/1 on both architectures. 2.8.3 is built with Go 1.20.8 on end-of-life Alpine 3.18.12. 3.1.2 is the newest release; its highs are Go 1.26.8 standard library, x/net and klauspost/compress. It also fixes GHSA-6pjf-3r9x-m592 (tag deletion ignored `storage.delete.enabled`, fixed in 3.1.1). GHSA-phw4-mc57-4hwc (untrusted JWK in token auth) only affected 3.0 pre-releases. |
+| Config path | `/etc/docker/registry` → `/etc/distribution` | The 3.x image reads `/etc/distribution/config.yml`; at the old path the rendered config would be ignored in favour of the image's default. |
+| Token trust | adds `jwks.json` to `skali-registry-token` and `jwks:` to the token config | Distribution 3 indexes `rootcertbundle` keys by RFC 7638 thumbprint, while skalid's tokens carry the libtrust key ID in `kid` and no `x5c`. The JWKS lists the same certificate's key under that ID, so tokens skalid mints today verify on both 2.8.3 and 3.1.2 and the upgrade needs no change to token minting or ordering between the registry and skalid. The certificate stays in `rootcertbundle`. A certificate the JWKS cannot be built from fails profile validation. |
+
+Verification on 2026-10-23, against the actual images with tokens minted by
+`registrytoken.Signer` through a stand-in realm: a two-platform index and a
+64 MiB layer pushed to 2.8.3 with the current configuration; 3.1.2 with the
+new configuration on the same data directory served the same digests and
+every blob, accepted a cross-repository push and a new push, and refused
+anonymous requests and a token signed by another key. 3.1.2 without the JWKS
+refused valid tokens. 2.8.3 started again on that directory served the image
+3.1.2 had written.
+
+On Lima, `task test:cluster` installed the platform with 3.1.2 and passed its
+registry token phase: anonymous requests are challenged with skalid's realm,
+skalid-minted tokens push inside their granted repository and are refused
+outside it, and the node credential earns pull-only tokens. (The stale
+repeat-upgrade step was skipped locally to reach it; the suite later fails
+at an unrelated join-phase assertion.) Go tests pass with the database.
 
 ## Downloaded and local tool binaries
 
@@ -448,3 +479,4 @@ where the counts agree they are shown once for readability.
 | `rancher/mirrored-library-traefik:3.7.13@sha256:f86a2cab1b5c649070c49f883c743dd32d8485a56e3368c5f93b9e91f1e91259` (D3, 2026-10-23) | runtime | amd64, arm64 | 0/7/22/17/3 |
 | `rancher/mirrored-coredns-coredns:1.14.7@sha256:7efd3c635b03efd68c4e8398fc45f0d993d0e9ab016f72c1cefb0fd6d01aa286` (D3, 2026-10-23) | runtime | amd64, arm64 | 0/22/22/1/2 |
 | `rancher/local-path-provisioner:v0.0.37@sha256:e757967a5ec338f6a9b371c5a9688bedaa8c3578ea3dd4db329ea0084be0a86f` (D3, 2026-10-23) | runtime | amd64, arm64 | 0/15/13/1/0 |
+| `registry:3.1.2@sha256:01cd312e67026f06f5d89c3e133a4a9adc7cb9eeb9b1194e0b2954dfd770efd2` (D2, 2026-10-23) | runtime | amd64, arm64 | 0/6/13/4/1 |

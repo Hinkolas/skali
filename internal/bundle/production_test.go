@@ -1,6 +1,7 @@
 package bundle
 
 import (
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/Hinkolas/skali/internal/layout"
+	"github.com/Hinkolas/skali/internal/registrytoken"
 )
 
 func localProfile() Profile {
@@ -31,6 +33,17 @@ func localCA() *Local {
 	}
 }
 
+// testTokenKeyPEM and testTokenCertPEM are a registry token keypair
+// generated once per test run: production rendering needs a parseable
+// certificate for the registry's JWKS, and no key belongs in the tree.
+var testTokenKeyPEM, testTokenCertPEM = func() (string, string) {
+	key, cert, err := registrytoken.GenerateSigningKeypair()
+	if err != nil {
+		panic(err)
+	}
+	return string(key), string(cert)
+}()
+
 func productionProfile() Profile {
 	return Profile{
 		SkalidImage:  "ghcr.io/hinkolas/skalid:v2.0.0",
@@ -40,8 +53,8 @@ func productionProfile() Profile {
 			ClusterName:     "acme",
 			IngressHost:     "skali.example.com",
 			RegistryDomain:  "registry.example.com",
-			TokenKeyPEM:     "-----BEGIN EC PRIVATE KEY-----\nfake\n-----END EC PRIVATE KEY-----\n",
-			TokenCertPEM:    "-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n",
+			TokenKeyPEM:     testTokenKeyPEM,
+			TokenCertPEM:    testTokenCertPEM,
 			NodePullSecret:  "node-pull-secret",
 			ACMEEmail:       "ops@example.com",
 			Capabilities:    layout.Capabilities,
@@ -313,13 +326,23 @@ func TestRenderProductionObjects(t *testing.T) {
 	require.Contains(t, configYML, "service: skali-registry")
 	require.Contains(t, configYML, "issuer: skalid")
 	require.Contains(t, configYML, "rootcertbundle: /etc/skali/registry-token/cert.pem")
+	require.Contains(t, configYML, "jwks: /etc/skali/registry-token/jwks.json")
 	require.NotNil(t, tokenSecret)
 	require.Equal(t, "skali-registry-token", tokenSecret.GetName())
+	// The JWKS trusts the signing key under the kid skalid's tokens carry.
+	encodedJWKS, _, _ := unstructured.NestedString(tokenSecret.Object, "data", "jwks.json")
+	jwks, err := base64.StdEncoding.DecodeString(encodedJWKS)
+	require.NoError(t, err)
+	signer, err := registrytoken.LoadSigner([]byte(testTokenKeyPEM))
+	require.NoError(t, err)
+	require.Contains(t, string(jwks), `"kid":"`+signer.KeyID()+`"`)
 	require.Equal(t, "Secret", objects.Registry[0].GetKind(),
 		"the token secret must precede the deployment that mounts it")
 	deploymentJSON, err := registryDeployment.MarshalJSON()
 	require.NoError(t, err)
 	require.Contains(t, string(deploymentJSON), "/etc/skali/registry-token")
+	require.Contains(t, string(deploymentJSON), `"path":"jwks.json"`)
+	require.Contains(t, string(deploymentJSON), `"mountPath":"/etc/distribution"`)
 	require.Contains(t, string(deploymentJSON), "skali-registry-token")
 
 	// The registry edge binds the registry domain with its own explicit

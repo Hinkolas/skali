@@ -54,6 +54,50 @@ func TestGenerateSigningKeypair(t *testing.T) {
 	require.Equal(t, signer.KeyID(), certKeyID)
 }
 
+// The JWKS lists the certificate's key under the kid Mint signs with, and
+// a minted token verifies against that key.
+func TestTrustedKeySet(t *testing.T) {
+	keyPEM, certPEM, err := GenerateSigningKeypair()
+	require.NoError(t, err)
+	signer, err := LoadSigner(keyPEM)
+	require.NoError(t, err)
+
+	raw, err := TrustedKeySet(certPEM)
+	require.NoError(t, err)
+	var set struct {
+		Keys []map[string]string `json:"keys"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &set))
+	require.Len(t, set.Keys, 1)
+	key := set.Keys[0]
+	require.Equal(t, signer.KeyID(), key["kid"])
+	require.Equal(t, "EC", key["kty"])
+	require.Equal(t, "P-256", key["crv"])
+	require.Equal(t, "ES256", key["alg"])
+
+	x, err := base64.RawURLEncoding.DecodeString(key["x"])
+	require.NoError(t, err)
+	y, err := base64.RawURLEncoding.DecodeString(key["y"])
+	require.NoError(t, err)
+	require.Len(t, x, 32)
+	require.Len(t, y, 32)
+	public := &ecdsa.PublicKey{Curve: signer.key.Curve, X: new(big.Int).SetBytes(x), Y: new(big.Int).SetBytes(y)}
+
+	token, err := signer.Mint(Service, "ada", nil, time.Now(), TokenTTL)
+	require.NoError(t, err)
+	parts := strings.Split(token, ".")
+	digest := sha256.Sum256([]byte(parts[0] + "." + parts[1]))
+	signature, err := base64.RawURLEncoding.DecodeString(parts[2])
+	require.NoError(t, err)
+	require.True(t, ecdsa.Verify(public, digest[:],
+		new(big.Int).SetBytes(signature[:32]), new(big.Int).SetBytes(signature[32:])))
+
+	_, err = TrustedKeySet([]byte("not a certificate"))
+	require.Error(t, err)
+	_, err = TrustedKeySet([]byte(pinnedKeyPEM))
+	require.Error(t, err, "a key is not a certificate")
+}
+
 func TestKeyIDPinned(t *testing.T) {
 	signer, err := LoadSigner([]byte(pinnedKeyPEM))
 	require.NoError(t, err)

@@ -132,6 +132,55 @@ func deriveKeyID(public *ecdsa.PublicKey) (string, error) {
 	return strings.Join(groups, ":"), nil
 }
 
+// TrustedKeySet renders the JWKS the registry trusts tokens against: the
+// signing certificate's public key under the libtrust-style key ID Mint
+// puts in the kid header. Distribution 3 indexes its rootcertbundle keys by
+// RFC 7638 thumbprint instead, so without this set it refuses every token
+// skalid mints; with it, tokens verify on both Distribution 2 and 3.
+func TrustedKeySet(certPEM []byte) ([]byte, error) {
+	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		return nil, errors.New("registrytoken: signing certificate is not PEM")
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("registrytoken: parse signing certificate: %w", err)
+	}
+	public, ok := cert.PublicKey.(*ecdsa.PublicKey)
+	if !ok || public.Curve != elliptic.P256() {
+		return nil, errors.New("registrytoken: signing certificate is not an ECDSA P-256 key")
+	}
+	keyID, err := deriveKeyID(public)
+	if err != nil {
+		return nil, err
+	}
+	// JWK coordinates are the fixed-size big-endian field elements.
+	x := make([]byte, 32)
+	y := make([]byte, 32)
+	public.X.FillBytes(x)
+	public.Y.FillBytes(y)
+	type jwk struct {
+		KeyType   string `json:"kty"`
+		Curve     string `json:"crv"`
+		X         string `json:"x"`
+		Y         string `json:"y"`
+		KeyID     string `json:"kid"`
+		Use       string `json:"use"`
+		Algorithm string `json:"alg"`
+	}
+	return json.Marshal(struct {
+		Keys []jwk `json:"keys"`
+	}{Keys: []jwk{{
+		KeyType:   "EC",
+		Curve:     "P-256",
+		X:         base64.RawURLEncoding.EncodeToString(x),
+		Y:         base64.RawURLEncoding.EncodeToString(y),
+		KeyID:     keyID,
+		Use:       "sig",
+		Algorithm: "ES256",
+	}}})
+}
+
 // claims is the registry token claim set. aud is a plain string because
 // Distribution decodes a single audience.
 type claims struct {

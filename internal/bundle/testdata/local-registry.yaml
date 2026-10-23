@@ -45,14 +45,14 @@ spec:
       priorityClassName: skali-critical
       containers:
         - name: registry
-          image: registry:2.8.3
+          image: registry:3.1.2
           ports:
             - containerPort: 5000
           volumeMounts:
             - name: data
               mountPath: /var/lib/registry
             - name: config
-              mountPath: /etc/docker/registry
+              mountPath: /etc/distribution
       volumes:
         - name: data
           persistentVolumeClaim:
