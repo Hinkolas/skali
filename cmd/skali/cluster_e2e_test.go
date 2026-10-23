@@ -507,9 +507,9 @@ storage:
 	h.vmOKOn(e2eAgentVM, "chmod", "600", serverTokenFile)
 
 	// A mistyped/incorrect endpoint fails authenticated network preflight
-	// before the joining host receives a binary, config, or ownership
-	// record. The same token can immediately be retried with the right
-	// endpoint.
+	// (after retrying for the enrollment budget, about two minutes) before
+	// the joining host receives a binary, config, or ownership record. The
+	// same token can immediately be retried with the right endpoint.
 	wrongJoinOut, code := h.vmOn(e2eAgentVM, "sudo", "/tmp/skali", "cluster", "join",
 		"--server", "https://127.0.0.1:6444", "--token-file", serverTokenFile,
 		"--role", "server", "--capabilities", "application", "--cluster", "e2e",

@@ -184,6 +184,15 @@ func TestRetryClassificationAndBudget(t *testing.T) {
 	_, err := (EnrollmentClient{Endpoint: server.URL, Token: token, RetryBudget: 50 * time.Millisecond}).Preflight(context.Background(), host)
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	require.Less(t, time.Since(started), time.Second)
+	// An endpoint that refuses every attempt still says so once the
+	// budget runs out.
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	closed := "https://" + listener.Addr().String()
+	require.NoError(t, listener.Close())
+	_, err = (EnrollmentClient{Endpoint: closed, Token: token, RetryBudget: 50 * time.Millisecond}).Preflight(context.Background(), host)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.ErrorContains(t, err, "refused the connection")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	_, err = (EnrollmentClient{Endpoint: server.URL, Token: token}).Preflight(ctx, host)

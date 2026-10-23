@@ -372,6 +372,10 @@ func runReconciledEnrollment(ctx context.Context, opts reconciledEnrollmentOptio
 	preflight, err := client.Preflight(ctx, hostFacts)
 	remainingBudget := max(time.Nanosecond, 2*time.Minute-time.Since(requestStarted))
 	if err != nil {
+		// A fresh join has not touched this host before preflight.
+		if saved == nil {
+			return nil, fmt.Errorf("%w\nNo changes were made. %s", err, enrollmentRecoveryHint(err, saved))
+		}
 		return nil, fmt.Errorf("%w\n%s", err, enrollmentRecoveryHint(err, saved))
 	}
 	opts.Capabilities, err = joinCapabilities(ctx, opts.Capabilities, preflight.AllowedCapabilities, opts.Interactive)
