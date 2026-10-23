@@ -29,7 +29,7 @@ struct MainTabView: View {
             } else {
                 Tab("Account", systemImage: "person.crop.circle", value: .settings) {
                     NavigationStack {
-                        AccountView(isRoot: true)
+                        AccountView()
                     }
                 }
             }
