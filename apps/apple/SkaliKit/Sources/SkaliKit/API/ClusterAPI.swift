@@ -10,6 +10,10 @@ public protocol ClusterAPI: Sendable {
     func projects() async throws -> [Project]
     /// Admin only.
     func nodes() async throws -> [ClusterNode]
+    /// Admin only: CPU and memory per node over `window`.
+    func nodeMetrics(window: NodeMetrics.Window) async throws -> NodeMetrics
+    /// Admin only: the newest disk sample per node.
+    func nodeStorage() async throws -> [NodeStorage]
     /// Admin only.
     func databasePools() async throws -> [DatabasePool]
     /// Admin only; nil when no target is configured.
@@ -64,6 +68,15 @@ extension APIClient: ClusterAPI {
 
     public func nodes() async throws -> [ClusterNode] {
         let response: NodesResponse = try await get("v1/nodes")
+        return response.nodes
+    }
+
+    public func nodeMetrics(window: NodeMetrics.Window) async throws -> NodeMetrics {
+        try await get("v1/nodes/metrics", query: [URLQueryItem(name: "window", value: window.rawValue)])
+    }
+
+    public func nodeStorage() async throws -> [NodeStorage] {
+        let response: NodesStorageResponse = try await get("v1/nodes/storage")
         return response.nodes
     }
 

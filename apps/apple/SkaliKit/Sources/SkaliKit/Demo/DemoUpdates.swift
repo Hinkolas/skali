@@ -31,7 +31,7 @@ public final class DemoUpdates: Sendable {
     private static let verifySeconds = 5.0
 
     private static let nodeNames: [(id: String, name: String, controller: Bool)] =
-        (1...3).map { ("cp-\($0)", "cp-\($0)", true) } + (1...8).map { ("worker-\($0)", "worker-\($0)", false) }
+        DemoCluster.nodeNames.map { ($0.name, $0.name, $0.controller) }
 
     func save(_ settings: UpdateSettings) {
         state.withLock { $0.settings = settings }
@@ -83,7 +83,7 @@ public final class DemoUpdates: Sendable {
             let operation = UpdateOperation(
                 id: "op-demo", phase: "failed", targetVersion: Self.target, fromVersion: Self.installed,
                 startedAt: .now.addingTimeInterval(-25 * 60), updatedAt: .now.addingTimeInterval(-14 * 60),
-                error: "worker-2 did not finish upgrading", steps: steps)
+                error: "skali-app-02 did not finish upgrading", steps: steps)
             return status(
                 summary: .init(
                     state: .failed, convergedVersion: nil, targetVersion: Self.target, action: .retry,

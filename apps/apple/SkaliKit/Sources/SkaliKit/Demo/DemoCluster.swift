@@ -57,7 +57,69 @@ public struct DemoCluster: ClusterAPI {
 
     public func nodes() async throws -> [ClusterNode] {
         try requireAdmin()
-        return (1...11).map { ClusterNode(name: "node-\($0)", role: $0 <= 3 ? "server" : "agent", ready: true) }
+        return Self.nodeNames.enumerated().map { index, node in
+            ClusterNode(
+                name: node.name, role: node.controller ? "server" : "agent",
+                capabilities: node.capabilities, arch: "arm64", os: "linux",
+                kubeletVersion: "v1.36.3+k3s1", ready: true,
+                internalIp: "10.42.\(node.controller ? 0 : 1).\(index + 2)",
+                externalIp: index == 0 ? "203.0.113.10" : nil,
+                lastHeartbeat: .now.addingTimeInterval(-Double(4 + index % 7)),
+                memoryAllocatableBytes: Self.memory(node))
+        }
+    }
+
+    public func nodeMetrics(window: NodeMetrics.Window) async throws -> NodeMetrics {
+        try requireAdmin()
+        let (count, step): (Int, Int) = switch window {
+        case .hour: (60, 60)
+        case .day: (96, 900)
+        case .week: (168, 3600)
+        }
+        let end = Date.now
+        let timestamps = (0..<count).map { end.addingTimeInterval(-Double((count - 1 - $0) * step)) }
+        let series = Self.nodeNames.enumerated().map { index, node in
+            let cpu = Self.cores(node) * 1000
+            let memory = Self.memory(node)
+            // A steady base per node with a daily swell and some noise.
+            let base = 0.08 + Double((index * 37) % 23) / 100
+            let values: [Double] = timestamps.map { time in
+                let seconds = time.timeIntervalSince1970
+                let day = sin(seconds / 86_400 * 2 * .pi + Double(index))
+                // Slow swings only, so no window's buckets alias them into a zigzag.
+                let noise = sin(seconds / 21_600 * 2 * .pi + Double(index * 3)) * 0.025
+                    + sin(seconds / 7_200 * 2 * .pi + Double(index)) * 0.015
+                return min(0.95, max(0.02, base + day * 0.06 + noise))
+            }
+            return NodeMetrics.Series(
+                name: node.name, cpuAllocatableMillicores: cpu, memoryAllocatableBytes: memory,
+                cpuMillicores: values.map { Int($0 * Double(cpu)) },
+                memoryBytes: values.map { Int64((0.3 + $0 * 0.8) * Double(memory)) })
+        }
+        return NodeMetrics(window: window, stepSeconds: step, timestamps: timestamps, nodes: series)
+    }
+
+    public func nodeStorage() async throws -> [NodeStorage] {
+        try requireAdmin()
+        return Self.nodeNames.enumerated().map { index, node in
+            let capacity: Int64 = 80 * 1 << 30
+            let used = Int64(Double(capacity) * (0.18 + Double((index * 13) % 30) / 100))
+            return NodeStorage(
+                name: node.name, sampledAt: .now.addingTimeInterval(-120), capacityBytes: capacity,
+                usedBytes: used, availableBytes: capacity - used)
+        }
+    }
+
+    static let nodeNames: [(name: String, controller: Bool, capabilities: [String])] =
+        (1...3).map { ("skali-core-0\($0)", true, $0 == 1 ? ["edge"] : []) }
+        + (1...8).map { ("skali-app-0\($0)", false, $0 == 1 ? ["builder"] : $0 == 5 ? ["database"] : []) }
+
+    private static func cores(_ node: (name: String, controller: Bool, capabilities: [String])) -> Int {
+        node.controller ? 2 : 4
+    }
+
+    private static func memory(_ node: (name: String, controller: Bool, capabilities: [String])) -> Int64 {
+        (node.controller ? 4 : 8) * 1 << 30
     }
 
     public func databasePools() async throws -> [DatabasePool] {

@@ -12,7 +12,7 @@ struct ProjectsView: View {
     var body: some View {
         content
             .navigationTitle("Projects")
-            .navigationSubtitle(subtitle)
+            .largeSubtitle(subtitle)
             .toolbar { optionsMenu }
             .navigationDestination(for: Project.self) { ProjectDetailView(project: $0) }
             .task { await session.loadProjects() }
@@ -27,8 +27,6 @@ struct ProjectsView: View {
                     ProjectRow(project: project)
                 }
             }
-            // Room between the title block and the list, as Notes leaves.
-            .contentMargins(.top, 14, for: .scrollContent)
             .overlay {
                 if visible.isEmpty { emptyState(hasAny: !projects.isEmpty) }
             }
@@ -84,15 +82,6 @@ struct ProjectsView: View {
     }
 
     @ToolbarContentBuilder private var optionsMenu: some ToolbarContent {
-        // Under the large title at body size, as Notes shows its count;
-        // `navigationSubtitle` covers the small title once scrolled.
-        ToolbarItem(placement: .largeSubtitle) {
-            Text(subtitle)
-                .font(.body)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.top, 4)
-        }
         ToolbarItem(placement: .primaryAction) {
             // As the Music app's playlist menu: sorting is a submenu that
             // names the current order, and the scope a single toggle.

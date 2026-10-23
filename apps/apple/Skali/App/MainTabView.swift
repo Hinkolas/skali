@@ -56,7 +56,12 @@ extension AppTab {
     /// Debug builds push the Settings screen named by `-SkaliRoute <route>`.
     static var initialSettingsPath: [SettingsRoute] {
         #if DEBUG
-        UserDefaults.standard.string(forKey: "SkaliRoute").flatMap(SettingsRoute.init(rawValue:)).map { [$0] } ?? []
+        // `node:<name>` pushes the nodes list and then the node.
+        guard let argument = UserDefaults.standard.string(forKey: "SkaliRoute"),
+              let route = SettingsRoute(argument: argument)
+        else { return [] }
+        if case .node = route { return [.nodes, route] }
+        return [route]
         #else
         []
         #endif

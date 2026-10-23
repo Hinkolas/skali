@@ -20,6 +20,9 @@ final class ClusterSession {
     /// the last document stays on screen.
     private(set) var updatesDisconnected = false
 
+    /// Current CPU, memory and disk per node name.
+    private(set) var nodeUsage: [String: NodeUsage] = [:]
+
     /// The account's sessions on this cluster, newest first.
     private(set) var sessions: [Session]?
     private(set) var sessionsError: String?
@@ -89,6 +92,23 @@ final class ClusterSession {
             sessionsError = error.localizedDescription
         }
         if let current = await current { user = current.user }
+    }
+
+    /// The nodes screens: the nodes, their current usage (the newest
+    /// bucket of the shortest window) and disk, and the update document,
+    /// which carries each node's host agent version.
+    func loadNodes() async {
+        async let nodes = try? api.nodes()
+        async let metrics = try? api.nodeMetrics(window: .hour)
+        async let storage = try? api.nodeStorage()
+        async let updates = try? api.updateStatus()
+        if let nodes = await nodes { system.nodes = nodes }
+        let metricsValue = await metrics
+        let storageValue = await storage
+        if metricsValue != nil || storageValue != nil {
+            nodeUsage = NodeUsage.byNode(metrics: metricsValue, storage: storageValue)
+        }
+        if let updates = await updates { system.updates = updates }
     }
 
     /// Re-reads the update document, keeping the last one when the cluster

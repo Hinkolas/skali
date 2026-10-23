@@ -3,26 +3,6 @@ import SwiftUI
 
 // First, read-only versions of the screens behind the Settings rows.
 
-struct NodesView: View {
-    let nodes: [ClusterNode]
-
-    var body: some View {
-        List(nodes) { node in
-            LabeledContent {
-                Text(node.ready ? "Online" : "Offline")
-                    .foregroundStyle(node.ready ? .green : .secondary)
-            } label: {
-                Text(node.name).monospaced()
-                if let role = node.role { Text(role) }
-            }
-        }
-        .overlay {
-            if nodes.isEmpty { ContentUnavailableView("No Nodes", systemImage: "server.rack") }
-        }
-        .navigationTitle("Nodes")
-    }
-}
-
 struct DatabasePoolsView: View {
     let pools: [DatabasePool]
 

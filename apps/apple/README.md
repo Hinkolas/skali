@@ -55,7 +55,8 @@ Launch arguments (Edit Scheme > Run > Arguments):
 - `-SkaliTab settings` (Debug builds only) opens on the given tab: `projects`,
   `settings` or `search`.
 - `-SkaliRoute softwareUpdate` (Debug builds only) pushes a Settings screen:
-  `account`, `users`, `nodes`, `databases`, `backupTarget` or `softwareUpdate`.
+  `account`, `users`, `nodes`, `databases`, `backupTarget`, `softwareUpdate`,
+  or `node:<name>` for one node.
 
 ## Admins and members
 

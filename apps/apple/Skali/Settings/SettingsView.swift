@@ -22,7 +22,8 @@ struct SettingsView: View {
             switch route {
             case .account: AccountView()
             case .users: PlaceholderView(title: "Users", systemImage: "person.2")
-            case .nodes: NodesView(nodes: session.system.nodes ?? [])
+            case .nodes: NodesView()
+            case .node(let name): NodeDetailView(name: name)
             case .databases: DatabasePoolsView(pools: session.system.pools ?? [])
             case .backupTarget: BackupTargetView(backup: session.system.backup)
             case .softwareUpdate: SoftwareUpdateView()
@@ -216,6 +217,22 @@ extension ReleaseChannel {
 
 /// The screens under Settings, as navigation values so they can be opened
 /// from elsewhere (a notification, a deep link) by setting the path.
-enum SettingsRoute: String, Hashable {
+enum SettingsRoute: Hashable {
     case account, users, nodes, databases, backupTarget, softwareUpdate
+    /// One node, by name.
+    case node(String)
+
+    /// Parses `softwareUpdate` or `node:skali-app-04` (debug launch arguments).
+    init?(argument: String) {
+        if argument.hasPrefix("node:") {
+            self = .node(String(argument.dropFirst(5)))
+            return
+        }
+        let simple: [String: SettingsRoute] = [
+            "account": .account, "users": .users, "nodes": .nodes, "databases": .databases,
+            "backupTarget": .backupTarget, "softwareUpdate": .softwareUpdate,
+        ]
+        guard let route = simple[argument] else { return nil }
+        self = route
+    }
 }
