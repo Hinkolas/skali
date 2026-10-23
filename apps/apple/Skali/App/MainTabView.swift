@@ -64,13 +64,18 @@ extension AppTab {
     }
 
     /// Debug builds go on to the project page named by
-    /// `-SkaliProjectRoute <page>`: `deployments` or `backups`.
+    /// `-SkaliProjectRoute <page>`: `deployments`, `backups`, or a service
+    /// as `application:<key>`, `database:<key>` or `bucket:<key>`.
     static var initialProjectRoute: ProjectRoute? {
         #if DEBUG
-        switch UserDefaults.standard.string(forKey: "SkaliProjectRoute") {
-        case "deployments": .deployments
-        case "backups": .backups
-        default: nil
+        guard let argument = UserDefaults.standard.string(forKey: "SkaliProjectRoute") else { return nil }
+        switch argument {
+        case "deployments": return .deployments
+        case "backups": return .backups
+        default:
+            let parts = argument.split(separator: ":", maxSplits: 1).map(String.init)
+            guard parts.count == 2, let kind = ServiceKind(rawValue: parts[0]) else { return nil }
+            return .service(kind, parts[1])
         }
         #else
         nil

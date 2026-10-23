@@ -57,7 +57,8 @@ Launch arguments (Edit Scheme > Run > Arguments):
   `settings` or `search`.
 - `-SkaliProject birefnet-proxy` (Debug builds only) opens the project with
   that name once the list has loaded; `-SkaliProjectRoute deployments` (or
-  `backups`) goes on to that page.
+  `backups`, or a service as `application:<key>`, `database:<key>` or
+  `bucket:<key>`) goes on to that page.
 - `-SkaliRoute softwareUpdate` (Debug builds only) pushes a Settings screen:
   `account`, `users`, `nodes`, `databases`, `backups`, `softwareUpdate`,
   `node:<name>` for one node, `pool:<name>` for one database pool, or

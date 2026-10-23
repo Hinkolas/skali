@@ -115,3 +115,26 @@ struct Avatar: View {
             .accessibilityHidden(true)
     }
 }
+
+extension String {
+    /// The text with break opportunities after `_`, `/`, `:`, `@`, `.`
+    /// and `-`, so identifiers and URLs wrap at their seams instead of
+    /// being hyphenated mid-word. For display only; copy the original.
+    var wrappingAtSeams: String {
+        var out = ""
+        for character in self {
+            out.append(character)
+            if "_/:@.-".contains(character) { out.append("\u{200B}") }
+        }
+        return out
+    }
+}
+
+extension View {
+    /// Typesets text as code rather than language: identifiers, URLs and
+    /// log lines must not get hyphens where they wrap. "zxx" is the code
+    /// for no linguistic content, which carries no hyphenation rules.
+    func typesetAsCode() -> some View {
+        typesettingLanguage(Locale.Language(identifier: "zxx"))
+    }
+}

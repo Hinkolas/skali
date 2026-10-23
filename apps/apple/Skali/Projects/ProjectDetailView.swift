@@ -41,6 +41,7 @@ private struct ProjectOverviewScreen: View {
                 case .deployments: DeploymentsView(model: model)
                 case .backups: ProjectBackupsView(model: model)
                 case .run(let id): RunDetailView(runID: id, model: model)
+                case .service(let kind, let key): ServicePage(kind: kind, key: key, model: model)
                 default: ProjectRoutePlaceholder(route: route)
                 }
             }

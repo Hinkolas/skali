@@ -158,10 +158,14 @@ enum DemoProjects {
             applications: Dictionary(uniqueKeysWithValues: fixture.applications.map { application in
                 (application.key, ApplicationSpec(
                     source: .init(kind: application.image == nil ? "build" : "image", image: application.image),
-                    scaling: .init(minReplicas: application.replicas, maxReplicas: application.replicas),
+                    command: application.requestsPerMinute == nil ? ["bin/\(application.key)", "--queue", "default"] : nil,
+                    ports: application.requestsPerMinute == nil ? nil : ["http": .init(port: 8080)],
+                    health: application.requestsPerMinute == nil ? nil : .init(readinessPath: "/healthz"),
+                    scaling: .init(minReplicas: application.replicas, maxReplicas: max(application.replicas, 2)),
                     resources: .init(limits: .init(milliCpu: application.milliCpu,
                                                    memoryBytes: application.memoryMiB * mib)),
-                    routes: application.requestsPerMinute == nil ? nil : ["web": .init(path: "/")]))
+                    routes: application.requestsPerMinute == nil ? nil : ["public": .init(path: "/")],
+                    deployment: .init(strategy: application.replicas > 1 ? "blue-green" : "rolling")))
             }),
             databases: Dictionary(uniqueKeysWithValues: fixture.databases.map { database in
                 (database.key, DatabaseSpec(engine: database.engine, version: database.version,
@@ -169,7 +173,19 @@ enum DemoProjects {
             }),
             buckets: Dictionary(uniqueKeysWithValues: fixture.buckets.map { bucket in
                 (bucket.key, BucketSpec(visibility: bucket.visibility, storageQuotaBytes: bucket.quotaGiB.map { $0 * gib }))
+            }),
+            // Every application uses every database and bucket.
+            dependencies: Dictionary(uniqueKeysWithValues: fixture.applications.map { application in
+                ("applications.\(application.key)",
+                 fixture.databases.map { "databases.\($0.key)" } + fixture.buckets.map { "buckets.\($0.key)" })
             })))
+    }
+
+    /// "web.himmelreich.example.com", with the environment for all but
+    /// production.
+    static func domain(_ fixture: Fixture, _ application: Application, _ environment: String) -> String {
+        let prefix = environment == "production" ? application.key : "\(application.key)-\(environment)"
+        return "\(prefix).\(fixture.name).example.com"
     }
 
     static func status(_ fixture: Fixture, environment: String) -> EnvironmentStatus {
@@ -183,15 +199,21 @@ enum DemoProjects {
                     ready: !(troubled && replica == application.replicas - 1),
                     restarts: troubled && health == .degraded ? 7 : 0,
                     reason: troubled && health == .degraded && replica == application.replicas - 1 ? "CrashLoopBackOff" : nil,
-                    startedAt: fixture.activity)
+                    startedAt: fixture.activity, color: application.replicas > 1 ? "7d9f8c" : nil)
             }
             let diagnostics = troubled && health == .degraded
                 ? [HealthDiagnostic(severity: "warning", code: "pod_crash_looping",
                                     message: "1 of \(application.replicas) pods is restarting repeatedly")]
                 : []
+            let routes = application.requestsPerMinute == nil ? nil : [
+                RouteStatus(
+                    key: "public", domain: domain(fixture, application, environment),
+                    certificate: CertificateStatus(state: "active", notAfter: .now.addingTimeInterval(61 * 86_400)),
+                    edge: EdgeStatus(state: "reachable", deferred: false)),
+            ]
             return ServiceStatus(
                 key: application.key, type: "application", health: troubled ? health : .healthy,
-                diagnostics: diagnostics, pods: pods)
+                diagnostics: diagnostics, pods: pods, routes: routes)
         }
         services += fixture.databases.map { ServiceStatus(key: $0.key, type: "database", health: .healthy) }
         services += fixture.buckets.map { ServiceStatus(key: $0.key, type: "bucket", health: .healthy) }
@@ -431,4 +453,51 @@ extension DemoCluster {
 
     private static let noTarget = APIError.server(
         status: 503, code: "backup_target_unconfigured", message: "no backup target is configured")
+
+    // MARK: Services
+
+    public func databaseConnection(environmentID: String, key: String) async throws -> DatabaseConnection {
+        let (fixture, environment) = try fixture(environmentID: environmentID)
+        guard let database = fixture.databases.first(where: { $0.key == key }) else { throw Self.notFound }
+        return DatabaseConnection(
+            phase: "Ready", engine: database.engine, major: Int(database.version) ?? 17, isolation: "shared",
+            availability: "single", host: "pg-shared.skali-data.svc", port: 5432,
+            database: "\(fixture.name)_\(environment)_\(key)".replacingOccurrences(of: "-", with: "_"))
+    }
+
+    public func revealDatabaseCredentials(environmentID: String, key: String) async throws -> DatabaseCredentials {
+        let connection = try await databaseConnection(environmentID: environmentID, key: key)
+        let user = connection.database ?? key
+        let password = String(DemoActivity.uuid("password-\(environmentID)-\(key)").filter(\.isHexDigit).prefix(24))
+        return DatabaseCredentials(
+            username: user, password: password,
+            url: "postgres://\(user):\(password)@\(connection.host ?? "localhost"):\(connection.port ?? 5432)/\(user)")
+    }
+
+    public func restartApplication(environmentID: String, key: String) async throws -> String {
+        let (fixture, environment) = try fixture(environmentID: environmentID)
+        return activity.start("restart", fixture: fixture, environment: environment, actor: user.id, only: key).id
+    }
+
+    public func runtimeLogs(environmentID: String, service: String) -> AsyncThrowingStream<RuntimeLogLine, Error> {
+        // A request log that keeps coming while the screen is open.
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                let pods = ["\(service)-7d9f8c-0", "\(service)-7d9f8c-1"]
+                let paths = ["/", "/api/jobs", "/healthz", "/api/images/42", "/static/app.js", "/api/jobs/17"]
+                var count = 0
+                while !Task.isCancelled {
+                    let path = paths[count % paths.count]
+                    let line = path == "/healthz"
+                        ? "level=debug msg=\"health check\" status=200"
+                        : "level=info msg=request method=GET path=\(path) status=\(count % 11 == 5 ? 500 : 200) duration=\(12 + count * 7 % 90)ms"
+                    continuation.yield(RuntimeLogLine(service: service, pod: pods[count % 2], line: line, time: .now))
+                    count += 1
+                    try? await Task.sleep(for: .milliseconds(count < 12 ? 60 : 1400))
+                }
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
 }

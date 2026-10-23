@@ -232,16 +232,7 @@ struct ProjectBackupsView: View {
         model.definition?.hasStatefulServices ?? false
     }
 
-    /// Why Back Up is off, or nil when it may run. The daemon has the last
-    /// word; this only covers what the page already knows.
-    private var backupRefusal: String? {
-        guard model.environmentIsReadable, let environment = model.environment else { return "no environment" }
-        if environment.role < .deploy { return "deploy access required" }
-        if environment.state != "active" { return "the environment is not running" }
-        if !stateful { return "nothing to back up" }
-        if case .refused = model.snapshots { return "no backup target" }
-        return nil
-    }
+    private var backupRefusal: String? { model.backupRefusal }
 
     // MARK: Actions
 
@@ -376,6 +367,17 @@ struct SnapshotRow: View {
 }
 
 extension ProjectModel {
+    /// Why backing up now is off, or nil when it may run. The daemon has
+    /// the last word; this only covers what the app already knows.
+    var backupRefusal: String? {
+        guard environmentIsReadable, let environment else { return "no environment" }
+        if environment.role < .deploy { return "deploy access required" }
+        if environment.state != "active" { return "the environment is not running" }
+        if definition?.hasStatefulServices != true { return "nothing to back up" }
+        if case .refused = snapshots { return "no backup target" }
+        return nil
+    }
+
     /// Delete needs maintain on the environment the snapshot came from,
     /// or project admin once that environment is gone; the daemon checks.
     func canDelete(_ snapshot: BackupSnapshot) -> Bool {

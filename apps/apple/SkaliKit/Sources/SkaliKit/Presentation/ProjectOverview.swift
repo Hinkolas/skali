@@ -168,7 +168,7 @@ public struct UsageLimits: Hashable, Sendable {
 /// One usage tile: the newest value over the window's sparkline.
 public struct UsageStat: Hashable, Sendable, Identifiable {
     public enum Kind: String, CaseIterable, Sendable {
-        case requests, cpu, memory, traffic
+        case requests, cpu, memory, traffic, replicas, restarts
 
         public var title: String {
             switch self {
@@ -176,6 +176,8 @@ public struct UsageStat: Hashable, Sendable, Identifiable {
             case .cpu: "CPU"
             case .memory: "Memory"
             case .traffic: "Traffic"
+            case .replicas: "Replicas"
+            case .restarts: "Restarts"
             }
         }
     }
@@ -201,6 +203,35 @@ extension EnvironmentMetrics {
     /// the window. Port of the Studio's usageStats.
     public func usageStats(limits: UsageLimits) -> [UsageStat] {
         [requestsStat(), cpuStat(limits: limits), memoryStat(limits: limits), trafficStat()]
+    }
+
+    /// The same series for one application only.
+    public func only(_ key: String) -> EnvironmentMetrics {
+        EnvironmentMetrics(
+            window: window, stepSeconds: stepSeconds, timestamps: timestamps,
+            applications: applications.filter { $0.key == key })
+    }
+
+    /// One application's tiles. One without a public route has no edge
+    /// traffic by construction, so its requests and traffic give way to
+    /// its replicas and restarts, what a worker's health is about.
+    public func applicationStats(key: String, spec: ApplicationSpec, status: ServiceStatus?) -> [UsageStat] {
+        let mine = only(key)
+        let limits = UsageLimits(
+            definition: ProjectDefinition(applications: [key: spec]),
+            status: status.map { EnvironmentStatus(environmentId: "", services: [$0]) })
+        let stats = mine.usageStats(limits: limits)
+        guard spec.routes?.isEmpty ?? true else { return stats }
+        let pods = status?.pods ?? []
+        let ready = pods.filter(\.ready).count
+        let restarts = pods.reduce(0) { $0 + $1.restarts }
+        let replicas = UsageStat(
+            kind: .replicas, value: status == nil ? nil : "\(ready)", unit: "/ \(pods.count) ready", points: [],
+            footnote: "scale \(spec.scaleLabel)")
+        let restartStat = UsageStat(
+            kind: .restarts, value: status == nil ? nil : "\(restarts)", unit: "", points: [],
+            footnote: pods.isEmpty ? "no pods observed" : "across \(pods.count) \(pods.count == 1 ? "pod" : "pods")")
+        return [replicas, stats[1], stats[2], restartStat]
     }
 
     private func requestsStat() -> UsageStat {

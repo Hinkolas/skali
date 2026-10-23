@@ -3,35 +3,39 @@ import SwiftUI
 
 extension View {
     /// What every page of a project shares: its title with a line under
-    /// it, the environment picker in the middle of the bar, and the
-    /// project's change stream re-reading what is shown while the page is
-    /// on screen. `also` re-reads what only this page shows.
-    /// The environment's usage and runs are read whenever it changes;
-    /// `followsStatus` also streams its live status while on screen.
+    /// it, plus everything `projectChrome` adds.
     func projectPage(
         _ model: ProjectModel, title: String, subtitle: String, dot: Color? = nil, monospaced: Bool = false,
         followsStatus: Bool = false, also: (() async -> Void)? = nil
     ) -> some View {
-        modifier(ProjectPageModifier(
-            model: model, title: title, subtitle: subtitle, dot: dot, monospaced: monospaced,
-            followsStatus: followsStatus, also: also))
+        navigationTitle(title)
+            // Explicit: an automatic mode inherits the page it was pushed
+            // from, and the service pages are inline.
+            .navigationBarTitleDisplayMode(.large)
+            // The bar's middle holds the environment, not the title.
+            .largeSubtitle(subtitle, dot: dot, inline: false, monospaced: monospaced)
+            .projectChrome(model, followsStatus: followsStatus, also: also)
+    }
+
+    /// The environment picker in the middle of the bar, and the project's
+    /// change stream re-reading what is shown while the page is on screen.
+    /// The environment's usage and runs are read whenever it changes;
+    /// `followsStatus` also streams its live status, and `also` re-reads
+    /// what only this page shows.
+    func projectChrome(
+        _ model: ProjectModel, followsStatus: Bool = false, also: (() async -> Void)? = nil
+    ) -> some View {
+        modifier(ProjectChromeModifier(model: model, followsStatus: followsStatus, also: also))
     }
 }
 
-private struct ProjectPageModifier: ViewModifier {
+private struct ProjectChromeModifier: ViewModifier {
     let model: ProjectModel
-    let title: String
-    let subtitle: String
-    let dot: Color?
-    let monospaced: Bool
     let followsStatus: Bool
     let also: (() async -> Void)?
 
     func body(content: Content) -> some View {
         content
-            .navigationTitle(title)
-            // The bar's middle holds the environment, not the title.
-            .largeSubtitle(subtitle, dot: dot, inline: false, monospaced: monospaced)
             .toolbar {
                 if let environments = model.environments, let environment = model.environment {
                     ToolbarItem(placement: .principal) {

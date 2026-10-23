@@ -111,10 +111,15 @@ public struct PodStatus: Codable, Hashable, Sendable {
     public let restarts: Int
     public let reason: String?
     public let startedAt: Date?
+    /// The blue-green color of the pod's deployment; absent on rolling and
+    /// recreate workloads.
+    public let color: String?
+    /// Whether the application's service sends it traffic.
+    public let serving: Bool?
 
     public init(
         name: String, node: String, phase: String = "Running", ready: Bool = true, restarts: Int = 0,
-        reason: String? = nil, startedAt: Date? = nil
+        reason: String? = nil, startedAt: Date? = nil, color: String? = nil, serving: Bool? = true
     ) {
         self.name = name
         self.node = node
@@ -123,27 +128,89 @@ public struct PodStatus: Codable, Hashable, Sendable {
         self.restarts = restarts
         self.reason = reason
         self.startedAt = startedAt
+        self.color = color
+        self.serving = serving
+    }
+
+    /// Not ready for a reason it will not get past on its own.
+    public var isFailing: Bool {
+        guard !ready else { return false }
+        let failing: Set<String> = [
+            "CrashLoopBackOff", "Error", "ErrImagePull", "ImagePullBackOff", "OOMKilled", "CreateContainerConfigError",
+        ]
+        return phase == "Failed" || reason.map(failing.contains) == true
+    }
+
+    /// "ready", "crashloopbackoff", "pending".
+    public var stateLabel: String {
+        ready ? "ready" : (reason ?? phase).lowercased()
     }
 }
 
-/// A public route, reduced to what the overview reads.
+/// A public route with its edge policy and certificate.
 public struct RouteStatus: Codable, Hashable, Sendable {
     public let key: String
     public let domain: String
+    public let path: String?
+    /// `automatic`, `optional` or `disabled`.
+    public let tls: String?
+    /// `round-robin` or `least-requests`.
+    public let strategy: String?
+    /// Absent where none exists by design (TLS off, a local installation).
+    public let certificate: CertificateStatus?
     public let edge: EdgeStatus?
+    /// Hostnames that redirect to this route's domain.
     public let aliases: [RouteAliasStatus]?
 
-    public init(key: String, domain: String, edge: EdgeStatus? = nil, aliases: [RouteAliasStatus]? = nil) {
+    public init(
+        key: String, domain: String, path: String? = "/", tls: String? = "automatic", strategy: String? = "round-robin",
+        certificate: CertificateStatus? = nil, edge: EdgeStatus? = nil, aliases: [RouteAliasStatus]? = nil
+    ) {
         self.key = key
         self.domain = domain
+        self.path = path
+        self.tls = tls
+        self.strategy = strategy
+        self.certificate = certificate
         self.edge = edge
         self.aliases = aliases
+    }
+
+    /// The address to open: https when a certificate exists, the path
+    /// unless it is the root.
+    public var url: URL? {
+        let scheme = certificate == nil ? "http" : "https"
+        let suffix = path.map { $0 == "/" ? "" : $0 } ?? ""
+        return URL(string: "\(scheme)://\(domain)\(suffix)")
     }
 }
 
 public struct RouteAliasStatus: Codable, Hashable, Sendable {
     public let domain: String
+    public let certificate: CertificateStatus?
     public let edge: EdgeStatus?
+
+    public init(domain: String, certificate: CertificateStatus? = nil, edge: EdgeStatus? = nil) {
+        self.domain = domain
+        self.certificate = certificate
+        self.edge = edge
+    }
+}
+
+/// A route's certificate as cert-manager reports it.
+public struct CertificateStatus: Codable, Hashable, Sendable {
+    /// `pending`, `issuing`, `active`, `failing` or `expired`.
+    public let state: String
+    public let reason: String?
+    public let message: String?
+    public let notAfter: Date?
+
+    public init(state: String, reason: String? = nil, message: String? = nil, notAfter: Date? = nil) {
+        self.state = state
+        self.reason = reason
+        self.message = message
+        self.notAfter = notAfter
+    }
 }
 
 /// The reconciler's last probe of whether a domain reaches the cluster.

@@ -265,6 +265,38 @@ final class ProjectModel {
         }
     }
 
+    /// Recreates one application's pods; returns the run to follow.
+    func restartApplication(_ key: String) async throws -> String {
+        guard let id = environment?.id else { throw CancellationError() }
+        let runID = try await session.gated { try await self.api.restartApplication(environmentID: id, key: key) }
+        await loadEnvironment()
+        return runID
+    }
+
+    /// A database's credentials, once; nothing keeps them.
+    func revealDatabaseCredentials(_ key: String) async throws -> DatabaseCredentials {
+        guard let id = environment?.id else { throw CancellationError() }
+        return try await session.gated { try await self.api.revealDatabaseCredentials(environmentID: id, key: key) }
+    }
+
+    /// The live status of one service of the environment on screen.
+    func liveStatus(_ kind: ServiceKind, _ key: String) -> ServiceStatus? {
+        status?.service(kind, key)
+    }
+
+    /// The newest storage samples of one service in the environment on
+    /// screen: its volume, database or bucket, and an application's
+    /// temporary storage.
+    func storage(of kind: ServiceKind, _ key: String) -> [ServiceStorage] {
+        guard let id = environment?.id else { return [] }
+        let serviceKey = switch kind {
+        case .application: key
+        case .database: "databases.\(key)"
+        case .bucket: "buckets.\(key)"
+        }
+        return (storage ?? []).filter { $0.environmentId == id && $0.serviceKey == serviceKey }
+    }
+
     func cancelRun(_ run: Run) async throws {
         try await session.gated { try await self.api.cancelRun(id: run.id) }
     }

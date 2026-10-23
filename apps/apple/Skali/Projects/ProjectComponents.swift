@@ -12,6 +12,8 @@ extension UsageStat.Kind {
         case .cpu: .usageCPU
         case .memory: .usageMemory
         case .traffic: .green
+        case .replicas: .green
+        case .restarts: .orange
         }
     }
 }
@@ -53,6 +55,8 @@ extension ServiceStorage.Kind {
 /// the trailing edge, where a sliver of the next one shows.
 struct UsageCarousel: View {
     let stats: [UsageStat]
+    /// Opens the usage history when a card is tapped.
+    var link: ApplicationUsageLink?
 
     private let spacing: CGFloat = 12
     /// How much of the third card shows.
@@ -62,7 +66,7 @@ struct UsageCarousel: View {
         ScrollView(.horizontal) {
             LazyHStack(spacing: spacing) {
                 ForEach(stats) { stat in
-                    UsageStatCard(stat: stat)
+                    card(stat)
                         .containerRelativeFrame(.horizontal) { length, _ in
                             (length - spacing - peek) / 2
                         }
@@ -75,6 +79,15 @@ struct UsageCarousel: View {
         // The cards run out to the screen edge instead of stopping at the
         // list's margin.
         .scrollClipDisabled()
+    }
+
+    @ViewBuilder private func card(_ stat: UsageStat) -> some View {
+        if let link {
+            NavigationLink(value: link) { UsageStatCard(stat: stat) }
+                .buttonStyle(.plain)
+        } else {
+            UsageStatCard(stat: stat)
+        }
     }
 }
 
@@ -265,7 +278,7 @@ struct StorageBreakdownView: View {
     }
 }
 
-private struct StorageServiceRow: View {
+struct StorageServiceRow: View {
     let service: ServiceStorage
 
     @ScaledMetric(relativeTo: .body) private var tile: CGFloat = 34

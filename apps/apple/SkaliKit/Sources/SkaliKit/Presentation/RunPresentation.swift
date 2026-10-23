@@ -283,3 +283,52 @@ extension RunTree {
         return (all.filter { !["pending", "waiting", "running"].contains($0.status) }.count, all.count)
     }
 }
+
+// MARK: One service's history
+
+/// What one run did to one service.
+public struct ServiceChange: Hashable, Sendable {
+    public let run: Run
+    /// `create`, `update`, `remove` or `restart`.
+    public let action: String
+    public let detail: String?
+    public let destructive: Bool
+}
+
+extension Run {
+    /// What this run did to the service with the dotted name: its plan
+    /// change, new versions of values it uses (which roll its pods though
+    /// its own plan row may say nothing), a restart, or several; nil when
+    /// the run left it alone. Port of the Studio's serviceChange.
+    public func change(to service: String) -> ServiceChange? {
+        guard let deployment else { return nil }
+        let change = deployment.changes?.first { $0.service == service }
+        let restarted = deployment.restarts?.contains(service) ?? false
+        var values: [String] = []
+        if change == nil || change?.action == "update" {
+            for value in deployment.values ?? [] where value.services?.contains(service) == true && !values.contains(value.name) {
+                values.append(value.name)
+            }
+        }
+        let valuesNote = values.isEmpty ? nil : "\(values.count == 1 ? "value" : "values") \(values.joined(separator: ", ")) changed"
+        guard let action = change?.action ?? (valuesNote != nil ? "update" : restarted ? "restart" : nil) else {
+            return nil
+        }
+        let detail = [change?.detail, valuesNote, restarted && action != "restart" ? "restarted" : nil]
+            .compactMap(\.self).joined(separator: "; ")
+        return ServiceChange(
+            run: self, action: action, detail: detail.isEmpty ? nil : detail, destructive: change?.destructive == true)
+    }
+}
+
+extension [Run] {
+    /// The runs that changed one service, newest first.
+    public func changes(to service: String) -> [ServiceChange] {
+        compactMap { $0.change(to: service) }
+    }
+
+    /// The newest backup that went through.
+    public var lastSucceededBackup: Run? {
+        first { $0.kind == "backup" && $0.status == "succeeded" }
+    }
+}

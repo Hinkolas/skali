@@ -66,14 +66,16 @@ public final class DemoActivity: Sendable {
     @discardableResult
     func start(
         _ kind: String, fixture: DemoProjects.Fixture, environment: String, actor: String,
-        snapshot: BackupSnapshot? = nil
+        snapshot: BackupSnapshot? = nil, only application: String? = nil
     ) -> Run {
         let now = Date.now
         let run = Run(
             id: Self.uuid("started-\(kind)-\(now.timeIntervalSince1970)"), kind: kind, actor: actor,
             status: "running", createdAt: now, startedAt: now,
             deployment: kind == "restart"
-                ? RunDeployment(restarts: fixture.applications.map { "applications.\($0.key)" }) : nil)
+                ? RunDeployment(restarts: fixture.applications.filter { application == nil || $0.key == application }
+                    .map { "applications.\($0.key)" })
+                : nil)
         let written = kind == "backup"
             ? BackupSnapshot(
                 id: Self.uuid("snapshot-\(run.id)"), environment: environment,
@@ -288,7 +290,9 @@ public final class DemoActivity: Sendable {
             }
             builder.step("resume", "Resume revision", seconds: 15)
         default:
-            for application in fixture.applications {
+            let restarts = run.deployment?.restarts
+            for application in fixture.applications
+            where restarts?.contains("applications.\(application.key)") ?? true {
                 builder.step("restart:\(application.key)", "Restart applications.\(application.key)",
                              service: "applications.\(application.key)", seconds: 20, progress: Int64(application.replicas))
             }

@@ -24,6 +24,7 @@ struct RunDetailView: View {
     var body: some View {
         content
             .navigationTitle(tree.map { $0.run.kindLabel.prefix(1).uppercased() + $0.run.kindLabel.dropFirst() } ?? "Run")
+            .navigationBarTitleDisplayMode(.large)
             .largeSubtitle(subtitle, dot: tree.map { RunStatusStyle.tint($0.run.status) }, monospaced: true)
             .toolbar { menu }
             .navigationDestination(for: RunStep.self) { StepLogView(step: $0, api: model.api) }
@@ -517,6 +518,7 @@ private struct ServiceStepsView: View {
                 }
             }
             .navigationTitle(progress.name)
+            .navigationBarTitleDisplayMode(.large)
             .largeSubtitle(
                 [progress.status, progress.finishedAt == nil ? nil : progress.duration()].compactMap(\.self)
                     .joined(separator: " · "),

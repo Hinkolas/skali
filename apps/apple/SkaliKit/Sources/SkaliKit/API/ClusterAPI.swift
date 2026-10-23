@@ -30,6 +30,17 @@ public protocol ClusterAPI: Sendable {
     /// the run's id.
     func restartEnvironment(environmentID: String) async throws -> String
 
+    // MARK: Services
+
+    /// A database's non-secret connection facts.
+    func databaseConnection(environmentID: String, key: String) async throws -> DatabaseConnection
+    /// Maintain, sudo: the database's credentials, once.
+    func revealDatabaseCredentials(environmentID: String, key: String) async throws -> DatabaseCredentials
+    /// Deploy: recreates one application's pods; returns the run's id.
+    func restartApplication(environmentID: String, key: String) async throws -> String
+    /// An application's log lines as its pods write them, across pods.
+    func runtimeLogs(environmentID: String, service: String) -> AsyncThrowingStream<RuntimeLogLine, Error>
+
     // MARK: Runs
 
     func run(id: String) async throws -> RunTree
@@ -195,6 +206,25 @@ extension APIClient: ClusterAPI {
     public func restartEnvironment(environmentID: String) async throws -> String {
         let response: RunStarted = try await post("v1/environments/\(environmentID)/restart")
         return response.runId
+    }
+
+    public func databaseConnection(environmentID: String, key: String) async throws -> DatabaseConnection {
+        try await get("v1/environments/\(environmentID)/databases/\(key)/connection")
+    }
+
+    public func revealDatabaseCredentials(environmentID: String, key: String) async throws -> DatabaseCredentials {
+        try await post("v1/environments/\(environmentID)/databases/\(key)/credentials/reveal")
+    }
+
+    public func restartApplication(environmentID: String, key: String) async throws -> String {
+        let response: RunStarted = try await post("v1/environments/\(environmentID)/applications/\(key)/restart")
+        return response.runId
+    }
+
+    public func runtimeLogs(environmentID: String, service: String) -> AsyncThrowingStream<RuntimeLogLine, Error> {
+        .decoding(
+            events("v1/environments/\(environmentID)/logs/stream", query: [URLQueryItem(name: "service", value: service)]),
+            event: "log")
     }
 
     public func run(id: String) async throws -> RunTree {

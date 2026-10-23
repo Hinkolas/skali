@@ -88,6 +88,7 @@ private struct LogLine: View {
             Text(entry.message)
                 .font(.caption.monospaced())
                 .foregroundStyle(tint)
+                .typesetAsCode()
                 .textSelection(.enabled)
         }
         .listRowSeparator(.hidden)

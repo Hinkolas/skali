@@ -73,7 +73,7 @@ struct PoolDatabaseRow: View {
                 // Database names are long identifiers: wrap rather than hide a
                 // part, and break after an underscore, never with a hyphen the
                 // name does not have.
-                Text(database.databaseName.replacingOccurrences(of: "_", with: "_\u{200B}"))
+                Text(database.databaseName.wrappingAtSeams)
                     .font(.subheadline.monospaced())
                     .lineLimit(2)
                     .accessibilityLabel(database.databaseName)
