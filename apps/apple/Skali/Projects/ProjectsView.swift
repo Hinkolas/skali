@@ -63,6 +63,7 @@ struct ProjectsView: View {
               let project = session.projects?.first(where: { $0.name == name })
         else { return }
         Self.openedInitialProject = true
+        if let environment = AppTab.initialEnvironment { session.environmentChoices[project.id] = environment }
         model.projectsPath.append(project)
         if let route = AppTab.initialProjectRoute { model.projectsPath.append(route) }
     }

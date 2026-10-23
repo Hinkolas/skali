@@ -82,6 +82,27 @@ extension AppTab {
         #endif
     }
 
+    /// Debug builds show the project's environment named by
+    /// `-SkaliEnvironment <name>`.
+    static var initialEnvironment: String? {
+        #if DEBUG
+        UserDefaults.standard.string(forKey: "SkaliEnvironment")
+        #else
+        nil
+        #endif
+    }
+
+    /// Debug builds open the overview's sheet named by
+    /// `-SkaliProjectSheet <sheet>`: `promote`, `redeploy`, or `accept`
+    /// for an environment an incomplete restore holds.
+    static var initialProjectSheet: String? {
+        #if DEBUG
+        UserDefaults.standard.string(forKey: "SkaliProjectSheet")
+        #else
+        nil
+        #endif
+    }
+
     /// Debug builds push the Settings screen named by `-SkaliRoute <route>`.
     static var initialSettingsPath: [SettingsRoute] {
         #if DEBUG

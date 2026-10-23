@@ -279,6 +279,39 @@ final class ProjectModel {
         return try await session.gated { try await self.api.revealDatabaseCredentials(environmentID: id, key: key) }
     }
 
+    // MARK: Deploying
+
+    /// The status of any of the project's environments: the live one for
+    /// the environment on screen, else read once.
+    func status(of environment: ProjectEnvironment) async throws -> EnvironmentStatus {
+        if environment.id == self.environment?.id, let status { return status }
+        return try await api.environmentStatus(environmentID: environment.id)
+    }
+
+    /// What deploying `source` into the environment would change.
+    func plan(_ source: DeploySource, into environment: ProjectEnvironment) async throws -> DeployPlan {
+        try await session.gated { try await self.api.planDeployment(environmentID: environment.id, from: source) }
+    }
+
+    /// Starts a promotion or a redeploy; returns the run to follow, or nil
+    /// when the environment already ran it.
+    func deploy(_ source: DeploySource, into environment: ProjectEnvironment, allowDestructive: Bool) async throws -> String? {
+        let outcome = try await session.gated {
+            try await self.api.deploy(into: environment.id, from: source, allowDestructive: allowDestructive)
+        }
+        await loadEnvironment()
+        guard case .started(let runID) = outcome else { return nil }
+        return runID
+    }
+
+    /// Accepts the data an incomplete restore left in the environment on
+    /// screen; deploys are allowed again.
+    func acceptRestore(_ restore: IncompleteRestore) async throws {
+        guard let id = environment?.id else { throw CancellationError() }
+        _ = try await session.gated { try await self.api.acceptRestore(environmentID: id, restoreID: restore.id) }
+        await loadEnvironment()
+    }
+
     /// The live status of one service of the environment on screen.
     func liveStatus(_ kind: ServiceKind, _ key: String) -> ServiceStatus? {
         status?.service(kind, key)

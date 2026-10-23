@@ -191,3 +191,114 @@ extension [RunStep] {
 struct RunLink: Hashable {
     let id: String
 }
+
+/// What a rollout changes, or changed: every service, value and restart.
+/// A run's rows say what happened ("updated"), a plan's what will
+/// ("update"), the way the CLI prints a plan.
+struct ChangesSection: View {
+    var title = "Changes"
+    let changes: [PlanChange]
+    let values: [ValueChange]
+    var restarts: [String] = []
+    var planned = false
+
+    @State private var showsValues: Bool
+
+    init(title: String = "Changes", changes: [PlanChange], values: [ValueChange], restarts: [String] = [], planned: Bool = false) {
+        self.title = title
+        self.changes = changes
+        self.values = values
+        self.restarts = restarts
+        self.planned = planned
+        // A plan that only moves values opens on them.
+        _showsValues = State(initialValue: planned && changes.isEmpty && restarts.isEmpty)
+    }
+
+    var body: some View {
+        Section(title) {
+            ForEach(changes, id: \.service) { change in
+                ChangeRow(name: serviceName(change.service), symbol: symbol(change.service), tint: kind(change.service)?.tint,
+                          action: change.action, detail: change.detail, destructive: change.destructive == true,
+                          planned: planned)
+            }
+            ForEach(restarts, id: \.self) { service in
+                ChangeRow(name: serviceName(service), symbol: symbol(service), tint: kind(service)?.tint,
+                          action: "restart", detail: nil, destructive: false, planned: planned)
+            }
+            if !values.isEmpty {
+                let names = Set(values.map(\.name)).count
+                DisclosureGroup(isExpanded: $showsValues) {
+                    ForEach(Array(values.enumerated()), id: \.offset) { _, value in
+                        ChangeRow(name: value.name, symbol: nil, tint: nil, action: value.action,
+                                  detail: value.services.map { "used by \($0.map(serviceName).joined(separator: ", "))" },
+                                  destructive: false, planned: planned)
+                    }
+                } label: {
+                    Label(valuesLabel(names), systemImage: "key")
+                }
+            }
+            if changes.isEmpty && restarts.isEmpty && values.isEmpty {
+                Text("No changes")
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func valuesLabel(_ names: Int) -> String {
+        let count = names == 1 ? "1 value" : "\(names) values"
+        return planned ? "\(count) to update" : "\(count) changed"
+    }
+
+    private func kind(_ service: String) -> ServiceKind? {
+        if service.hasPrefix("applications.") { return .application }
+        if service.hasPrefix("databases.") { return .database }
+        if service.hasPrefix("buckets.") { return .bucket }
+        return nil
+    }
+
+    private func symbol(_ service: String) -> String {
+        kind(service)?.systemImage ?? "square.dashed"
+    }
+}
+
+private struct ChangeRow: View {
+    let name: String
+    let symbol: String?
+    let tint: Color?
+    let action: String
+    let detail: String?
+    let destructive: Bool
+    let planned: Bool
+
+    var body: some View {
+        // The action keeps to the trailing edge however long the detail.
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Label {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(name).monospaced()
+                    if let detail {
+                        Text(detail)
+                            .font(.subheadline)
+                            .foregroundStyle(destructive ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+                    }
+                }
+            } icon: {
+                if let symbol {
+                    Image(systemName: symbol)
+                        .foregroundStyle(tint ?? .secondary)
+                }
+            }
+            Spacer(minLength: 0)
+            Text(planned ? action : actionWord(action))
+                .foregroundStyle(actionTint)
+                .fixedSize()
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private var actionTint: Color {
+        if destructive || action == "remove" || action == "prune" { return .red }
+        if action == "create" { return .green }
+        return .secondary
+    }
+}

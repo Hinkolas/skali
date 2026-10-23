@@ -225,12 +225,33 @@ public struct EdgeStatus: Codable, Hashable, Sendable {
     }
 }
 
-/// A restore that stopped its environment and did not complete.
-public struct IncompleteRestore: Codable, Hashable, Sendable {
+/// A restore that stopped its environment and did not complete: its
+/// data may be partial, so deploys are refused until a restore completes
+/// or the data is accepted as it is.
+public struct IncompleteRestore: Codable, Hashable, Sendable, Identifiable {
     public let id: String
+    public let runId: String?
     public let snapshotId: String
     /// `running`, `failed` or `cancelled`.
     public let status: String
     public let error: String?
     public let startedAt: Date
+    public let finishedAt: Date?
+    /// What it set out to rewrite: `db:<key>`, `bucket:<key>`,
+    /// `volume:<application>.<volume>`.
+    public let components: [String]?
+
+    public init(
+        id: String, runId: String?, snapshotId: String, status: String, error: String? = nil,
+        startedAt: Date, finishedAt: Date? = nil, components: [String]? = nil
+    ) {
+        self.id = id
+        self.runId = runId
+        self.snapshotId = snapshotId
+        self.status = status
+        self.error = error
+        self.startedAt = startedAt
+        self.finishedAt = finishedAt
+        self.components = components
+    }
 }

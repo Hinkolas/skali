@@ -43,6 +43,8 @@ enum DemoProjects {
         var health: ServiceHealth = .healthy
         /// Environments with automatic backups.
         var backedUp: Set<String> = ["production"]
+        /// Environments a failed restore holds down at launch.
+        var restoreFailed: Set<String> = []
 
         var id: String { "demo-\(name)" }
 
@@ -98,7 +100,7 @@ enum DemoProjects {
                 ],
                 databases: [Database(key: "analytics", sizeGiB: 50, usedMiB: 18_300),
                             Database(key: "main", sizeGiB: 20, usedMiB: 5_100)],
-                days: 1),
+                days: 1, restoreFailed: ["staging"]),
         Fixture(name: "orbit", environments: [], days: 90),
     ]
 
@@ -142,10 +144,26 @@ enum DemoProjects {
                     priority: name == "production" ? "high" : "normal",
                     backup: fixture.backedUp.contains(name)
                         ? BackupSchedule(schedule: "0 3 * * *", retentionSeconds: 14 * 86_400) : nil),
-                state: "active", health: index == 0 ? fixture.health : .healthy,
+                state: fixture.restoreFailed.contains(name) ? "down" : "active",
+                health: fixture.restoreFailed.contains(name) ? .unknown : index == 0 ? fixture.health : .healthy,
                 healthEvaluatedAt: .now.addingTimeInterval(-20))
         }
         .sorted { $0.name < $1.name }
+    }
+
+    /// The restore holding an environment down at launch: production's
+    /// snapshot from two nights ago, restored into staging, failed
+    /// halfway through its first database.
+    static func initialHold(_ fixture: Fixture, _ environment: String) -> IncompleteRestore? {
+        guard fixture.restoreFailed.contains(environment), let source = fixture.backedUp.first else { return nil }
+        let id = "\(fixture.id)/\(environment)"
+        let started = Date.now.addingTimeInterval(-3 * 3600)
+        return IncompleteRestore(
+            id: DemoActivity.uuid("\(id)-hold"), runId: DemoActivity.uuid("\(id)-restore"),
+            snapshotId: DemoActivity.uuid("\(fixture.id)/\(source)-scheduled-1"), status: "failed",
+            error: "restoring databases.\(fixture.databases.first?.key ?? "main"): pg_restore: connection to the database pool was lost",
+            startedAt: started, finishedAt: started.addingTimeInterval(214),
+            components: fixture.databases.map { "db:\($0.key)" } + fixture.buckets.map { "bucket:\($0.key)" })
     }
 
     static func draft(_ fixture: Fixture) -> ProjectDraft? {
@@ -188,7 +206,17 @@ enum DemoProjects {
         return "\(prefix).\(fixture.name).example.com"
     }
 
-    static func status(_ fixture: Fixture, environment: String) -> EnvironmentStatus {
+    static func status(
+        _ fixture: Fixture, environment: String, state: DemoActivity.EnvironmentState
+    ) -> EnvironmentStatus {
+        let id = "\(fixture.id)/\(environment)"
+        guard let checksum = state.revision else {
+            // Down: nothing runs until the next deployment.
+            return EnvironmentStatus(
+                environmentId: id, state: "down",
+                observation: StatusObservation(state: "fresh", lastSync: .now.addingTimeInterval(-2)),
+                services: [], incompleteRestore: state.hold)
+        }
         let health = environment == fixture.environments.first ? fixture.health : .healthy
         let nodes = DemoCluster.nodeNames.filter { !$0.controller }.map(\.name)
         var services: [ServiceStatus] = fixture.applications.enumerated().map { index, application in
@@ -217,12 +245,11 @@ enum DemoProjects {
         }
         services += fixture.databases.map { ServiceStatus(key: $0.key, type: "database", health: .healthy) }
         services += fixture.buckets.map { ServiceStatus(key: $0.key, type: "bucket", health: .healthy) }
-        let revision = RevisionRef(id: "\(fixture.id)-r12", checksum: "sha256:demo")
+        let revision = RevisionRef(id: DemoActivity.uuid("\(id)-\(checksum)"), checksum: checksum)
         return EnvironmentStatus(
-            environmentId: "\(fixture.id)/\(environment)",
-            targetRevision: revision, activeRevision: health == .progressing ? nil : revision,
+            environmentId: id, targetRevision: revision, activeRevision: revision,
             observation: StatusObservation(state: "fresh", lastSync: .now.addingTimeInterval(-2)),
-            services: services)
+            services: services, incompleteRestore: state.hold)
     }
 
     static func metrics(_ fixture: Fixture, environment: String, window: NodeMetrics.Window) -> EnvironmentMetrics {
@@ -295,7 +322,8 @@ enum DemoProjects {
 
 extension DemoCluster {
     public func environments(projectID: String) async throws -> [ProjectEnvironment] {
-        try DemoProjects.environments(fixture(projectID)).map(activity.applySchedule)
+        let fixture = try fixture(projectID)
+        return DemoProjects.environments(fixture).map { activity.apply($0, fixture: fixture) }
     }
 
     public func projectDraft(projectID: String) async throws -> ProjectDraft? {
@@ -328,13 +356,56 @@ extension DemoCluster {
     }
 
     public func environmentStatusUpdates(environmentID: String) -> AsyncThrowingStream<EnvironmentStatus, Error> {
-        AsyncThrowingStream { continuation in
+        // The document, then a new one whenever something started here
+        // moves the environment.
+        let activity = activity
+        return AsyncThrowingStream { continuation in
             guard let (fixture, environment) = DemoProjects.fixture(environmentID: environmentID) else {
                 continuation.finish(throwing: Self.notFound)
                 return
             }
-            continuation.yield(DemoProjects.status(fixture, environment: environment))
+            let task = Task {
+                var seen: String?
+                while !Task.isCancelled {
+                    let now = activity.signature(projectID: fixture.id)
+                    if now != seen {
+                        seen = now
+                        continuation.yield(DemoProjects.status(
+                            fixture, environment: environment, state: activity.environmentState(fixture, environment)))
+                    }
+                    try? await Task.sleep(for: .seconds(1))
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
         }
+    }
+
+    public func environmentStatus(environmentID: String) async throws -> EnvironmentStatus {
+        let (fixture, environment) = try fixture(environmentID: environmentID)
+        return DemoProjects.status(fixture, environment: environment, state: activity.environmentState(fixture, environment))
+    }
+
+    // MARK: Deploying
+
+    public func planDeployment(environmentID: String, from source: DeploySource) async throws -> DeployPlan {
+        let (fixture, environment) = try fixture(environmentID: environmentID)
+        try await Task.sleep(for: .milliseconds(400))
+        return try activity.plan(fixture, environment: environment, source: source)
+    }
+
+    public func openDeployment(
+        environmentID: String, from source: DeploySource, allowDestructive: Bool
+    ) async throws -> OpenedDeployment {
+        let (fixture, environment) = try fixture(environmentID: environmentID)
+        return try activity.open(fixture, environment: environment, source: source, allowDestructive: allowDestructive)
+    }
+
+    public func completeDeployment(id: String) async throws -> String {
+        try activity.complete(deploymentID: id, actor: user.id).id
+    }
+
+    public func failDeployment(id: String, reason: String) async throws {
+        activity.fail(deploymentID: id)
     }
 
     public func environmentMetrics(environmentID: String, window: NodeMetrics.Window) async throws -> EnvironmentMetrics {
@@ -437,6 +508,11 @@ extension DemoCluster {
         return activity.start("restore", fixture: fixture, environment: environment, actor: user.id, snapshot: snapshot).id
     }
 
+    public func acceptRestore(environmentID: String, restoreID: String) async throws -> String {
+        let (fixture, environment) = try fixture(environmentID: environmentID)
+        return try activity.accept(fixture, environment: environment, restoreID: restoreID, actor: user.id).id
+    }
+
     public func deleteSnapshot(projectID: String, snapshotID: String) async throws {
         _ = try fixture(projectID)
         activity.deleteSnapshot(snapshotID)
@@ -448,7 +524,7 @@ extension DemoCluster {
         guard let updated = DemoProjects.environments(fixture).first(where: { $0.name == environment }) else {
             throw Self.notFound
         }
-        return activity.applySchedule(updated)
+        return activity.apply(updated, fixture: fixture)
     }
 
     private static let noTarget = APIError.server(

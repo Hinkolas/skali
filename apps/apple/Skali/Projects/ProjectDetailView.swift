@@ -29,6 +29,8 @@ private struct ProjectOverviewScreen: View {
     @Environment(\.openURL) private var openURL
     @State private var showingStorage = false
     @State private var confirmingRestart = false
+    @State private var deploying: DeploySheet.Kind?
+    @State private var accepting: IncompleteRestore?
     @State private var actionError: String?
 
     var body: some View {
@@ -55,11 +57,22 @@ private struct ProjectOverviewScreen: View {
                     .presentationDetents([.medium, .large])
                 }
             }
+            .sheet(item: $deploying) { kind in
+                if let environment = model.environment {
+                    DeploySheet(kind, environment: environment, model: model)
+                }
+            }
+            .sheet(item: $accepting) { restore in
+                if let environment = model.environment {
+                    AcceptRestoreSheet(restore: restore, environment: environment, model: model)
+                }
+            }
             .alert("Could Not Restart", isPresented: Binding { actionError != nil } set: { if !$0 { actionError = nil } }) {
                 Button("OK") {}
             } message: {
                 Text(actionError ?? "")
             }
+            .onChange(of: model.status == nil, initial: true) { openInitialSheet() }
     }
 
     // MARK: Overview
@@ -67,9 +80,7 @@ private struct ProjectOverviewScreen: View {
     private func overview(_ environment: ProjectEnvironment) -> some View {
         List {
             if let restore = model.status?.incompleteRestore {
-                Section {
-                    RestoreNotice(restore: restore, environment: environment.name)
-                }
+                RestoreHoldSection(restore: restore, environment: environment) { accepting = restore }
             }
             if model.definition?.applications?.isEmpty == false {
                 Section {
@@ -180,9 +191,27 @@ private struct ProjectOverviewScreen: View {
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
         ToolbarItem(placement: .primaryAction) {
             Menu {
-                Button("Restart Applications", systemImage: "arrow.clockwise") { confirmingRestart = true }
-                    .disabled(!canRestart)
-                Button("Open in Studio", systemImage: "safari") { openURL(model.studioURL()) }
+                Section {
+                    Button { deploying = .promote } label: {
+                        Text("Promote…")
+                        if let promoteRefusal { Text(promoteRefusal) }
+                        Image(systemName: "arrow.up.circle")
+                    }
+                    .disabled(!mayDeploy || promoteRefusal != nil)
+                    Button { deploying = .redeploy } label: {
+                        Text("Redeploy…")
+                        if let redeployRefusal { Text(redeployRefusal) }
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                    }
+                    .disabled(!mayDeploy || redeployRefusal != nil)
+                }
+                Section {
+                    Button("Restart Applications", systemImage: "arrow.clockwise") { confirmingRestart = true }
+                        .disabled(!canRestart)
+                }
+                Section {
+                    Button("Open in Studio", systemImage: "safari") { openURL(model.studioURL()) }
+                }
             } label: {
                 Label("More", systemImage: "ellipsis")
             }
@@ -196,6 +225,38 @@ private struct ProjectOverviewScreen: View {
             }
         }
     }
+
+    /// Nothing deploys into an environment, or a project, being deleted.
+    private var mayDeploy: Bool {
+        model.environmentIsReadable && model.project.deletingAt == nil
+    }
+
+    private var promoteRefusal: String? {
+        guard let environment = model.environment, let environments = model.environments else { return nil }
+        return promotionRefusal(source: environment, environments: environments, status: model.status)
+    }
+
+    private var redeployRefusal: String? {
+        guard let environment = model.environment else { return nil }
+        return SkaliKit.redeployRefusal(environment, status: model.status, runs: model.runs)
+    }
+
+    /// The sheet a debug launch asked for, once the environment's status
+    /// is in.
+    private func openInitialSheet() {
+        #if DEBUG
+        guard !Self.openedInitialSheet, let sheet = AppTab.initialProjectSheet, let status = model.status else { return }
+        Self.openedInitialSheet = true
+        switch sheet {
+        case "promote": deploying = .promote
+        case "redeploy": deploying = .redeploy
+        case "accept": accepting = status.incompleteRestore
+        default: break
+        }
+        #endif
+    }
+
+    private static var openedInitialSheet = false
 
     private var canRestart: Bool {
         guard model.environmentIsReadable, let environment = model.environment else { return false }
@@ -225,32 +286,6 @@ private struct RunStateLabel: View {
             Circle().fill(tint).frame(width: 7, height: 7)
             Text(text)
         }
-    }
-}
-
-/// A restore that stopped the environment and did not complete.
-private struct RestoreNotice: View {
-    let restore: IncompleteRestore
-    let environment: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Label(restore.status == "running" ? "Restore Running" : "Restore Incomplete",
-                  systemImage: "exclamationmark.triangle.fill")
-                .font(.headline)
-                .foregroundStyle(.orange)
-            Text(restore.status == "running"
-                 ? "A restore holds \(environment) down until it completes."
-                 : "A restore stopped \(environment) and did not complete, so its data may be partial. Deploys are refused until a restore completes or its data is accepted.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            if let error = restore.error {
-                Text(error)
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .padding(.vertical, 4)
     }
 }
 
@@ -299,4 +334,8 @@ private extension Run {
     PreviewHost {
         ProjectDetailView(project: DemoCluster.projects[1])
     }
+}
+
+extension DeploySheet.Kind: Identifiable {
+    var id: Self { self }
 }

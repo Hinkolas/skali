@@ -4,14 +4,29 @@ import Synchronization
 /// What happens in the demo's projects: their run history and snapshots,
 /// derived from the fixtures, plus what the person changed or started in
 /// this launch. A run started here progresses with the clock and settles
-/// after a few seconds; a backup's snapshot appears when it succeeds.
+/// after a few seconds; a backup's snapshot appears when it succeeds, a
+/// deployment moves the environment to its revision, and a cancelled
+/// restore holds the environment down until its data is accepted.
 public final class DemoActivity: Sendable {
     private struct Started: Sendable {
         var run: Run
         let environmentID: String
         /// The snapshot a backup writes, or the one a restore reads.
         let snapshot: BackupSnapshot?
+        /// The revision a deployment rolls out.
+        var revision: String?
         var cancelled = false
+
+        /// Accepting a restore's data is a single quick step.
+        var length: TimeInterval { run.kind == "restore-accept" ? 1 : DemoActivity.runLength }
+    }
+
+    /// A deployment opened and not completed yet.
+    private struct Pending: Sendable {
+        let fixtureID: String
+        let environment: String
+        let revision: String
+        let deployment: RunDeployment
     }
 
     private struct State: Sendable {
@@ -19,6 +34,20 @@ public final class DemoActivity: Sendable {
         var schedules: [String: BackupSchedule?] = [:]
         var deletedSnapshots: Set<String> = []
         var started: [Started] = []
+        var pending: [String: Pending] = [:]
+    }
+
+    /// Where an environment stands after what happened in this launch.
+    struct EnvironmentState: Sendable {
+        /// The revision it runs; nil while it is down.
+        var revision: String?
+        /// The restore holding it down.
+        var hold: IncompleteRestore?
+        var lastPromotionTarget: String?
+        /// Deployed in this launch, so its values are current.
+        var valuesCurrent = false
+
+        var isDown: Bool { revision == nil }
     }
 
     private let state = Mutex(State())
@@ -30,17 +59,22 @@ public final class DemoActivity: Sendable {
 
     // MARK: Schedules
 
-    func applySchedule(_ environment: ProjectEnvironment) -> ProjectEnvironment {
-        guard let override = state.withLock({ $0.schedules[environment.id] }), let settings = environment.settings else {
-            return environment
+    /// The environment with what changed in this launch: its schedule,
+    /// whether it runs, and where it was last promoted to.
+    func apply(_ environment: ProjectEnvironment, fixture: DemoProjects.Fixture) -> ProjectEnvironment {
+        let override = state.withLock { $0.schedules[environment.id] }
+        let now = environmentState(fixture, environment.name)
+        var settings = environment.settings
+        if let override, let current = settings {
+            settings = EnvironmentSettings(
+                maxRole: current.maxRole, deployPolicy: current.deployPolicy, promoteFrom: current.promoteFrom,
+                priority: current.priority, backup: override)
         }
         return ProjectEnvironment(
             id: environment.id, projectId: environment.projectId, name: environment.name,
-            access: environment.access, createdAt: environment.createdAt,
-            settings: EnvironmentSettings(
-                maxRole: settings.maxRole, deployPolicy: settings.deployPolicy, promoteFrom: settings.promoteFrom,
-                priority: settings.priority, backup: override),
-            state: environment.state, health: environment.health, healthEvaluatedAt: environment.healthEvaluatedAt)
+            access: environment.access, createdAt: environment.createdAt, settings: settings,
+            lastPromotionTarget: now.lastPromotionTarget, state: now.isDown ? "down" : "active",
+            health: now.isDown ? .unknown : environment.health, healthEvaluatedAt: environment.healthEvaluatedAt)
     }
 
     func setSchedule(_ schedule: BackupSchedule?, environmentID: String) {
@@ -66,7 +100,8 @@ public final class DemoActivity: Sendable {
     @discardableResult
     func start(
         _ kind: String, fixture: DemoProjects.Fixture, environment: String, actor: String,
-        snapshot: BackupSnapshot? = nil, only application: String? = nil
+        snapshot: BackupSnapshot? = nil, only application: String? = nil,
+        deployment: RunDeployment? = nil, revision: String? = nil
     ) -> Run {
         let now = Date.now
         let run = Run(
@@ -75,7 +110,7 @@ public final class DemoActivity: Sendable {
             deployment: kind == "restart"
                 ? RunDeployment(restarts: fixture.applications.filter { application == nil || $0.key == application }
                     .map { "applications.\($0.key)" })
-                : nil)
+                : deployment)
         let written = kind == "backup"
             ? BackupSnapshot(
                 id: Self.uuid("snapshot-\(run.id)"), environment: environment,
@@ -84,29 +119,206 @@ public final class DemoActivity: Sendable {
                 bytes: Self.dataBytes(fixture, environment))
             : snapshot
         state.withLock {
-            $0.started.append(Started(run: run, environmentID: "\(fixture.id)/\(environment)", snapshot: written))
+            $0.started.append(Started(
+                run: run, environmentID: "\(fixture.id)/\(environment)", snapshot: written, revision: revision))
         }
         return run
     }
 
     func cancel(runID: String) {
+        let now = Date.now
         state.withLock { state in
-            if let index = state.started.firstIndex(where: { $0.run.id == runID }) {
-                state.started[index].cancelled = true
-            }
+            guard let index = state.started.firstIndex(where: { $0.run.id == runID }),
+                  current(state.started[index], now: now).isActive
+            else { return }
+            let run = state.started[index].run
+            state.started[index].cancelled = true
+            state.started[index].run = Run(
+                id: run.id, kind: run.kind, actor: run.actor, status: "cancelled", createdAt: run.createdAt,
+                startedAt: run.startedAt, finishedAt: now, deployment: run.deployment)
         }
     }
 
     /// A started run as it stands now.
     private func current(_ started: Started, now: Date) -> Run {
         let run = started.run
+        if started.cancelled { return run }
         let elapsed = now.timeIntervalSince(run.createdAt)
-        let status = started.cancelled ? "cancelled" : elapsed < Self.runLength ? "running" : "succeeded"
-        let finished = status == "running" ? nil : run.createdAt.addingTimeInterval(min(elapsed, Self.runLength))
+        let status = elapsed < started.length ? "running" : "succeeded"
+        let finished = status == "running" ? nil : run.createdAt.addingTimeInterval(min(elapsed, started.length))
         return Run(
             id: run.id, kind: run.kind, actor: run.actor, status: status, createdAt: run.createdAt,
             startedAt: run.startedAt, finishedAt: finished, deployment: run.deployment)
     }
+
+    // MARK: Environments
+
+    /// The revision an environment runs at launch: staging a step ahead
+    /// of production, so promoting between them has something to move.
+    static func initialRevision(_ fixture: DemoProjects.Fixture, _ environment: String) -> String {
+        let id = "\(fixture.id)/\(environment)"
+        return "sha256:" + (uuid("\(id)-revision") + uuid("\(id)-revision-tail")).filter(\.isHexDigit)
+    }
+
+    /// Replays the launch's restores, accepts and deployments over the
+    /// fixture's starting point.
+    func environmentState(_ fixture: DemoProjects.Fixture, _ environment: String, now: Date = .now) -> EnvironmentState {
+        let id = "\(fixture.id)/\(environment)"
+        var lastRevision = Self.initialRevision(fixture, environment)
+        var result = EnvironmentState(
+            revision: lastRevision,
+            lastPromotionTarget: environment == "staging" && fixture.environments.contains("production") ? "production" : nil)
+        if let hold = DemoProjects.initialHold(fixture, environment) {
+            result.revision = nil
+            result.hold = hold
+        }
+        let started = state.withLock { $0.started }.sorted { $0.run.createdAt < $1.run.createdAt }
+        for entry in started where entry.environmentID.hasPrefix("\(fixture.id)/") {
+            let run = current(entry, now: now)
+            if run.kind == "deployment", run.status != "cancelled", run.deployment?.fromEnvironment == environment {
+                result.lastPromotionTarget = String(entry.environmentID.dropFirst(fixture.id.count + 1))
+            }
+            guard entry.environmentID == id else { continue }
+            switch run.kind {
+            case "restore":
+                if run.status == "succeeded" {
+                    result.revision = lastRevision
+                    result.hold = nil
+                } else {
+                    result.revision = nil
+                    result.hold = IncompleteRestore(
+                        id: Self.uuid("hold-\(run.id)"), runId: run.id, snapshotId: entry.snapshot?.id ?? "",
+                        status: run.status, startedAt: run.createdAt, finishedAt: run.finishedAt,
+                        components: fixture.databases.map { "db:\($0.key)" } + fixture.buckets.map { "bucket:\($0.key)" })
+                }
+            case "restore-accept":
+                result.hold = nil
+            case "deployment" where run.status != "cancelled":
+                if let revision = entry.revision {
+                    result.revision = revision
+                    lastRevision = revision
+                }
+                result.valuesCurrent = true
+            default:
+                break
+            }
+        }
+        return result
+    }
+
+    // MARK: Deploying
+
+    /// What deploying `source` into the environment would change, as the
+    /// daemon plans it.
+    func plan(_ fixture: DemoProjects.Fixture, environment: String, source: DeploySource) throws -> DeployPlan {
+        try planned(fixture, environment: environment, source: source).plan
+    }
+
+    private func planned(
+        _ fixture: DemoProjects.Fixture, environment: String, source: DeploySource
+    ) throws -> (plan: DeployPlan, revision: String, from: String?) {
+        let target = environmentState(fixture, environment)
+        switch source {
+        case .redeploy:
+            guard let revision = target.revision else { throw Self.noActiveRevision }
+            let values = target.valuesCurrent ? [] : [ValueChange(name: "API_TOKEN", action: "update")]
+            return (DeployPlan(plan: PlanDocument(project: fixture.name, values: values), upToDate: values.isEmpty),
+                    revision, nil)
+        case .promotion(let sourceID):
+            guard let (sourceFixture, from) = DemoProjects.fixture(environmentID: sourceID), sourceFixture.id == fixture.id
+            else { throw DemoCluster.notFound }
+            guard from != environment else {
+                throw APIError.server(status: 400, code: "bad_request", message: "an environment cannot be promoted to itself")
+            }
+            guard let revision = environmentState(fixture, from).revision else { throw Self.noActiveRevision }
+            let changes: [PlanChange]
+            if let current = target.revision {
+                guard current != revision else {
+                    return (DeployPlan(plan: PlanDocument(project: fixture.name), upToDate: true), revision, from)
+                }
+                changes = fixture.applications.map { application in
+                    PlanChange(service: "applications.\(application.key)", action: "update",
+                               detail: "artifact \(Self.short(revision)) replaces \(Self.short(current))")
+                }
+            } else {
+                // Nothing runs there: the first revision creates everything.
+                changes = fixture.applications.map { PlanChange(service: "applications.\($0.key)", action: "create") }
+                    + fixture.databases.map { PlanChange(service: "databases.\($0.key)", action: "create") }
+                    + fixture.buckets.map { PlanChange(service: "buckets.\($0.key)", action: "create") }
+            }
+            return (DeployPlan(plan: PlanDocument(project: fixture.name, changes: changes), upToDate: false), revision, from)
+        }
+    }
+
+    /// Opens a deployment, refusing what the daemon refuses.
+    func open(
+        _ fixture: DemoProjects.Fixture, environment: String, source: DeploySource, allowDestructive: Bool
+    ) throws -> OpenedDeployment {
+        let id = "\(fixture.id)/\(environment)"
+        if let hold = environmentState(fixture, environment).hold {
+            throw APIError.server(
+                status: 409, code: "restore_incomplete",
+                message: "a restore stopped this environment and did not complete (restore \(hold.id)), so its data may be partial; re-run a restore, or accept the data as it is and deploy")
+        }
+        if runs(fixture, environment: environment).contains(where: { $0.isRollout && $0.isActive }) {
+            throw APIError.server(
+                status: 409, code: "deployment_in_flight", message: "another deployment is already running for this environment")
+        }
+        let (plan, revision, from) = try planned(fixture, environment: environment, source: source)
+        if plan.isDestructive && !allowDestructive {
+            throw APIError.server(
+                status: 409, code: "destructive_change",
+                message: "the plan contains destructive changes; review it and explicitly allow them")
+        }
+        if plan.upToDate { return OpenedDeployment(deployment: nil, upToDate: true) }
+        let deploymentID = Self.uuid("deployment-\(id)-\(Date.now.timeIntervalSince1970)")
+        let restarts = source == .redeploy ? fixture.applications.map { "applications.\($0.key)" } : nil
+        let pending = Pending(
+            fixtureID: fixture.id, environment: environment, revision: revision,
+            deployment: RunDeployment(
+                revision: revision, fromEnvironment: from, changes: plan.changes, values: plan.values, restarts: restarts))
+        state.withLock { $0.pending[deploymentID] = pending }
+        return OpenedDeployment(
+            deployment: DeploymentRef(id: deploymentID, runId: nil),
+            actions: fixture.applications.map { ArtifactAction(application: $0.key, action: "reuse", kind: "image") })
+    }
+
+    /// Hands an open deployment over; returns its run.
+    func complete(deploymentID: String, actor: String) throws -> Run {
+        guard let pending = state.withLock({ $0.pending.removeValue(forKey: deploymentID) }),
+              let fixture = DemoProjects.fixture(projectID: pending.fixtureID)
+        else { throw DemoCluster.notFound }
+        return start(
+            "deployment", fixture: fixture, environment: pending.environment, actor: actor,
+            deployment: pending.deployment, revision: pending.revision)
+    }
+
+    func fail(deploymentID: String) {
+        state.withLock { _ = $0.pending.removeValue(forKey: deploymentID) }
+    }
+
+    /// Lifts the hold the named restore keeps; the environment stays down.
+    func accept(_ fixture: DemoProjects.Fixture, environment: String, restoreID: String, actor: String) throws -> Run {
+        guard let hold = environmentState(fixture, environment).hold, hold.id == restoreID else {
+            throw APIError.server(
+                status: 409, code: "no_incomplete_restore", message: "the named restore does not hold the environment")
+        }
+        guard !hold.isRunning else {
+            throw APIError.server(
+                status: 409, code: "backup_in_flight",
+                message: "the incomplete restore is still running, or its workers have not stopped yet; the environment stays held, try again in a moment")
+        }
+        return start("restore-accept", fixture: fixture, environment: environment, actor: actor)
+    }
+
+    private static let noActiveRevision = APIError.server(
+        status: 409, code: "conflict", message: "source environment has no active revision")
+
+    private static func short(_ checksum: String) -> String {
+        String(checksum.replacingOccurrences(of: "sha256:", with: "").prefix(12))
+    }
+
+    // MARK: Run history
 
     /// Every run of the environment, newest first.
     func runs(_ fixture: DemoProjects.Fixture, environment: String) -> [Run] {
@@ -131,11 +343,16 @@ public final class DemoActivity: Sendable {
                 createdAt: snapshot.createdAt, startedAt: snapshot.createdAt,
                 finishedAt: snapshot.createdAt.addingTimeInterval(95)))
         }
+        if let hold = DemoProjects.initialHold(fixture, environment), let runID = hold.runId {
+            runs.append(Run(
+                id: runID, kind: "restore", actor: admin, status: "failed", createdAt: hold.startedAt,
+                startedAt: hold.startedAt, finishedAt: hold.finishedAt, failure: hold.error))
+        }
         let changes = fixture.applications.map { PlanChange(service: "applications.\($0.key)", action: "update") }
         runs.append(Run(
             id: Self.uuid("\(id)-12"), kind: "deployment", actor: admin, status: "succeeded", createdAt: deployed,
             startedAt: deployed, finishedAt: deployed.addingTimeInterval(305),
-            deployment: RunDeployment(revision: "sha256:ee1214381996", changes: changes,
+            deployment: RunDeployment(revision: Self.initialRevision(fixture, environment), changes: changes,
                                       values: [ValueChange(name: "API_TOKEN", action: "update")])))
         runs.append(Run(
             id: Self.uuid("\(id)-11"), kind: "deployment", actor: admin, status: "failed",
@@ -152,10 +369,11 @@ public final class DemoActivity: Sendable {
 
     /// Finds a run of any demo project with its tree.
     func tree(runID: String) -> RunTree? {
+        let startedHere = state.withLock { $0.started.contains { $0.run.id == runID } }
         for fixture in DemoProjects.fixtures {
             for environment in fixture.environments {
                 if let run = runs(fixture, environment: environment).first(where: { $0.id == runID }) {
-                    return RunTree(run: run, steps: Self.steps(run, fixture: fixture))
+                    return RunTree(run: run, steps: Self.steps(run, fixture: fixture, startedHere: startedHere))
                 }
             }
         }
@@ -224,9 +442,11 @@ public final class DemoActivity: Sendable {
 
     /// The step tree a run of this kind records, its statuses following
     /// the run's: a failed deployment fails at the release command, a
-    /// running one is mid-rollout.
-    static func steps(_ run: Run, fixture: DemoProjects.Fixture) -> [RunStep] {
-        var builder = StepBuilder(run: run)
+    /// running one is mid-rollout. A run started in this launch reuses
+    /// artifacts (the app only promotes and redeploys) and is squeezed
+    /// into a few seconds.
+    static func steps(_ run: Run, fixture: DemoProjects.Fixture, startedHere: Bool = false) -> [RunStep] {
+        var builder = StepBuilder(run: run, scaled: startedHere)
         switch run.kind {
         case "deployment":
             builder.step("validate", "Validate project definition")
@@ -234,7 +454,9 @@ public final class DemoActivity: Sendable {
             builder.group("artifacts", "Prepare artifacts") { builder in
                 for application in fixture.applications {
                     builder.group("artifacts:\(application.key)", application.key, service: "applications.\(application.key)") { builder in
-                        if let image = application.image {
+                        if startedHere {
+                            builder.step("artifacts:\(application.key):reuse", "Reuse \(Self.shortRevision(run))", seconds: 1)
+                        } else if let image = application.image {
                             builder.step("artifacts:\(application.key):pull", "Pull \(image)", seconds: 6)
                         } else {
                             builder.step("artifacts:\(application.key):build", "Build locally (linux/arm64)", seconds: 11)
@@ -282,13 +504,16 @@ public final class DemoActivity: Sendable {
         case "restore":
             builder.step("verify", "Verify snapshot", seconds: 8)
             builder.step("stop", "Stop environment", seconds: 5)
-            for database in fixture.databases {
-                builder.step("restore:\(database.key)", "Restore databases.\(database.key)", service: "databases.\(database.key)", seconds: 30)
+            for (index, database) in fixture.databases.enumerated() {
+                builder.step("restore:\(database.key)", "Restore databases.\(database.key)", service: "databases.\(database.key)",
+                             seconds: 30, fails: index == 0)
             }
             for bucket in fixture.buckets {
                 builder.step("restore:\(bucket.key)", "Restore buckets.\(bucket.key)", service: "buckets.\(bucket.key)", seconds: 20)
             }
             builder.step("resume", "Resume revision", seconds: 15)
+        case "restore-accept":
+            builder.step("accept", "Accept the incomplete restore's data", seconds: 0.5)
         default:
             let restarts = run.deployment?.restarts
             for application in fixture.applications
@@ -314,11 +539,10 @@ public final class DemoActivity: Sendable {
         /// Runs started in the demo last seconds, so their steps shrink to fit.
         private let scale: TimeInterval
 
-        init(run: Run) {
+        init(run: Run, scaled: Bool) {
             self.run = run
             clock = run.startedAt ?? run.createdAt
-            let length = (run.finishedAt ?? .now).timeIntervalSince(run.startedAt ?? run.createdAt)
-            scale = length <= DemoActivity.runLength + 1 && run.kind != "deployment" ? 0.06 : 1
+            scale = scaled ? 0.06 : 1
         }
 
         mutating func step(
@@ -376,6 +600,11 @@ public final class DemoActivity: Sendable {
         }
 
         func finish() -> [RunStep] { steps }
+    }
+
+    /// "ee121438": the revision a deployment rolls out, for its step titles.
+    private static func shortRevision(_ run: Run) -> String {
+        String((run.deployment?.revision ?? "").replacingOccurrences(of: "sha256:", with: "").prefix(12))
     }
 
     // MARK: Logs

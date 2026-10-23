@@ -449,8 +449,8 @@ struct EnvironmentPicker: View {
                 ForEach(environments) { environment in
                     Toggle(isOn: Binding { environment.id == selected.id } set: { if $0 { onSelect(environment) } }) {
                         Text(environment.name)
-                        Text(detail(environment))
-                        Image(systemName: icon(environment))
+                        Text(environment.stateDetail)
+                        Image(systemName: environment.symbolName)
                     }
                 }
             } label: {
@@ -484,16 +484,21 @@ struct EnvironmentPicker: View {
         .glassEffect(chevron ? .regular.interactive() : .regular, in: .capsule)
     }
 
-    private func icon(_ environment: ProjectEnvironment) -> String {
-        if environment.isLocked { return "lock" }
-        if environment.state == "releasing" { return "trash" }
-        if environment.state == "down" { return "stop.circle" }
-        return environment.isHighPriority ? "star" : "square.stack.3d.up"
+}
+
+extension ProjectEnvironment {
+    /// The environment's symbol in menus and lists: its state when that
+    /// matters, else whether it is high priority.
+    var symbolName: String {
+        if isLocked { return "lock" }
+        if state == "releasing" { return "trash" }
+        if state == "down" { return "stop.circle" }
+        return isHighPriority ? "star" : "square.stack.3d.up"
     }
 
-    private func detail(_ environment: ProjectEnvironment) -> String {
-        if environment.isLocked { return "locked" }
-        return [environment.health.map { $0.label.lowercased() }, environment.stateLabel]
-            .compactMap(\.self).joined(separator: " · ")
+    /// "healthy · active", "locked".
+    var stateDetail: String {
+        if isLocked { return "locked" }
+        return [health.map { $0.label.lowercased() }, stateLabel].compactMap(\.self).joined(separator: " · ")
     }
 }

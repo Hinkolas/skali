@@ -29,6 +29,23 @@ public protocol ClusterAPI: Sendable {
     /// Recreates every application's pods with what is deployed; returns
     /// the run's id.
     func restartEnvironment(environmentID: String) async throws -> String
+    /// The environment's status document, once.
+    func environmentStatus(environmentID: String) async throws -> EnvironmentStatus
+
+    // MARK: Deploying
+
+    /// What deploying `source` into the environment would change.
+    func planDeployment(environmentID: String, from source: DeploySource) async throws -> DeployPlan
+    /// Opens the deployment's window; `allowDestructive` confirms a plan
+    /// that removes or destroys service state.
+    func openDeployment(
+        environmentID: String, from source: DeploySource, allowDestructive: Bool
+    ) async throws -> OpenedDeployment
+    /// Hands an open deployment to the daemon, which rolls it out under
+    /// the returned run.
+    func completeDeployment(id: String) async throws -> String
+    /// Closes an open deployment without rolling anything out.
+    func failDeployment(id: String, reason: String) async throws
 
     // MARK: Services
 
@@ -67,6 +84,10 @@ public protocol ClusterAPI: Sendable {
     func restore(environmentID: String, snapshotID: String) async throws -> String
     /// Sudo: removes the snapshot from the backup target for good.
     func deleteSnapshot(projectID: String, snapshotID: String) async throws
+    /// Maintain, sudo: lifts the hold an incomplete restore keeps on the
+    /// environment, accepting its data as it is; returns the run's id.
+    /// The environment stays down until the next deployment.
+    func acceptRestore(environmentID: String, restoreID: String) async throws -> String
     /// Environment admin, sudo: nil turns automatic backups off.
     func setBackupSchedule(environmentID: String, _ schedule: BackupSchedule?) async throws -> ProjectEnvironment
     /// Admin only.
@@ -206,6 +227,31 @@ extension APIClient: ClusterAPI {
         return response.runId
     }
 
+    public func environmentStatus(environmentID: String) async throws -> EnvironmentStatus {
+        try await get("v1/environments/\(environmentID)/status")
+    }
+
+    public func planDeployment(environmentID: String, from source: DeploySource) async throws -> DeployPlan {
+        try await post("v1/environments/\(environmentID)/plan", body: DeployRequest(source))
+    }
+
+    public func openDeployment(
+        environmentID: String, from source: DeploySource, allowDestructive: Bool
+    ) async throws -> OpenedDeployment {
+        try await post(
+            "v1/environments/\(environmentID)/deployments",
+            body: DeployRequest(source, allowDestructive: allowDestructive))
+    }
+
+    public func completeDeployment(id: String) async throws -> String {
+        let response: RunStarted = try await post("v1/deployments/\(id)/complete")
+        return response.runId
+    }
+
+    public func failDeployment(id: String, reason: String) async throws {
+        try await post("v1/deployments/\(id)/fail", body: FailRequest(reason: reason))
+    }
+
     public func databaseConnection(environmentID: String, key: String) async throws -> DatabaseConnection {
         try await get("v1/environments/\(environmentID)/databases/\(key)/connection")
     }
@@ -258,6 +304,12 @@ extension APIClient: ClusterAPI {
     public func restore(environmentID: String, snapshotID: String) async throws -> String {
         let response: RunStarted = try await post(
             "v1/environments/\(environmentID)/restore", body: RestoreRequest(snapshotId: snapshotID))
+        return response.runId
+    }
+
+    public func acceptRestore(environmentID: String, restoreID: String) async throws -> String {
+        let response: RunStarted = try await post(
+            "v1/environments/\(environmentID)/restore/accept", body: AcceptRequest(restoreId: restoreID))
         return response.runId
     }
 
@@ -460,6 +512,14 @@ private struct DevicePollRequest: Encodable {
 
 private struct RestoreRequest: Encodable {
     let snapshotId: String
+}
+
+private struct AcceptRequest: Encodable {
+    let restoreId: String
+}
+
+private struct FailRequest: Encodable {
+    let reason: String
 }
 
 /// Sends `backup` even when nil: an explicit null turns the schedule off,

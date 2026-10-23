@@ -58,7 +58,9 @@ struct RunDetailView: View {
                 stateSection(tree)
                 detailsSection(tree.run)
                 if let deployment = tree.run.deployment {
-                    ChangesSection(deployment: deployment)
+                    ChangesSection(
+                        changes: deployment.changes ?? [], values: deployment.values ?? [],
+                        restarts: deployment.restarts ?? [])
                 }
                 workSection(tree)
             }
@@ -339,88 +341,6 @@ private struct CopyableRow: View {
             }
             .accessibilityLabel("Copy \(title)")
         }
-    }
-}
-
-/// What a rollout changed: every service, value and restart.
-private struct ChangesSection: View {
-    let deployment: RunDeployment
-
-    @State private var showsValues = false
-
-    var body: some View {
-        Section("Changes") {
-            ForEach(deployment.changes ?? [], id: \.service) { change in
-                ChangeRow(name: serviceName(change.service), symbol: symbol(change.service), tint: kind(change.service)?.tint,
-                          action: change.action, detail: change.detail, destructive: change.destructive == true)
-            }
-            ForEach(deployment.restarts ?? [], id: \.self) { service in
-                ChangeRow(name: serviceName(service), symbol: symbol(service), tint: kind(service)?.tint,
-                          action: "restart", detail: nil, destructive: false)
-            }
-            let values = deployment.values ?? []
-            if !values.isEmpty {
-                let names = Set(values.map(\.name)).count
-                DisclosureGroup(isExpanded: $showsValues) {
-                    ForEach(Array(values.enumerated()), id: \.offset) { _, value in
-                        ChangeRow(name: value.name, symbol: nil, tint: nil, action: value.action,
-                                  detail: value.services.map { "used by \($0.map(serviceName).joined(separator: ", "))" },
-                                  destructive: false)
-                    }
-                } label: {
-                    Label(names == 1 ? "1 value changed" : "\(names) values changed", systemImage: "key")
-                }
-            }
-            if (deployment.changes ?? []).isEmpty && (deployment.restarts ?? []).isEmpty && values.isEmpty {
-                Text("No changes")
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    private func kind(_ service: String) -> ServiceKind? {
-        if service.hasPrefix("applications.") { return .application }
-        if service.hasPrefix("databases.") { return .database }
-        if service.hasPrefix("buckets.") { return .bucket }
-        return nil
-    }
-
-    private func symbol(_ service: String) -> String {
-        kind(service)?.systemImage ?? "square.dashed"
-    }
-}
-
-private struct ChangeRow: View {
-    let name: String
-    let symbol: String?
-    let tint: Color?
-    let action: String
-    let detail: String?
-    let destructive: Bool
-
-    var body: some View {
-        LabeledContent {
-            Text(actionWord(action))
-                .foregroundStyle(actionTint)
-        } label: {
-            Label {
-                Text(name).monospaced()
-                if let detail {
-                    Text(detail)
-                }
-            } icon: {
-                if let symbol {
-                    Image(systemName: symbol)
-                        .foregroundStyle(tint ?? .secondary)
-                }
-            }
-        }
-    }
-
-    private var actionTint: Color {
-        if destructive || action == "remove" || action == "prune" { return .red }
-        if action == "create" { return .green }
-        return .secondary
     }
 }
 
