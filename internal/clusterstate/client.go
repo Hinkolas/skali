@@ -109,7 +109,9 @@ func (c EnrollmentClient) enrollmentRequest(ctx context.Context, path string, in
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return fmt.Errorf("enrollment response not confirmed: %w", ctx.Err())
+			// Name the last failure: when the budget runs out, a mistyped
+			// endpoint refusing every attempt must still read as one.
+			return fmt.Errorf("enrollment response not confirmed: %w; last attempt: %v", ctx.Err(), err)
 		case <-timer.C:
 		}
 	}

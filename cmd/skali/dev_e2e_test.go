@@ -598,8 +598,14 @@ func TestDevEndToEnd(t *testing.T) {
 			require.Contains(t, body, "hello from skali", "the previous revision keeps serving after a failed completion")
 		}
 
+		// A completed deployment already runs this source, so dev has
+		// nothing left to deploy; a failed one is deployed again.
 		out = h.run(false, "", "dev", "-d")
-		require.Contains(t, out, "ready")
+		if settled == "completed" {
+			require.Contains(t, out, "nothing to deploy")
+		} else {
+			require.Contains(t, out, "ready")
+		}
 		h.waitRoute("hello again from skali", 5*time.Minute)
 	})
 
@@ -1369,13 +1375,13 @@ func TestDevAccess(t *testing.T) {
 		require.Regexp(t, `(?m)^MEMBER +PROJECT +local +staging$`, out)
 		require.Regexp(t, `(?m)^`+memberEmail+` +read +read +deploy\*$`, out)
 		out = h.run(false, "", "env", "ls", "--remote", "local")
-		require.Regexp(t, `(?m)^local +admin +normal +direct +read `, out)
+		require.Regexp(t, `(?m)^local +active +admin +normal +direct +read `, out)
 	})
 
 	t.Run("member deploys code only", func(t *testing.T) {
 		out := h.run(false, "", "env", "ls", "--remote", "member")
-		require.Regexp(t, `(?m)^local +read `, out)
-		require.Regexp(t, `(?m)^staging +deploy `, out)
+		require.Regexp(t, `(?m)^local +active +read `, out)
+		require.Regexp(t, `(?m)^staging +active +deploy `, out)
 		// The same definition redeploys (a forced restart), with the stored
 		// values because a deploy role cannot stage any.
 		out = h.run(false, "", "deploy", "--remote", "member", "--environment", "staging", "--yes", "--force")
@@ -1405,7 +1411,7 @@ func TestDevAccess(t *testing.T) {
 	t.Run("lock", func(t *testing.T) {
 		h.run(false, "", "access", "set", memberEmail, "none", "--environment", "local", "--remote", "local")
 		out := h.run(false, "", "env", "ls", "--remote", "member")
-		require.Regexp(t, `(?m)^local +locked `, out)
+		require.Regexp(t, `(?m)^local +- +locked `, out)
 		out = h.run(true, "", "values", "--remote", "member", "--environment", "local")
 		require.Contains(t, out, "read on environment local required")
 		out = h.run(false, "", "access", "ls", "--remote", "member")
@@ -1425,7 +1431,7 @@ func TestDevAccess(t *testing.T) {
 		out = h.run(false, memberPassword+"\n", "env", "set", "--environment", "feature", "--max-role", "read", "--remote", "member", "--yes")
 		require.Contains(t, out, "max role       read")
 		out = h.run(false, memberPassword+"\n", "env", "rm", "feature", "--yes", "--remote", "member")
-		require.Contains(t, out, "purge started")
+		require.Contains(t, out, "feature is removed; nothing of it remains")
 		// Production-like environments stay out of reach: no cell, read ceiling.
 		out = h.run(true, "", "env", "set", "--environment", "staging", "--max-role", "read", "--remote", "member", "--yes")
 		require.Contains(t, out, "admin on environment staging required")
@@ -1439,7 +1445,7 @@ func TestDevAccess(t *testing.T) {
 			"--promote-from", "local", "--remote", "local", "--yes")
 		require.Contains(t, out, "deploy policy  promote-only (from local)")
 		out = h.run(false, "", "env", "ls", "--remote", "local")
-		require.Regexp(t, `(?m)^staging +admin +normal +promote-only \(from local\) `, out)
+		require.Regexp(t, `(?m)^staging +active +admin +normal +promote-only \(from local\) `, out)
 		// A direct deploy is refused before anything is submitted or built.
 		out = h.run(true, "", "deploy", "--remote", "member", "--environment", "staging", "--yes", "--force")
 		require.Contains(t, out, "environment staging is promote-only: promote with skali deploy --from local --environment staging")
@@ -1486,8 +1492,11 @@ func TestDevAccess(t *testing.T) {
 			sort.Strings(classes)
 			return classes
 		}
-		// local and staging, both normal.
-		require.Equal(t, []string{"skali-normal", "skali-normal"}, managedClasses())
+		// local and staging, both normal, once the colors the protection
+		// deploys switched away from have drained and been pruned.
+		require.Eventually(t, func() bool {
+			return slices.Equal(managedClasses(), []string{"skali-normal", "skali-normal"})
+		}, 2*time.Minute, 2*time.Second)
 		out := h.run(false, "", "env", "set", "--environment", "staging", "--priority", "high", "--remote", "local", "--yes")
 		require.Contains(t, out, "priority       high")
 		require.Contains(t, out, "application pods roll onto priority class skali-high")

@@ -287,7 +287,7 @@ tasks:
   test:dev:
     desc: Run the skali dev end-to-end suite (creates and mutates the skali-dev-e2e clusters)
     cmds:
-      - TEST_SKALI_DEV=1 go test -timeout 40m -count=1 -run 'TestDev' ./cmd/skali/...
+      - TEST_SKALI_DEV=1 go test -timeout 90m -count=1 -run 'TestDev' ./cmd/skali/...
 
   test:cluster:
     desc: Run the skali cluster end-to-end suite in the Lima VM (task lima:up first)

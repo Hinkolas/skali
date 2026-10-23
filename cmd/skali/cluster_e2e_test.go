@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -82,14 +83,34 @@ func (h *installerHarness) ensureVM(name string) {
 // hostCommand runs a command on the developer machine.
 func (h *installerHarness) hostCommand(name string, args ...string) (string, int) {
 	h.t.Helper()
+	return h.hostCommandEnv(nil, name, args...)
+}
+
+// hostCommandEnv runs a command on the developer machine with env as its
+// whole environment; nil inherits this process's.
+func (h *installerHarness) hostCommandEnv(env []string, name string, args ...string) (string, int) {
+	h.t.Helper()
 	command := exec.Command(name, args...)
 	command.Dir = h.repoRoot
+	command.Env = env
 	out, err := command.CombinedOutput()
 	if exit, ok := err.(*exec.ExitError); ok {
 		return string(out), exit.ExitCode()
 	}
 	require.NoError(h.t, err, "%s %s: %s", name, strings.Join(args, " "), out)
 	return string(out), 0
+}
+
+// invitationPattern finds the credential in the join command an
+// invitation prints.
+var invitationPattern = regexp.MustCompile(`sudo skali cluster join --token '(skali\.[^'\s]+)'`)
+
+// invitationToken extracts the join token from cluster token output.
+func invitationToken(t *testing.T, out string) string {
+	t.Helper()
+	match := invitationPattern.FindStringSubmatch(out)
+	require.NotNil(t, match, "no join command in:\n%s", out)
+	return match[1]
 }
 
 // vmOn runs a command inside the named VM.
@@ -367,10 +388,12 @@ storage:
 	require.Contains(t, statusOut, "v0.0.0-dev (current)")
 	require.Contains(t, statusOut, "skalid healthy")
 
-	// Idempotence: a second upgrade has nothing to do.
+	// Without --image-tar, upgrading a reconciled cluster is a managed
+	// update submitted through a Skali remote. Root has none in the VM, so
+	// the bare upgrade refuses instead of acting locally.
 	repeatUpgrade, code := h.vm("sudo", "/tmp/skali", "cluster", "upgrade", "--yes")
-	require.Equal(t, 0, code, repeatUpgrade)
-	require.Contains(t, repeatUpgrade, "already current, nothing to do")
+	require.NotEqual(t, 0, code, repeatUpgrade)
+	require.Contains(t, repeatUpgrade, "select and authenticate a Skali remote first")
 
 	// Registry token protocol phase, driven with curl against the NodePort
 	// and skalid's ClusterIP (both reachable from the node without DNS or
@@ -471,27 +494,22 @@ storage:
 	require.Equal(t, 0, code, agentStatus)
 	require.Contains(t, agentStatus, "fresh")
 
-	// Server enrollment uses a one-time auth-only invitation. It carries
-	// neither the coordinator endpoint nor a k3s credential.
+	// Server enrollment uses a one-time invitation. It carries coordinator
+	// discovery hints but no k3s credential; the coordinator verifies the
+	// role and capabilities.
 	serverTokenOut, code := h.vm("sudo", "/tmp/skali", "cluster", "token", "--role", "server")
 	require.Equal(t, 0, code, serverTokenOut)
 	require.Contains(t, serverTokenOut, "one-time server invitation")
-	require.Contains(t, serverTokenOut, "authentication only")
-	var serverJoinToken string
-	for line := range strings.SplitSeq(serverTokenOut, "\n") {
-		if trimmed := strings.TrimSpace(line); strings.HasPrefix(trimmed, "skali.") {
-			serverJoinToken = trimmed
-		}
-	}
-	require.NotEmpty(t, serverJoinToken)
+	require.Contains(t, serverTokenOut, "coordinator discovery hints")
+	serverJoinToken := invitationToken(t, serverTokenOut)
 
 	serverTokenFile := h.writeFixtureOn(e2eAgentVM, "server-join-token", serverJoinToken+"\n")
 	h.vmOKOn(e2eAgentVM, "chmod", "600", serverTokenFile)
 
 	// A mistyped/incorrect endpoint fails authenticated network preflight
-	// before the joining host receives a binary, config, or ownership
-	// record. The same token can immediately be retried with the right
-	// endpoint.
+	// (after retrying for the enrollment budget, about two minutes) before
+	// the joining host receives a binary, config, or ownership record. The
+	// same token can immediately be retried with the right endpoint.
 	wrongJoinOut, code := h.vmOn(e2eAgentVM, "sudo", "/tmp/skali", "cluster", "join",
 		"--server", "https://127.0.0.1:6444", "--token-file", serverTokenFile,
 		"--role", "server", "--capabilities", "application", "--cluster", "e2e",
@@ -535,13 +553,14 @@ storage:
 	require.Contains(t, statusOut, "even count")
 
 	// Version-2 has no init owner: every active server can inspect the
-	// shared coordinator and the already-current bundle.
+	// shared coordinator, and a bare upgrade there takes the same managed
+	// path as on the first server.
 	secondStatus, code := h.vmOn(e2eAgentVM, "sudo", "/tmp/skali", "cluster", "status")
 	require.Equal(t, 0, code, secondStatus)
 	require.Contains(t, secondStatus, "converged")
 	secondUpgrade, code := h.vmOn(e2eAgentVM, "sudo", "/tmp/skali", "cluster", "upgrade", "--yes")
-	require.Equal(t, 0, code, secondUpgrade)
-	require.Contains(t, secondUpgrade, "already current, nothing to do")
+	require.NotEqual(t, 0, code, secondUpgrade)
+	require.Contains(t, secondUpgrade, "select and authenticate a Skali remote first")
 
 	// Removal is staged centrally. Apply drains and deletes membership,
 	// then the remote agent acknowledges installer-owned local cleanup.
@@ -578,14 +597,7 @@ storage:
 	tokenOut, code := h.vm("sudo", "/tmp/skali", "cluster", "token")
 	require.Equal(t, 0, code, tokenOut)
 	require.Contains(t, tokenOut, `one-time agent invitation for cluster "e2e"`)
-	var joinToken string
-	for line := range strings.SplitSeq(tokenOut, "\n") {
-		if trimmed := strings.TrimSpace(line); strings.HasPrefix(trimmed, "skali.") {
-			joinToken = trimmed
-		}
-	}
-	require.NotEmpty(t, joinToken)
-	require.NotContains(t, joinToken, " ", "the token line must be the bare credential")
+	joinToken := invitationToken(t, tokenOut)
 
 	tokenFile := h.writeFixtureOn(e2eAgentVM, "join-token", joinToken+"\n")
 	h.vmOKOn(e2eAgentVM, "chmod", "600", tokenFile)
@@ -698,7 +710,7 @@ storage:
 	require.NotEqual(t, 0, code, restoreOut)
 	require.Contains(t, restoreOut, "installation record")
 	require.Contains(t, restoreOut, "database backup")
-	require.Contains(t, restoreOut, "not implemented")
+	require.Contains(t, restoreOut, "restore is not available yet")
 
 	// Repeat bare execution with closed stdin performs no mutation.
 	before := h.vmOK("sudo", "k3s", "kubectl", "get", "deploy", "-n", "skali-system",

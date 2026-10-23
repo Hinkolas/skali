@@ -71,9 +71,17 @@ func TestClusterDarwin(t *testing.T) {
 		"GOARCH="+runtime.GOARCH, "CGO_ENABLED=0")
 	hostdOut, err := buildHostd.CombinedOutput()
 	require.NoError(t, err, "build hostd: %s", hostdOut)
+	// The CLI runs on this Mac, so it gets an empty config and state of
+	// its own: with the developer's, a bare upgrade of the reconciled test
+	// cluster becomes a managed update on whichever real remote is
+	// selected.
+	cliEnv := append(os.Environ(),
+		"XDG_CONFIG_HOME="+t.TempDir(),
+		"XDG_STATE_HOME="+t.TempDir(),
+	)
 	run := func(args ...string) (string, int) {
 		t.Helper()
-		return h.hostCommand(binary, append([]string{"cluster", "--vm", darwinE2EVM}, args...)...)
+		return h.hostCommandEnv(cliEnv, binary, append([]string{"cluster", "--vm", darwinE2EVM}, args...)...)
 	}
 
 	// Fresh detection: no VM means a fresh Mac.
@@ -181,16 +189,17 @@ skalid:
 	resources = h.vmOKOn(darwinE2EVM, "sudo", "k3s", "kubectl", "get", "deploy,svc,networkpolicy", "-n", "skali-system", "-o", "name")
 	require.NotContains(t, resources, "skali-web")
 
-	// Upgrade with no drift proves the maintenance prelude path into the
-	// VM without converging anything.
+	// Without --image-tar, upgrading the reconciled cluster is a managed
+	// update through a Skali remote. The maintenance prelude still reaches
+	// into the VM to read the record; with no remote the upgrade refuses.
 	upgradeOut, code = run("upgrade", "--yes")
-	require.Equal(t, 0, code, upgradeOut)
-	require.Contains(t, upgradeOut, "already current, nothing to do")
+	require.NotEqual(t, 0, code, upgradeOut)
+	require.Contains(t, upgradeOut, "select and authenticate a Skali remote first")
 
 	// Repeat bare execution with closed stdin performs no mutation.
 	before := h.vmOKOn(darwinE2EVM, "sudo", "k3s", "kubectl", "get", "deploy", "-n", "skali-system",
 		"-o", "jsonpath={range .items[*]}{.metadata.name}={.metadata.resourceVersion} {end}")
-	repeatRun, code := h.hostCommand("sh", "-c", binary+" cluster --vm "+darwinE2EVM+" </dev/null")
+	repeatRun, code := h.hostCommandEnv(cliEnv, "sh", "-c", binary+" cluster --vm "+darwinE2EVM+" </dev/null")
 	require.Equal(t, 0, code, repeatRun)
 	after := h.vmOKOn(darwinE2EVM, "sudo", "k3s", "kubectl", "get", "deploy", "-n", "skali-system",
 		"-o", "jsonpath={range .items[*]}{.metadata.name}={.metadata.resourceVersion} {end}")
