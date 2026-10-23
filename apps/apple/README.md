@@ -40,8 +40,17 @@ Launch arguments (Edit Scheme > Run > Arguments):
 
 - `-SkaliDemo` runs against built-in fixtures instead of a cluster, with
   nothing persisted. Use it for UI work and screenshots.
+- `-SkaliDemoMember` does the same, signed in as a member instead of an
+  instance admin.
 - `-SkaliTab settings` (Debug builds only) opens on the given tab: `projects`,
   `settings` or `search`.
+
+## Admins and members
+
+The second tab follows the instance role. Instance admins get **Settings**,
+which has the cluster's administration (nodes, databases, backups, updates)
+and links to their account. Members get **Account** as the tab itself,
+because everything else under Settings is admin-only on the daemon.
 
 ## Tests
 

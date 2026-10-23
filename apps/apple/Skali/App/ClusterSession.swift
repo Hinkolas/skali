@@ -17,6 +17,10 @@ final class ClusterSession {
 
     private(set) var system = SystemOverview()
 
+    /// The account's sessions on this cluster, newest first.
+    private(set) var sessions: [Session]?
+    private(set) var sessionsError: String?
+
     private let reauthenticate: () async throws -> Void
     private let onUnauthorized: () -> Void
 
@@ -70,16 +74,66 @@ final class ClusterSession {
         if let meta = await meta { self.meta = meta }
     }
 
+    /// The account screen: the user (2FA state can change elsewhere) and
+    /// the session list.
+    func loadAccount() async {
+        async let current = try? api.currentSession()
+        do {
+            sessions = try await api.sessions()
+            sessionsError = nil
+        } catch {
+            if handleUnauthorized(error) { return }
+            sessionsError = error.localizedDescription
+        }
+        if let current = await current { user = current.user }
+    }
+
     // MARK: Changes
 
-    /// Saves the update settings, confirming the session in the browser
-    /// first when the daemon asks for a recent sign-in.
     func saveUpdateSettings(_ settings: UpdateSettings) async throws {
+        system.updates = try await gated { try await self.api.saveUpdateSettings(settings) }
+    }
+
+    /// Signs another session out; revoking is never sudo-gated.
+    func revoke(_ session: Session) async throws {
+        try await gated { try await self.api.revokeSession(id: session.id) }
+        sessions?.removeAll { $0.id == session.id }
+    }
+
+    /// The daemon signs every other session out, so the list is re-read.
+    func changePassword(current: String, new: String) async throws {
+        try await gated { try await self.api.changePassword(current: current, new: new) }
+        await loadAccount()
+    }
+
+    func enableTwoFactor() async throws -> TwoFactorEnrollment {
+        try await gated { try await self.api.enableTwoFactor() }
+    }
+
+    func confirmTwoFactor(code: String) async throws {
+        try await gated { try await self.api.confirmTwoFactor(code: code) }
+        await loadAccount()
+    }
+
+    func disableTwoFactor() async throws {
+        try await gated { try await self.api.disableTwoFactor() }
+        await loadAccount()
+    }
+
+    func regenerateBackupCodes() async throws -> [String] {
+        try await gated { try await self.api.regenerateBackupCodes() }
+    }
+
+    /// Runs a call, confirming the session in the browser first when the
+    /// daemon asks for a recent sign-in (403 `reauth_required`), then once more.
+    private func gated<Result>(_ call: () async throws -> Result) async throws -> Result {
         do {
-            system.updates = try await api.saveUpdateSettings(settings)
-        } catch let error as APIError where error.isReauthRequired {
-            try await reauthenticate()
-            system.updates = try await api.saveUpdateSettings(settings)
+            do {
+                return try await call()
+            } catch let error as APIError where error.isReauthRequired {
+                try await reauthenticate()
+                return try await call()
+            }
         } catch {
             _ = handleUnauthorized(error)
             throw error

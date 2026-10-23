@@ -1,24 +1,36 @@
+import SkaliKit
 import SwiftUI
 
 enum AppTab: String, Hashable {
     case projects, settings, search
 }
 
-/// The app's shell: a tab bar on iPhone, a sidebar-adaptable tab view on
-/// iPad, with search as its own tab the way the system apps do it.
+/// The app's shell: Projects, then Settings for instance admins or the
+/// account for members (the Settings root is cluster administration, which
+/// members cannot open), and search as its own tab.
 struct MainTabView: View {
-    @State private var tab: AppTab = .initial
+    @Environment(AppModel.self) private var model
+    @Environment(ClusterSession.self) private var session
 
     var body: some View {
-        TabView(selection: $tab) {
+        @Bindable var model = model
+        TabView(selection: $model.selectedTab) {
             Tab("Projects", systemImage: "square.grid.2x2", value: .projects) {
                 NavigationStack {
                     ProjectsView()
                 }
             }
-            Tab("Settings", systemImage: "slider.horizontal.3", value: .settings) {
-                NavigationStack {
-                    SettingsView()
+            if session.user.isAdmin {
+                Tab("Settings", systemImage: "slider.horizontal.3", value: .settings) {
+                    NavigationStack {
+                        SettingsView()
+                    }
+                }
+            } else {
+                Tab("Account", systemImage: "person.crop.circle", value: .settings) {
+                    NavigationStack {
+                        AccountView(isRoot: true)
+                    }
                 }
             }
             Tab(value: .search, role: .search) {
@@ -31,7 +43,7 @@ struct MainTabView: View {
     }
 }
 
-private extension AppTab {
+extension AppTab {
     /// Debug builds open the tab named by `-SkaliTab <tab>` (screenshots, UI work).
     static var initial: AppTab {
         #if DEBUG

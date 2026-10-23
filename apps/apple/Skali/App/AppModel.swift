@@ -10,20 +10,25 @@ import UIKit
 final class AppModel {
     private(set) var accounts: [ClusterAccount] = []
     private(set) var session: ClusterSession?
+    /// Kept here rather than in the tab view so switching clusters stays
+    /// on the tab the person was on.
+    var selectedTab: AppTab = .initial
 
-    /// Launched with `-SkaliDemo`: fixtures instead of a cluster, nothing
-    /// persisted. Used for previews, screenshots and trying the app out.
-    let isDemo: Bool
+    /// Launched with `-SkaliDemo` (`-SkaliDemoMember` for a member):
+    /// fixtures instead of a cluster, nothing persisted. Used for previews,
+    /// screenshots and trying the app out.
+    private let demo: DemoCluster?
+    var isDemo: Bool { demo != nil }
 
     private let keychain = Keychain()
     private let store = ClusterAccountStore()
     private let authorizer = BrowserAuthorizer()
 
-    init(demo: Bool = ProcessInfo.processInfo.arguments.contains("-SkaliDemo")) {
-        isDemo = demo
-        if demo {
-            accounts = [DemoCluster.account]
-            select(DemoCluster.account.id)
+    init(demo: DemoCluster? = AppModel.launchDemo) {
+        self.demo = demo
+        if let demo {
+            accounts = [demo.account]
+            select(demo.account.id)
             return
         }
         let saved = store.load()
@@ -66,9 +71,16 @@ final class AppModel {
     }
 
     private func api(for account: ClusterAccount) -> any ClusterAPI {
-        if isDemo { return DemoCluster() }
+        if let demo { return demo }
         let token = try? keychain.token(for: account.id.uuidString)
-        return APIClient(address: account.address, token: token)
+        return APIClient(address: account.address, token: token, userAgent: Self.userAgent)
+    }
+
+    private static var launchDemo: DemoCluster? {
+        let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("-SkaliDemoMember") { return DemoCluster(member: true) }
+        if arguments.contains("-SkaliDemo") { return DemoCluster() }
+        return nil
     }
 
     private func persist() {
@@ -86,7 +98,7 @@ final class AppModel {
     /// `onCode` hands the user code to the UI so it can show what the
     /// browser will ask to approve.
     func signIn(to address: ClusterAddress, onCode: (String) -> Void) async throws {
-        let client = APIClient(address: address)
+        let client = APIClient(address: address, userAgent: Self.userAgent)
         let request: DeviceRequest
         do {
             request = try await client.startDeviceLogin(clientLabel: Self.clientLabel)
@@ -125,8 +137,18 @@ final class AppModel {
 
     /// What the Studio shows the approver, e.g. "skali for iOS on iPad".
     private static var clientLabel: String {
-        "skali for iOS on \(UIDevice.current.name)"
+        "skali for \(UIDevice.current.systemName) on \(UIDevice.current.name)"
     }
+
+    /// Names the app in the session list: `skali-ios/0.1.0 (iPhone; iOS 27.1)`.
+    /// A device sign-in takes the User-Agent of the request that opened it.
+    private static let userAgent: String = {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
+        let device = UIDevice.current
+        return SessionDevice.appUserAgent(
+            version: version, model: device.model, system: device.systemName,
+            systemVersion: device.systemVersion)
+    }()
 }
 
 enum SignInError: LocalizedError {

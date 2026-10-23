@@ -23,6 +23,22 @@ public protocol ClusterAPI: Sendable {
     func pollDevice(deviceCode: String) async throws -> DevicePoll
     /// Revokes this session on the cluster.
     func logout() async throws
+
+    // MARK: Account security
+
+    /// The caller's unexpired sessions, newest first.
+    func sessions() async throws -> [Session]
+    /// Signs one of the caller's sessions out. Never behind the sudo gate.
+    func revokeSession(id: String) async throws
+    /// Behind the sudo gate; every other session of the account is revoked.
+    func changePassword(current: String, new: String) async throws
+    /// Behind the sudo gate: starts enrollment, which `confirmTwoFactor` completes.
+    func enableTwoFactor() async throws -> TwoFactorEnrollment
+    func confirmTwoFactor(code: String) async throws
+    /// Behind the sudo gate.
+    func disableTwoFactor() async throws
+    /// Behind the sudo gate; the old codes stop working.
+    func regenerateBackupCodes() async throws -> [String]
 }
 
 extension APIClient: ClusterAPI {
@@ -82,6 +98,49 @@ extension APIClient: ClusterAPI {
     public func logout() async throws {
         try await post("v1/auth/logout")
     }
+
+    public func sessions() async throws -> [Session] {
+        let response: SessionsResponse = try await get("v1/auth/sessions")
+        return response.sessions
+    }
+
+    public func revokeSession(id: String) async throws {
+        try await delete("v1/auth/sessions/\(id)")
+    }
+
+    public func changePassword(current: String, new: String) async throws {
+        try await post("v1/auth/password", body: PasswordChange(currentPassword: current, newPassword: new))
+    }
+
+    public func enableTwoFactor() async throws -> TwoFactorEnrollment {
+        try await post("v1/auth/2fa/enable")
+    }
+
+    public func confirmTwoFactor(code: String) async throws {
+        try await post("v1/auth/2fa/confirm", body: TwoFactorCode(code: code))
+    }
+
+    public func disableTwoFactor() async throws {
+        try await post("v1/auth/2fa/disable")
+    }
+
+    public func regenerateBackupCodes() async throws -> [String] {
+        let response: BackupCodesResponse = try await post("v1/auth/2fa/backup-codes")
+        return response.backupCodes
+    }
+}
+
+private struct PasswordChange: Encodable {
+    let currentPassword: String
+    let newPassword: String
+}
+
+private struct TwoFactorCode: Encodable {
+    let code: String
+}
+
+private struct BackupCodesResponse: Decodable {
+    let backupCodes: [String]
 }
 
 private struct DeviceStart: Encodable {
