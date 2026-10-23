@@ -1492,8 +1492,11 @@ func TestDevAccess(t *testing.T) {
 			sort.Strings(classes)
 			return classes
 		}
-		// local and staging, both normal.
-		require.Equal(t, []string{"skali-normal", "skali-normal"}, managedClasses())
+		// local and staging, both normal, once the colors the protection
+		// deploys switched away from have drained and been pruned.
+		require.Eventually(t, func() bool {
+			return slices.Equal(managedClasses(), []string{"skali-normal", "skali-normal"})
+		}, 2*time.Minute, 2*time.Second)
 		out := h.run(false, "", "env", "set", "--environment", "staging", "--priority", "high", "--remote", "local", "--yes")
 		require.Contains(t, out, "priority       high")
 		require.Contains(t, out, "application pods roll onto priority class skali-high")
