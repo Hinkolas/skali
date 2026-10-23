@@ -11,7 +11,6 @@ struct ProjectsView: View {
     var body: some View {
         content
             .navigationTitle("Projects")
-            .navigationSubtitle(subtitle)
             .toolbar { optionsMenu }
             .navigationDestination(for: Project.self) { ProjectDetailView(project: $0) }
             .task { await session.loadProjects() }
@@ -70,15 +69,6 @@ struct ProjectsView: View {
         }
     }
 
-    private var subtitle: String {
-        var parts = [session.instanceLabel]
-        if let projects = session.projects {
-            parts.append(projects.count == 1 ? "1 project" : "\(projects.count) projects")
-        }
-        parts.append(sort.shortLabel)
-        return parts.joined(separator: " · ")
-    }
-
     @ToolbarContentBuilder private var optionsMenu: some ToolbarContent {
         ToolbarItem(placement: .primaryAction) {
             Menu {
@@ -107,13 +97,6 @@ extension ProjectSort {
         case .nameDescending: "Name, Z to A"
         case .updatedNewest: "Updated, Newest First"
         case .updatedOldest: "Updated, Oldest First"
-        }
-    }
-
-    var shortLabel: String {
-        switch self {
-        case .nameAscending, .nameDescending: "by name"
-        case .updatedNewest, .updatedOldest: "by activity"
         }
     }
 }

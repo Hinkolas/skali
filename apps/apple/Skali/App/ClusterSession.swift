@@ -32,9 +32,6 @@ final class ClusterSession {
         self.onUnauthorized = onUnauthorized
     }
 
-    /// The installation name, else the host: "kilohertz", "skali.example.com".
-    var instanceLabel: String { meta?.name ?? account.displayName }
-
     // MARK: Loading
 
     func loadProjects() async {

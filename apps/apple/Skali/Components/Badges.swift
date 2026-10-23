@@ -56,17 +56,22 @@ struct HealthDot: View {
     }
 }
 
-/// The colored tile behind a Settings row's symbol.
+/// The colored tile behind a Settings row's symbol. The glyph stays about
+/// half the tile's height so wide and tall symbols keep even insets, and
+/// both scale with Dynamic Type.
 struct SettingsIcon: View {
     let systemImage: String
     var tint: Color = .secondary
 
+    @ScaledMetric(relativeTo: .body) private var side: CGFloat = 30
+
     var body: some View {
         Image(systemName: systemImage)
-            .font(.body.weight(.medium))
+            .font(.system(size: side * 0.47, weight: .medium))
             .foregroundStyle(tint)
-            .frame(width: 30, height: 30)
-            .background(tint.opacity(0.15), in: .rect(cornerRadius: 8))
+            .frame(width: side, height: side)
+            .background(tint.opacity(0.15), in: .rect(cornerRadius: side * 0.26))
+            .accessibilityHidden(true)
     }
 }
 

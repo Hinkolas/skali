@@ -26,15 +26,8 @@ struct SettingsView: View {
             }
         }
         .navigationTitle("Settings")
-        .navigationSubtitle(subtitle)
         .task { await session.loadSystem() }
         .refreshable { await session.loadSystem() }
-    }
-
-    private var subtitle: String {
-        [session.meta.map { "skalid \($0.version)" }, session.account.address.host]
-            .compactMap(\.self)
-            .joined(separator: " · ")
     }
 
     private var systemSection: some View {
