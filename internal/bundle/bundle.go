@@ -35,7 +35,7 @@ import (
 // CLI generated, so `tls: automatic` behaves the same on both.
 const (
 	Namespace   = "skali-system"
-	CNPGVersion = "1.29.2"
+	CNPGVersion = "1.30.1"
 	// CNPGOperatorImage is the operator image the vendored manifest
 	// deploys, exported so local dev can pre-pull it into the cluster.
 	CNPGOperatorImage = "ghcr.io/cloudnative-pg/cloudnative-pg:" + CNPGVersion
@@ -47,7 +47,7 @@ const (
 	// running major: CNPG refuses downgrades.
 	BootstrapPostgresImage = "ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie"
 	// CertManagerVersion pins the vendored cert-manager release.
-	CertManagerVersion = "1.21.1"
+	CertManagerVersion = "1.21.2"
 	// CertManagerNamespace is the namespace the vendored manifest creates;
 	// cert-manager reads cluster-scoped issuer secrets from it.
 	CertManagerNamespace = "cert-manager"
@@ -118,7 +118,7 @@ const (
 // the longhorn storage driver; deleting an absent namespace is a no-op.
 var OperatorNamespaces = []string{"cnpg-system", "cert-manager", "longhorn-system"}
 
-//go:embed assets/cnpg-1.29.2.yaml
+//go:embed assets/cnpg-1.30.1.yaml
 var cnpgManifest []byte
 
 // CNPGManifest is the pinned operator install manifest. The upstream
@@ -132,7 +132,7 @@ func CNPGManifest() []byte {
 		[]byte("imagePullPolicy: IfNotPresent"), 1)
 }
 
-//go:embed assets/cert-manager-1.21.1.yaml
+//go:embed assets/cert-manager-1.21.2.yaml
 var certManagerManifest []byte
 
 // CertManagerManifest is the pinned cert-manager install manifest; both

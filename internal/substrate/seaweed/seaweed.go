@@ -13,7 +13,7 @@ import "github.com/Hinkolas/skali/internal/platform"
 // this image; the measured behaviors below (identity channel, deletion
 // ordering, bootstrap-auth merge) were verified on this version and must be
 // re-verified on any bump.
-const Image = "chrislusf/seaweedfs:4.39"
+const Image = "chrislusf/seaweedfs:4.48"
 
 // StoreName is the fixed component-name prefix in skali-platform; with one
 // live store per installation the constant is the whole naming scheme.

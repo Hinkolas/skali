@@ -964,8 +964,8 @@ func startS3Target(t *testing.T, name string, port int) {
 	out, err := exec.Command("docker", "run", "-d", "--name", name,
 		"-p", fmt.Sprintf("127.0.0.1:%d:8333", port),
 		"-v", config+":/etc/seaweedfs/s3.json:ro",
-		"chrislusf/seaweedfs:4.39", "server", "-dir=/data", "-ip.bind=0.0.0.0",
-		"-s3", "-s3.config=/etc/seaweedfs/s3.json").CombinedOutput()
+		"chrislusf/seaweedfs:4.48", "server", "-dir=/data", "-ip.bind=0.0.0.0",
+		"-master.telemetry=false", "-s3", "-s3.config=/etc/seaweedfs/s3.json").CombinedOutput()
 	require.NoError(t, err, "start s3 target: %s", out)
 	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", name).Run() })
 }
