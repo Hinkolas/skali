@@ -1,0 +1,100 @@
+# skali for Apple platforms
+
+The native skali app: a SwiftUI client for a cluster's API, starting with
+iPhone and iPad.
+
+```
+apps/apple/
+├── Skali.xcodeproj    the app project (folders are synchronized: add files on disk, no project edits)
+├── Skali/             the iOS/iPadOS app target: SwiftUI screens and app state
+├── SkaliKit/          Swift package shared by every Apple target: API client, models,
+│                      browser sign-in, Keychain storage, presentation rollups, fixtures
+└── Config/            Info.plist additions the build settings cannot express
+```
+
+There is one project for all Apple platforms. Everything below the UI lives
+in `SkaliKit`, which builds for iOS, macOS and watchOS, so new targets (a Mac
+app, a watch app, widgets) only add screens. The Mac should get its own
+SwiftUI target with Mac idioms (sidebar, tables, menus, several windows)
+rather than a stretched iPad app; it still shares `SkaliKit`.
+
+## Requirements
+
+- Xcode 27 or later
+- iOS and iPadOS 26 or later (the Liquid Glass baseline)
+
+## Build and run
+
+Open `Skali.xcodeproj` and run the `Skali` scheme, or from the command line:
+
+```sh
+xcodebuild -project apps/apple/Skali.xcodeproj -scheme Skali \
+  -destination 'generic/platform=iOS Simulator' build
+```
+
+Simulator builds need no signing. To run the app on a device, pick your team
+under Signing & Capabilities. Xcode keeps the choice in your user data, so it
+is never committed.
+
+Launch arguments (Edit Scheme > Run > Arguments):
+
+- `-SkaliDemo` runs against built-in fixtures instead of a cluster, with
+  nothing persisted. Use it for UI work and screenshots.
+- `-SkaliTab settings` (Debug builds only) opens on the given tab: `projects`,
+  `settings` or `search`.
+
+## Tests
+
+`SkaliKit` carries the unit tests and runs them on the Mac:
+
+```sh
+cd apps/apple/SkaliKit && swift test
+```
+
+`LiveClusterTests` decodes every read the app makes against a real daemon.
+These tests only run when you point them at a cluster with an admin token:
+
+```sh
+SKALI_LIVE_URL=http://localhost:7070/api SKALI_LIVE_TOKEN=$(skali remote token) swift test
+```
+
+## Sign-in
+
+The app signs in the same way `skali remote add` does, with the device
+authorization flow (`/v1/auth/device/*`):
+
+1. The app opens a device request.
+2. It shows the Studio's `/auth/device?code=…` page in an
+   `ASWebAuthenticationSession` sheet.
+3. It polls until someone approves the request.
+
+The sheet shares Safari's cookies. Someone already signed in to the Studio
+only has to press Approve. Someone who is not signed in gets Safari's password
+autofill for the cluster's own domain. The app could never offer that autofill
+itself, because every cluster lives on a different host.
+
+The browser never hands a credential to the app. The session only arrives in
+the poll response, and it is stored in the Keychain (this device only, and
+only readable while the device is unlocked).
+
+Sudo-gated changes, such as the update settings, use the same sheet. On
+`403 reauth_required` the app opens a reauth request
+(`/v1/auth/device/requests/reauth`), waits for the approval, and retries.
+
+Today the approval page does not redirect anywhere, so the sheet closes when
+the next poll sees the approval, within the poll interval. Making the Studio
+send the browser to `skali://…` after Approve would close it at once.
+
+### Against a local daemon
+
+App Transport Security allows local networking, so a development daemon
+works. The sign-in page comes from the Studio, so point the app at the Vite
+dev server, which proxies `/api` to the daemon:
+
+```sh
+task dev           # API on :7070
+task dev:studio    # Studio on :5173
+```
+
+Then sign in to `http://localhost:5173/api`. An explicit URL is used as given.
+A bare hostname becomes `https://<host>/api`, as in the CLI.
