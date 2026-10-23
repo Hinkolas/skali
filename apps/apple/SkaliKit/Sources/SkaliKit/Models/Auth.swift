@@ -45,6 +45,38 @@ public struct Session: Codable, Hashable, Sendable, Identifiable {
     public let userAgent: String?
     public let createdAt: Date
     public let current: Bool?
+
+    public init(
+        id: String, expiresAt: Date, ipAddress: String?, userAgent: String?,
+        createdAt: Date, current: Bool?
+    ) {
+        self.id = id
+        self.expiresAt = expiresAt
+        self.ipAddress = ipAddress
+        self.userAgent = userAgent
+        self.createdAt = createdAt
+        self.current = current
+    }
+
+    public var isCurrent: Bool { current == true }
+}
+
+struct SessionsResponse: Decodable {
+    let sessions: [Session]
+}
+
+/// `POST /v1/auth/2fa/enable`: the secret to add to an authenticator, and
+/// backup codes that only become valid once the enrollment is confirmed.
+public struct TwoFactorEnrollment: Codable, Hashable, Sendable {
+    public let secret: String
+    public let otpauthUri: String
+    public let backupCodes: [String]
+
+    public init(secret: String, otpauthUri: String, backupCodes: [String]) {
+        self.secret = secret
+        self.otpauthUri = otpauthUri
+        self.backupCodes = backupCodes
+    }
 }
 
 /// `GET /v1/auth/session`.

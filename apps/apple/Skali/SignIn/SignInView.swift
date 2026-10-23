@@ -102,5 +102,5 @@ struct SignInView: View {
 
 #Preview {
     NavigationStack { SignInView() }
-        .environment(AppModel(demo: false))
+        .environment(AppModel(demo: nil))
 }

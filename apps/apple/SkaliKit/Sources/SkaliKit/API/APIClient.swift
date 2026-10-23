@@ -6,16 +6,24 @@ import Foundation
 public struct APIClient: Sendable {
     public let address: ClusterAddress
     public let token: String?
+    /// Lands in the session list as the device, like the CLI's
+    /// `skali/<version> (<host>)`. A device sign-in records the
+    /// User-Agent of the request that opened it.
+    public let userAgent: String?
     private let session: URLSession
 
-    public init(address: ClusterAddress, token: String? = nil, session: URLSession = .shared) {
+    public init(
+        address: ClusterAddress, token: String? = nil, userAgent: String? = nil,
+        session: URLSession = .shared
+    ) {
         self.address = address
         self.token = token
+        self.userAgent = userAgent
         self.session = session
     }
 
     public func authorized(with token: String) -> APIClient {
-        APIClient(address: address, token: token, session: session)
+        APIClient(address: address, token: token, userAgent: userAgent, session: session)
     }
 
     // MARK: Requests
@@ -32,8 +40,20 @@ public struct APIClient: Sendable {
         let _: Empty = try await send("POST", path, body: Optional<Empty>.none)
     }
 
+    public func post<Body: Encodable>(_ path: String, body: Body) async throws {
+        let _: Empty = try await send("POST", path, body: body)
+    }
+
+    public func post<Response: Decodable>(_ path: String) async throws -> Response {
+        try await send("POST", path, body: Optional<Empty>.none)
+    }
+
     public func put<Body: Encodable, Response: Decodable>(_ path: String, body: Body) async throws -> Response {
         try await send("PUT", path, body: body)
+    }
+
+    public func delete(_ path: String) async throws {
+        let _: Empty = try await send("DELETE", path, body: Optional<Empty>.none)
     }
 
     private func send<Body: Encodable, Response: Decodable>(
@@ -46,6 +66,9 @@ public struct APIClient: Sendable {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if let token {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        if let userAgent {
+            request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         }
         if let body {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")

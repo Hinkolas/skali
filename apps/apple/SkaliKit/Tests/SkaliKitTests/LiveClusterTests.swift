@@ -16,6 +16,11 @@ struct LiveClusterTests {
         #expect(!meta.version.isEmpty)
     }
 
+    @Test func readsTheSessionList() async throws {
+        let sessions = try await api.sessions()
+        #expect(sessions.contains { $0.isCurrent })
+    }
+
     @Test func readsProjectsWithSummaries() async throws {
         let projects = try await api.projects()
         #expect(projects.allSatisfy { $0.summary != nil })

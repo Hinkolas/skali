@@ -1,8 +1,9 @@
 import SkaliKit
 import SwiftUI
 
-/// The Settings root: the account, then (for instance admins) the cluster's
-/// system areas and its update settings, as the Studio's System hub has them.
+/// The Settings root for instance admins: the account, then the cluster's
+/// system areas and its update settings, as the Studio's System hub has
+/// them. Members get the account as their tab instead (MainTabView).
 struct SettingsView: View {
     @Environment(ClusterSession.self) private var session
 
@@ -15,15 +16,8 @@ struct SettingsView: View {
                     AccountRow(user: session.user)
                 }
             }
-            if session.user.isAdmin {
-                systemSection
-                UpdateSettingsSection()
-            } else {
-                Section {
-                    LabeledContent("Version", value: session.meta?.version ?? "—")
-                        .monospaced()
-                }
-            }
+            systemSection
+            UpdateSettingsSection()
         }
         .navigationTitle("Settings")
         .task { await session.loadSystem() }
