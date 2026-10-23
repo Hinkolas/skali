@@ -3,10 +3,10 @@ import SwiftUI
 
 /// The signed-in account: security, the clusters the app knows, and the
 /// account's sessions on the selected cluster. Instance admins reach it
-/// from Settings; for members it is the tab itself (`isRoot`).
+/// from Settings; for members it is the tab itself. Either way the title
+/// stays inline, as in the system's Apple Account page: the header already
+/// names the account.
 struct AccountView: View {
-    var isRoot = false
-
     @Environment(AppModel.self) private var model
     @Environment(ClusterSession.self) private var session
     @State private var addingCluster = false
@@ -52,7 +52,7 @@ struct AccountView: View {
             }
         }
         .navigationTitle("Account")
-        .navigationBarTitleDisplayMode(isRoot ? .large : .inline)
+        .navigationBarTitleDisplayMode(.inline)
         .task { await session.loadAccount() }
         .refreshable { await session.loadAccount() }
         .confirmationDialog(
@@ -222,5 +222,5 @@ private struct ClusterRow: View {
 }
 
 #Preview("Member") {
-    PreviewHost(demo: DemoCluster(member: true)) { AccountView(isRoot: true) }
+    PreviewHost(demo: DemoCluster(member: true)) { AccountView() }
 }
