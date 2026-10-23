@@ -21,13 +21,20 @@ public struct Release: Codable, Hashable, Sendable {
     public let version: String
     public let prerelease: Bool?
     public let publishedAt: Date?
+    /// The release page (notes and assets).
     public let url: String?
+    /// The k3s pin the release installs; absent without release.json.
+    public let k3s: String?
 
-    public init(version: String, prerelease: Bool? = nil, publishedAt: Date? = nil, url: String? = nil) {
+    public init(
+        version: String, prerelease: Bool? = nil, publishedAt: Date? = nil, url: String? = nil,
+        k3s: String? = nil
+    ) {
         self.version = version
         self.prerelease = prerelease
         self.publishedAt = publishedAt
         self.url = url
+        self.k3s = k3s
     }
 }
 
@@ -86,64 +93,4 @@ public struct BackupTarget: Codable, Hashable, Sendable {
 
 struct BackupTargetResponse: Decodable {
     let target: BackupTarget
-}
-
-/// The update channel a cluster follows.
-public enum ReleaseChannel: String, Codable, Hashable, Sendable, CaseIterable, Identifiable {
-    case stable, beta
-
-    public var id: String { rawValue }
-}
-
-/// `GET /v1/system/updates` (`UpdateStatus`, the fields the app reads).
-public struct UpdateStatus: Codable, Hashable, Sendable {
-    public struct Installed: Codable, Hashable, Sendable {
-        public let version: String
-
-        public init(version: String) {
-            self.version = version
-        }
-    }
-
-    public struct Summary: Codable, Hashable, Sendable {
-        /// `unknown`, `not_checked`, `no_release`, `current`, `available`,
-        /// `incomplete`, `updating` or `failed`.
-        public let state: String
-
-        public init(state: String) {
-            self.state = state
-        }
-    }
-
-    public let installed: Installed
-    public let summary: Summary
-    public let channel: ReleaseChannel
-    public let autoUpdate: Bool
-    public let lastCheckedAt: Date?
-    public let latest: Release?
-    public let updateAvailable: Bool
-
-    public init(
-        installed: Installed, summary: Summary, channel: ReleaseChannel, autoUpdate: Bool,
-        lastCheckedAt: Date? = nil, latest: Release? = nil, updateAvailable: Bool = false
-    ) {
-        self.installed = installed
-        self.summary = summary
-        self.channel = channel
-        self.autoUpdate = autoUpdate
-        self.lastCheckedAt = lastCheckedAt
-        self.latest = latest
-        self.updateAvailable = updateAvailable
-    }
-}
-
-/// `PUT /v1/system/updates/settings`.
-public struct UpdateSettings: Codable, Hashable, Sendable {
-    public var channel: ReleaseChannel
-    public var autoUpdate: Bool
-
-    public init(channel: ReleaseChannel, autoUpdate: Bool) {
-        self.channel = channel
-        self.autoUpdate = autoUpdate
-    }
 }

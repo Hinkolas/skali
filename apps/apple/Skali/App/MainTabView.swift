@@ -22,7 +22,7 @@ struct MainTabView: View {
             }
             if session.user.isAdmin {
                 Tab("Settings", systemImage: "slider.horizontal.3", value: .settings) {
-                    NavigationStack {
+                    NavigationStack(path: $model.settingsPath) {
                         SettingsView()
                     }
                 }
@@ -50,6 +50,15 @@ extension AppTab {
         UserDefaults.standard.string(forKey: "SkaliTab").flatMap(AppTab.init(rawValue:)) ?? .projects
         #else
         .projects
+        #endif
+    }
+
+    /// Debug builds push the Settings screen named by `-SkaliRoute <route>`.
+    static var initialSettingsPath: [SettingsRoute] {
+        #if DEBUG
+        UserDefaults.standard.string(forKey: "SkaliRoute").flatMap(SettingsRoute.init(rawValue:)).map { [$0] } ?? []
+        #else
+        []
         #endif
     }
 }

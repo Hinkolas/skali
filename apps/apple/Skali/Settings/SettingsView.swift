@@ -10,9 +10,7 @@ struct SettingsView: View {
     var body: some View {
         List {
             Section {
-                NavigationLink {
-                    AccountView()
-                } label: {
+                NavigationLink(value: SettingsRoute.account) {
                     AccountRow(user: session.user)
                 }
             }
@@ -20,38 +18,40 @@ struct SettingsView: View {
             UpdateSettingsSection()
         }
         .navigationTitle("Settings")
+        .navigationDestination(for: SettingsRoute.self) { route in
+            switch route {
+            case .account: AccountView()
+            case .users: PlaceholderView(title: "Users", systemImage: "person.2")
+            case .nodes: NodesView(nodes: session.system.nodes ?? [])
+            case .databases: DatabasePoolsView(pools: session.system.pools ?? [])
+            case .backupTarget: BackupTargetView(backup: session.system.backup)
+            case .softwareUpdate: SoftwareUpdateView()
+            }
+        }
         .task { await session.loadSystem() }
         .refreshable { await session.loadSystem() }
     }
 
     private var systemSection: some View {
         Section {
-            NavigationLink {
-                PlaceholderView(title: "Users", systemImage: "person.2")
-            } label: {
+            NavigationLink(value: SettingsRoute.users) {
                 Label { Text("Users") } icon: { SettingsIcon(systemImage: "person.2", tint: .serviceApplication) }
             }
-            NavigationLink {
-                NodesView(nodes: session.system.nodes ?? [])
-            } label: {
+            NavigationLink(value: SettingsRoute.nodes) {
                 LabeledContent {
                     Text(nodesSummary)
                 } label: {
                     Label { Text("Nodes") } icon: { SettingsIcon(systemImage: "server.rack", tint: .green) }
                 }
             }
-            NavigationLink {
-                DatabasePoolsView(pools: session.system.pools ?? [])
-            } label: {
+            NavigationLink(value: SettingsRoute.databases) {
                 LabeledContent {
                     Text(poolsSummary)
                 } label: {
                     Label { Text("Databases") } icon: { SettingsIcon(systemImage: "cylinder", tint: .cyan) }
                 }
             }
-            NavigationLink {
-                BackupTargetView(backup: session.system.backup)
-            } label: {
+            NavigationLink(value: SettingsRoute.backupTarget) {
                 LabeledContent {
                     Text(backupSummary).monospaced()
                 } label: {
@@ -116,18 +116,9 @@ private struct UpdateSettingsSection: View {
 
     var body: some View {
         Section {
-            NavigationLink {
-                SoftwareUpdateView()
-            } label: {
+            NavigationLink(value: SettingsRoute.softwareUpdate) {
                 LabeledContent {
-                    if let updates = session.system.updates, updates.updateAvailable, let latest = updates.latest {
-                        Text("\(latest.version) available")
-                            .monospaced()
-                            .foregroundStyle(.tint)
-                    } else {
-                        Text(session.system.updates?.installed.version ?? session.meta?.version ?? "")
-                            .monospaced()
-                    }
+                    updateSummary
                 } label: {
                     Label {
                         Text("Software Update")
@@ -157,6 +148,26 @@ private struct UpdateSettingsSection: View {
             Button("OK") {}
         } message: {
             Text(error ?? "")
+        }
+    }
+
+    /// The row's value: the release, or where an update stands.
+    @ViewBuilder private var updateSummary: some View {
+        let updates = session.system.updates
+        switch updates?.summary.state {
+        case .updating:
+            Text("Updating · \(updates?.summary.progress.percent ?? 0)%")
+                .monospacedDigit()
+                .foregroundStyle(.tint)
+        case .available:
+            Text("\(updates?.summary.targetVersion ?? "") available")
+                .monospaced()
+                .foregroundStyle(.tint)
+        case .failed, .incomplete:
+            Text("Needs attention").foregroundStyle(.orange)
+        default:
+            Text(updates?.installed.version ?? session.meta?.version ?? "")
+                .monospaced()
         }
     }
 
@@ -201,4 +212,10 @@ extension ReleaseChannel {
 
 #Preview {
     PreviewHost { SettingsView() }
+}
+
+/// The screens under Settings, as navigation values so they can be opened
+/// from elsewhere (a notification, a deep link) by setting the path.
+enum SettingsRoute: String, Hashable {
+    case account, users, nodes, databases, backupTarget, softwareUpdate
 }

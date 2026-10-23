@@ -13,6 +13,8 @@ final class AppModel {
     /// Kept here rather than in the tab view so switching clusters stays
     /// on the tab the person was on.
     var selectedTab: AppTab = .initial
+    /// The Settings tab's navigation path.
+    var settingsPath: [SettingsRoute] = AppTab.initialSettingsPath
 
     /// Launched with `-SkaliDemo` (`-SkaliDemoMember` for a member):
     /// fixtures instead of a cluster, nothing persisted. Used for previews,
@@ -76,10 +78,14 @@ final class AppModel {
         return APIClient(address: account.address, token: token, userAgent: Self.userAgent)
     }
 
+    /// `-SkaliDemo`, `-SkaliDemoMember`, and `-SkaliDemoUpdate available`
+    /// (or `updating`, `failed`) for where the demo's update stands.
     private static var launchDemo: DemoCluster? {
         let arguments = ProcessInfo.processInfo.arguments
-        if arguments.contains("-SkaliDemoMember") { return DemoCluster(member: true) }
-        if arguments.contains("-SkaliDemo") { return DemoCluster() }
+        let update = UserDefaults.standard.string(forKey: "SkaliDemoUpdate")
+            .flatMap(DemoUpdates.Scenario.init(rawValue:)) ?? .current
+        if arguments.contains("-SkaliDemoMember") { return DemoCluster(member: true, update: update) }
+        if arguments.contains("-SkaliDemo") { return DemoCluster(update: update) }
         return nil
     }
 

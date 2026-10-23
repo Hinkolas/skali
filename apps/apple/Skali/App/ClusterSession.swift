@@ -16,6 +16,9 @@ final class ClusterSession {
     private(set) var projectsError: String?
 
     private(set) var system = SystemOverview()
+    /// The last update poll failed (the control plane restarts mid-update);
+    /// the last document stays on screen.
+    private(set) var updatesDisconnected = false
 
     /// The account's sessions on this cluster, newest first.
     private(set) var sessions: [Session]?
@@ -88,7 +91,33 @@ final class ClusterSession {
         if let current = await current { user = current.user }
     }
 
+    /// Re-reads the update document, keeping the last one when the cluster
+    /// does not answer.
+    func refreshUpdates() async {
+        do {
+            system.updates = try await api.updateStatus()
+            updatesDisconnected = false
+        } catch is CancellationError {
+        } catch {
+            if handleUnauthorized(error) { return }
+            updatesDisconnected = true
+        }
+    }
+
     // MARK: Changes
+
+    func scanForUpdates() async throws {
+        system.updates = try await gated { try await self.api.scanForUpdates() }
+    }
+
+    /// Starts (or finishes) the update to the summary's target release.
+    func applyUpdate(version: String) async throws {
+        system.updates = try await gated { try await self.api.applyUpdate(version: version) }
+    }
+
+    func resumeUpdate() async throws {
+        system.updates = try await gated { try await self.api.resumeUpdate() }
+    }
 
     func saveUpdateSettings(_ settings: UpdateSettings) async throws {
         system.updates = try await gated { try await self.api.saveUpdateSettings(settings) }

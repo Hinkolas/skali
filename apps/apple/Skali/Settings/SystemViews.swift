@@ -67,25 +67,6 @@ struct BackupTargetView: View {
     }
 }
 
-struct SoftwareUpdateView: View {
-    @Environment(ClusterSession.self) private var session
-
-    var body: some View {
-        List {
-            if let updates = session.system.updates {
-                LabeledContent("Installed", value: updates.installed.version)
-                if let latest = updates.latest {
-                    LabeledContent("Latest on \(updates.channel.label)", value: latest.version)
-                }
-                if let checked = updates.lastCheckedAt {
-                    LabeledContent("Last Checked", value: checked, format: .relative(presentation: .named))
-                }
-            }
-        }
-        .navigationTitle("Software Update")
-    }
-}
-
 struct PlaceholderView: View {
     let title: String
     let systemImage: String
