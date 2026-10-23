@@ -91,6 +91,7 @@ struct ProjectsView: View {
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 4)
         }
         ToolbarItem(placement: .primaryAction) {
             Menu {
