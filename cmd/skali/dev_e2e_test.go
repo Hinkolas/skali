@@ -1375,13 +1375,13 @@ func TestDevAccess(t *testing.T) {
 		require.Regexp(t, `(?m)^MEMBER +PROJECT +local +staging$`, out)
 		require.Regexp(t, `(?m)^`+memberEmail+` +read +read +deploy\*$`, out)
 		out = h.run(false, "", "env", "ls", "--remote", "local")
-		require.Regexp(t, `(?m)^local +admin +normal +direct +read `, out)
+		require.Regexp(t, `(?m)^local +active +admin +normal +direct +read `, out)
 	})
 
 	t.Run("member deploys code only", func(t *testing.T) {
 		out := h.run(false, "", "env", "ls", "--remote", "member")
-		require.Regexp(t, `(?m)^local +read `, out)
-		require.Regexp(t, `(?m)^staging +deploy `, out)
+		require.Regexp(t, `(?m)^local +active +read `, out)
+		require.Regexp(t, `(?m)^staging +active +deploy `, out)
 		// The same definition redeploys (a forced restart), with the stored
 		// values because a deploy role cannot stage any.
 		out = h.run(false, "", "deploy", "--remote", "member", "--environment", "staging", "--yes", "--force")
@@ -1411,7 +1411,7 @@ func TestDevAccess(t *testing.T) {
 	t.Run("lock", func(t *testing.T) {
 		h.run(false, "", "access", "set", memberEmail, "none", "--environment", "local", "--remote", "local")
 		out := h.run(false, "", "env", "ls", "--remote", "member")
-		require.Regexp(t, `(?m)^local +locked `, out)
+		require.Regexp(t, `(?m)^local +- +locked `, out)
 		out = h.run(true, "", "values", "--remote", "member", "--environment", "local")
 		require.Contains(t, out, "read on environment local required")
 		out = h.run(false, "", "access", "ls", "--remote", "member")
@@ -1431,7 +1431,7 @@ func TestDevAccess(t *testing.T) {
 		out = h.run(false, memberPassword+"\n", "env", "set", "--environment", "feature", "--max-role", "read", "--remote", "member", "--yes")
 		require.Contains(t, out, "max role       read")
 		out = h.run(false, memberPassword+"\n", "env", "rm", "feature", "--yes", "--remote", "member")
-		require.Contains(t, out, "purge started")
+		require.Contains(t, out, "feature is removed; nothing of it remains")
 		// Production-like environments stay out of reach: no cell, read ceiling.
 		out = h.run(true, "", "env", "set", "--environment", "staging", "--max-role", "read", "--remote", "member", "--yes")
 		require.Contains(t, out, "admin on environment staging required")
@@ -1445,7 +1445,7 @@ func TestDevAccess(t *testing.T) {
 			"--promote-from", "local", "--remote", "local", "--yes")
 		require.Contains(t, out, "deploy policy  promote-only (from local)")
 		out = h.run(false, "", "env", "ls", "--remote", "local")
-		require.Regexp(t, `(?m)^staging +admin +normal +promote-only \(from local\) `, out)
+		require.Regexp(t, `(?m)^staging +active +admin +normal +promote-only \(from local\) `, out)
 		// A direct deploy is refused before anything is submitted or built.
 		out = h.run(true, "", "deploy", "--remote", "member", "--environment", "staging", "--yes", "--force")
 		require.Contains(t, out, "environment staging is promote-only: promote with skali deploy --from local --environment staging")
