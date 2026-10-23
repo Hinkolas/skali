@@ -10,7 +10,7 @@ public struct APIClient: Sendable {
     /// `skali/<version> (<host>)`. A device sign-in records the
     /// User-Agent of the request that opened it.
     public let userAgent: String?
-    private let session: URLSession
+    let session: URLSession
 
     public init(
         address: ClusterAddress, token: String? = nil, userAgent: String? = nil,
@@ -63,17 +63,7 @@ public struct APIClient: Sendable {
     private func send<Body: Encodable, Response: Decodable>(
         _ method: String, _ path: String, query: [URLQueryItem] = [], body: Body?
     ) async throws -> Response {
-        var url = address.apiURL.appending(path: path)
-        if !query.isEmpty { url.append(queryItems: query) }
-        var request = URLRequest(url: url)
-        request.httpMethod = method
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        if let token {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
-        if let userAgent {
-            request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
-        }
+        var request = makeRequest(method, path, query: query)
         if let body {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try JSONCoding.encoder.encode(body)
@@ -94,11 +84,7 @@ public struct APIClient: Sendable {
             throw APIError.transport("The cluster sent no HTTP response.")
         }
         guard (200..<300).contains(http.statusCode) else {
-            if let envelope = try? JSONCoding.decoder.decode(ErrorEnvelope.self, from: data) {
-                throw APIError.server(
-                    status: http.statusCode, code: envelope.error.code, message: envelope.error.message)
-            }
-            throw APIError.http(status: http.statusCode)
+            throw Self.failure(status: http.statusCode, body: data)
         }
         if Response.self == Empty.self || data.isEmpty {
             if let empty = Empty() as? Response { return empty }
@@ -108,6 +94,32 @@ public struct APIClient: Sendable {
         } catch {
             throw APIError.decoding(String(describing: error))
         }
+    }
+
+    func makeRequest(
+        _ method: String, _ path: String, query: [URLQueryItem] = [], accept: String = "application/json"
+    ) -> URLRequest {
+        var url = address.apiURL.appending(path: path)
+        if !query.isEmpty { url.append(queryItems: query) }
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.setValue(accept, forHTTPHeaderField: "Accept")
+        if let token {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        if let userAgent {
+            request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        }
+        return request
+    }
+
+    /// The error a non-2xx answer stands for: the daemon's envelope when
+    /// the body carries one.
+    static func failure(status: Int, body: Data) -> APIError {
+        if let envelope = try? JSONCoding.decoder.decode(ErrorEnvelope.self, from: body) {
+            return .server(status: status, code: envelope.error.code, message: envelope.error.message)
+        }
+        return .http(status: status)
     }
 }
 

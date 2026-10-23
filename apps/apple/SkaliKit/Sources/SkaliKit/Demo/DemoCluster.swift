@@ -268,38 +268,6 @@ public struct DemoCluster: ClusterAPI {
 
     // MARK: Fixtures
 
-    public static let projects: [Project] = [
-        demo("almatar-web", environments: ["production"], apps: 1, days: 42),
-        demo("birefnet-proxy", environments: ["staging"], apps: 1, databases: 1, buckets: 1, days: 19),
-        demo("eplan-b1", environments: ["production"], apps: 1, databases: 1, days: 39),
-        demo("eplan-b2", environments: ["production"], apps: 1, databases: 1, days: 39),
-        demo("fuehrueber-web", environments: ["production"], apps: 1, days: 42),
-        demo("go-lexware-automation", environments: ["production"], apps: 1, databases: 1, days: 41),
-        demo("himmelreich", environments: ["staging", "production"], apps: 2, databases: 1, buckets: 2,
-             days: 7, health: .progressing),
-        demo("kaminholz-schulz-web", environments: ["production"], apps: 1, days: 42),
-        demo("lilienthal-site", environments: ["production"], apps: 1, buckets: 1, days: 12),
-        demo("maja", environments: ["preview"], apps: 1, days: 2, health: .degraded),
-        demo("nordlicht-api", environments: ["production", "staging"], apps: 3, databases: 2, days: 1),
-        demo("orbit", environments: [], days: 90),
-    ]
-
-    private static func demo(
-        _ name: String, environments: [String], apps: Int = 0, databases: Int = 0,
-        buckets: Int = 0, days: Double, health: ServiceHealth = .healthy
-    ) -> Project {
-        let activity = Date.now.addingTimeInterval(-days * 86_400 - 600)
-        return Project(
-            id: UUID().uuidString, name: name, createdAt: activity.addingTimeInterval(-30 * 86_400),
-            updatedAt: activity, access: ProjectAccess(role: "admin", member: true),
-            summary: ProjectSummary(
-                environments: environments.enumerated().map { index, environment in
-                    SummaryEnvironment(
-                        id: "\(name)-\(environment)", name: environment,
-                        priority: environment == "production" ? "high" : "normal",
-                        health: index == 0 ? health : .healthy)
-                },
-                serviceCounts: ServiceCounts(applications: apps, databases: databases, buckets: buckets),
-                updatedAt: activity))
-    }
+    /// Every project of the demo cluster (DemoProjects holds the fixtures).
+    public static let projects: [Project] = DemoProjects.fixtures.map(DemoProjects.project)
 }

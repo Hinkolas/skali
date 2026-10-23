@@ -31,18 +31,21 @@ struct ServiceKindBadge: View {
     }
 }
 
-/// A neutral capsule for environment names and other tags.
+/// A small capsule for environment names and other tags: neutral, or in
+/// a color for a state that wants attention ("not backed up").
 struct TagChip: View {
     let text: String
+    var tint: Color?
 
     var body: some View {
         Text(text)
             .font(.caption2.monospaced())
-            .foregroundStyle(.secondary)
+            .foregroundStyle(tint.map(AnyShapeStyle.init) ?? AnyShapeStyle(.secondary))
             .lineLimit(1)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
-            .background(.fill.tertiary, in: .rect(cornerRadius: 5))
+            .background(tint.map { AnyShapeStyle($0.opacity(0.15)) } ?? AnyShapeStyle(.fill.tertiary),
+                        in: .rect(cornerRadius: 5))
             .fixedSize()
     }
 }

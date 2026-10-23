@@ -16,7 +16,7 @@ struct MainTabView: View {
         @Bindable var model = model
         TabView(selection: $model.selectedTab) {
             Tab("Projects", systemImage: "square.grid.2x2", value: .projects) {
-                NavigationStack {
+                NavigationStack(path: $model.projectsPath) {
                     ProjectsView()
                 }
             }
@@ -50,6 +50,16 @@ extension AppTab {
         UserDefaults.standard.string(forKey: "SkaliTab").flatMap(AppTab.init(rawValue:)) ?? .projects
         #else
         .projects
+        #endif
+    }
+
+    /// Debug builds open the project named by `-SkaliProject <name>` once
+    /// the list has loaded.
+    static var initialProject: String? {
+        #if DEBUG
+        UserDefaults.standard.string(forKey: "SkaliProject")
+        #else
+        nil
         #endif
     }
 

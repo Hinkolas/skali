@@ -26,6 +26,28 @@ struct LiveClusterTests {
         #expect(projects.allSatisfy { $0.summary != nil })
     }
 
+    /// Every read of a project's overview, on the first project with an
+    /// environment the caller can open; the status stream's first event
+    /// is the full document.
+    @Test func readsAProjectOverview() async throws {
+        for project in try await api.projects() {
+            let environments = try await api.environments(projectID: project.id)
+            guard let environment = environments.first(where: { !$0.isLocked && $0.state == "active" }) else {
+                continue
+            }
+            _ = try await api.projectDraft(projectID: project.id)
+            _ = try await api.projectStorage(projectID: project.id)
+            _ = try await api.environmentMetrics(environmentID: environment.id, window: .day)
+            _ = try await api.runs(environmentID: environment.id)
+            var statuses = api.environmentStatusUpdates(environmentID: environment.id).makeAsyncIterator()
+            let status = try await statuses.next()
+            #expect(status?.environmentId == environment.id)
+            var changes = api.projectChanges(projectID: project.id).makeAsyncIterator()
+            #expect(try await changes.next() == .ready)
+            return
+        }
+    }
+
     @Test func readsTheAdminOverview() async throws {
         _ = try await api.nodes()
         let users = try await api.users()

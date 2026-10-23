@@ -15,7 +15,10 @@ struct ProjectsView: View {
             .largeSubtitle(subtitle)
             .toolbar { optionsMenu }
             .navigationDestination(for: Project.self) { ProjectDetailView(project: $0) }
-            .task { await session.loadProjects() }
+            .task {
+                await session.loadProjects()
+                openInitialProject()
+            }
             .refreshable { await session.loadProjects() }
     }
 
@@ -53,6 +56,17 @@ struct ProjectsView: View {
         guard model.accounts.count > 1 else { return projectCount }
         return "\(session.account.displayName) · \(projectCount)"
     }
+
+    /// The project a debug launch asked for, opened once per launch.
+    private func openInitialProject() {
+        guard let name = AppTab.initialProject, !Self.openedInitialProject, model.projectsPath.isEmpty,
+              let project = session.projects?.first(where: { $0.name == name })
+        else { return }
+        Self.openedInitialProject = true
+        model.projectsPath.append(project)
+    }
+
+    private static var openedInitialProject = false
 
     private func visibleProjects(_ projects: [Project]) -> [Project] {
         // The scope only exists for instance admins: everyone else sees

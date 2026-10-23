@@ -8,6 +8,27 @@ public protocol ClusterAPI: Sendable {
     func systemMeta() async throws -> SystemMeta
     /// Every project the caller can see, with summaries.
     func projects() async throws -> [Project]
+
+    // MARK: One project
+
+    /// The project's environments with their state and cached health.
+    func environments(projectID: String) async throws -> [ProjectEnvironment]
+    /// The project's draft; nil before anything submitted one.
+    func projectDraft(projectID: String) async throws -> ProjectDraft?
+    /// The newest footprint of every storage-consuming service, across
+    /// the project's environments.
+    func projectStorage(projectID: String) async throws -> [ServiceStorage]
+    /// Tells when to re-read the project: `ready` on connect, `changed`
+    /// after a change or a run, and `deleted` or `revoked` at the end.
+    func projectChanges(projectID: String) -> AsyncThrowingStream<ProjectChange, Error>
+    /// The status document first, then a new one whenever it changes.
+    func environmentStatusUpdates(environmentID: String) -> AsyncThrowingStream<EnvironmentStatus, Error>
+    func environmentMetrics(environmentID: String, window: NodeMetrics.Window) async throws -> EnvironmentMetrics
+    /// Newest first.
+    func runs(environmentID: String) async throws -> [Run]
+    /// Recreates every application's pods with what is deployed; returns
+    /// the run's id.
+    func restartEnvironment(environmentID: String) async throws -> String
     /// Admin only.
     func nodes() async throws -> [ClusterNode]
     /// Admin only: CPU and memory per node over `window`.
@@ -87,6 +108,62 @@ extension APIClient: ClusterAPI {
         let response: ProjectsResponse = try await get(
             "v1/projects", query: [URLQueryItem(name: "include", value: "summary")])
         return response.projects
+    }
+
+    public func environments(projectID: String) async throws -> [ProjectEnvironment] {
+        let response: EnvironmentsResponse = try await get(
+            "v1/projects/\(projectID)/environments", query: [URLQueryItem(name: "include", value: "summary")])
+        return response.environments
+    }
+
+    public func projectDraft(projectID: String) async throws -> ProjectDraft? {
+        do {
+            let response: DraftResponse = try await get("v1/projects/\(projectID)/draft")
+            return response.draft
+        } catch let error as APIError where error.status == 404 {
+            return nil
+        }
+    }
+
+    public func projectStorage(projectID: String) async throws -> [ServiceStorage] {
+        let response: ProjectStorageResponse = try await get("v1/projects/\(projectID)/storage")
+        return response.services
+    }
+
+    public func projectChanges(projectID: String) -> AsyncThrowingStream<ProjectChange, Error> {
+        let source = events("v1/projects/\(projectID)/stream")
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    for try await event in source {
+                        if let change = ProjectChange(rawValue: event.name) { continuation.yield(change) }
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    public func environmentStatusUpdates(environmentID: String) -> AsyncThrowingStream<EnvironmentStatus, Error> {
+        .decoding(events("v1/environments/\(environmentID)/status/stream"), event: "status")
+    }
+
+    public func environmentMetrics(environmentID: String, window: NodeMetrics.Window) async throws -> EnvironmentMetrics {
+        try await get(
+            "v1/environments/\(environmentID)/metrics", query: [URLQueryItem(name: "window", value: window.rawValue)])
+    }
+
+    public func runs(environmentID: String) async throws -> [Run] {
+        let response: RunsResponse = try await get("v1/environments/\(environmentID)/runs")
+        return response.runs
+    }
+
+    public func restartEnvironment(environmentID: String) async throws -> String {
+        let response: RunStarted = try await post("v1/environments/\(environmentID)/restart")
+        return response.runId
     }
 
     public func nodes() async throws -> [ClusterNode] {

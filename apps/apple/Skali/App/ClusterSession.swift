@@ -38,6 +38,10 @@ final class ClusterSession {
     private(set) var sessions: [Session]?
     private(set) var sessionsError: String?
 
+    /// The environment last shown per project id, so going back and
+    /// opening the project again shows the same one.
+    var environmentChoices: [String: String] = [:]
+
     private let reauthenticate: () async throws -> Void
     private let onUnauthorized: () -> Void
 
@@ -281,7 +285,7 @@ final class ClusterSession {
 
     /// Runs a call, confirming the session in the browser first when the
     /// daemon asks for a recent sign-in (403 `reauth_required`), then once more.
-    private func gated<Result>(_ call: () async throws -> Result) async throws -> Result {
+    func gated<Result>(_ call: () async throws -> Result) async throws -> Result {
         do {
             do {
                 return try await call()
@@ -296,7 +300,7 @@ final class ClusterSession {
     }
 
     /// A revoked or expired session sends the app back to sign-in.
-    private func handleUnauthorized(_ error: Error) -> Bool {
+    func handleUnauthorized(_ error: Error) -> Bool {
         guard let error = error as? APIError, error.isUnauthorized else { return false }
         onUnauthorized()
         return true

@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import SkaliKit
+import SwiftUI
 import UIKit
 
 /// The app's top-level state: the clusters signed in to, which one is
@@ -15,6 +16,8 @@ final class AppModel {
     var selectedTab: AppTab = .initial
     /// The Settings tab's navigation path.
     var settingsPath: [SettingsRoute] = AppTab.initialSettingsPath
+    /// The Projects tab's navigation path: a project, then its pages.
+    var projectsPath = NavigationPath()
 
     /// Launched with `-SkaliDemo` (`-SkaliDemoMember` for a member):
     /// fixtures instead of a cluster, nothing persisted. Used for previews,
@@ -49,6 +52,8 @@ final class AppModel {
             return
         }
         guard account.id != session?.account.id else { return }
+        // An open project belongs to the cluster being left.
+        projectsPath = NavigationPath()
         session = ClusterSession(
             account: account, api: api(for: account),
             reauthenticate: { [weak self] in try await self?.reauthenticate(account) },
