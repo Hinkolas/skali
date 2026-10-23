@@ -32,7 +32,7 @@ import (
 // (images.go) along to the new release's k3s-images.txt; skali dev upgrade
 // moves an existing node to it in place (one minor version at a time).
 const (
-	K3sImage   = "rancher/k3s:v1.36.3-k3s1"
+	K3sImage   = "rancher/k3s:v1.36.5-k3s1"
 	AdminEmail = "dev@skali.localhost"
 )
 

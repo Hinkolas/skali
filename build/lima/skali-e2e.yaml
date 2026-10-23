@@ -13,7 +13,7 @@ images:
 vmType: "vz"
 cpus: 4
 memory: "6GiB"
-disk: "30GiB"
+disk: "40GiB"
 
 # A fresh production host exposes nothing of the developer machine.
 mounts: []
