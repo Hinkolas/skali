@@ -108,7 +108,7 @@ implementation/verification reference or an explicit, bounded decision.
 | D4 | **Before stable: SeaweedFS and CNPG/cert-manager operator review.** | Scan maintained candidates/rebuilds and separate used server paths from unused bundled features. For SeaweedFS verify authenticated S3, bootstrap deny identity, credential rotation/retirement, bucket deletion/quota, restore and cancellation, and metadata/replication behavior. For operators verify bootstrap, reconciliation and ACME on the chosen versions. **Done for rc.9:** SeaweedFS 4.48 (telemetry off), CNPG 1.30.1, cert-manager 1.21.2; see [operators and object storage](#operators-and-object-storage--2026-10-23). **Remaining:** rehearse the rc.8 → rc.9 upgrade on khz. |
 | D5 | **Before a release supporting Longhorn: disposition its full image set.** | Manager/engine/instance/share/backing/support/UI and CSI images contain findings. Upgrade as a compatible set or document exact non-applicability. Verify existing-volume attach, read/write, restart, backup/restore, node disruption and upgrade. Local-path testing does not validate this driver. |
 | D6 | **Before publishing: review build infrastructure and release binaries.** | BuildKit v0.33.1, binfmt/QEMU, Node build image, CI PostgreSQL, GoReleaser and sqlc have findings. Use updated/rebuilt tools or document the actual affected command/input boundary. Record exact resolved GoReleaser/Node/action versions in the final release run. Preserve generated-store consistency when changing sqlc. **Done for rc.8:** BuildKit v0.34.1, GoReleaser pinned to v2.18.3; binfmt, Node, CI PostgreSQL and sqlc dispositioned in [candidate build inputs](#candidate-build-inputs--2026-10-22). **Remaining:** record the resolved action and Node versions from the release run. |
-| D7 | **Before declaring installer/dev review clean: refresh or disposition downloaded k3d/Lima binaries and native networking.** | The pinned k3d 5.9.0 and Lima 2.2.0 executables contain vulnerable Go symbols, including the current x509 distrust advisory. Change versions/checksums together or provide a bounded applicability decision; retest native dev/VM creation and upgrade on supported hosts. Include socket_vmnet 1.2.2 and the guest OS in the native review. |
+| D7 | **Before declaring installer/dev review clean: refresh or disposition downloaded k3d/Lima binaries and native networking.** | The pinned k3d 5.9.0 and Lima 2.2.0 executables contain vulnerable Go symbols, including the current x509 distrust advisory. Change versions/checksums together or provide a bounded applicability decision; retest native dev/VM creation and upgrade on supported hosts. Include socket_vmnet 1.2.2 and the guest OS in the native review. **Done for rc.9:** Lima 2.2.1; k3d 5.9.0 and socket_vmnet 1.2.2 kept as the newest releases; see [native tools](#native-tools--2026-10-23). |
 | D8 | **Candidate hygiene: refresh the Alpine runtime/base and record floating inputs.** | The new skalid image retains medium CVE-2026-85091 in zlib and unknown CVE-2026-107891 entries in musl/musl-utils; fixed package revisions are reported. Use a maintained patched base/package set or document an advisory-specific decision. Record builder/example image digests; rerun scans on the actual candidate after all fixes. **Done for rc.8:** Alpine 3.24.3 removes both; the locally assembled image scans 0/0/0/0/1 ([candidate build inputs](#candidate-build-inputs--2026-10-22)). **Remaining:** scan the published candidate image. |
 
 ### Scheduling decision — 2026-10-22
@@ -241,6 +241,30 @@ at its repeat-upgrade step, which needs a selected Skali remote on a
 reconciled cluster; this is independent of the k3s version. The Lima server
 template grows from 30 to 40 GiB: Longhorn's 30 % reserve left 19.6 GiB
 schedulable, below the 20 GiB registry volume.
+
+### Native tools — 2026-10-23
+
+D7 was taken up for rc.9 with govulncheck 1.7.0 in binary mode. Archives were
+downloaded from the exact pinned URLs and verified against the release's
+published checksums; `limactl` was extracted without running it.
+
+| Tool | Change | Evidence and decision |
+| --- | --- | --- |
+| Lima | `2.2.0` → `2.2.1` (Darwin arm64 `9e9eacce…c66e`, x86_64 `6b776e4b…c6c4`) | Built with Go 1.27.1 instead of 1.26.5; symbol-level advisory IDs drop from 33 to 17 on each host. The remaining ones are Go standard library (TLS, x509 including GO-2026-6809, HTTP/2, templates), x/net, x/crypto, x/mod and `insomniacslk/dhcp`. 2.2.1 is the newest stable release; 2.3.0 is still in beta. Its notes include guest-facing hardening (rejected qcow2 external data files, invalid guest-agent IPs, control characters in cloud-init logs). |
+| k3d | unchanged `5.9.0` | The newest release (2026-06-02); 42 symbol-level IDs from Go 1.26.3 remain. It only runs on developer machines without their own k3d, talks to the local Docker daemon, and is replaced when k3d publishes a newer build. No published advisories. |
+| socket_vmnet | unchanged `1.2.2` | The newest release (2025-11-19) and the one root-owned component; native code, not scanned by govulncheck. No published advisories. It only carries the optional bridged and shared Lima networks. |
+
+The guest OS is the Ubuntu 24.04 cloud image current at VM creation; it is
+not pinned or scanned here.
+
+Verification on 2026-10-23: installer, Lima and local-dev unit tests;
+`task test:cluster:darwin` with Lima 2.2.1 created the VM, installed k3s
+1.36.5, initialized the platform, upgraded with an image tar, and passed
+`diagnose` and `repair`. Like the Linux suite, it then fails at the bare
+`cluster upgrade`, which on a reconciled cluster hands off to the managed
+update through the selected Skali remote. The suites run the CLI with the
+developer's real configuration, so that step reaches whatever remote is
+selected; here the session had expired and the request was refused.
 
 ## Downloaded and local tool binaries
 

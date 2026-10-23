@@ -35,7 +35,7 @@ import (
 const (
 	// LimaVersion is installed into the managed rootless prefix when no
 	// limactl is on PATH; an existing one (brew or otherwise) wins.
-	LimaVersion = "2.2.0"
+	LimaVersion = "2.2.1"
 	// SocketVMNetVersion carries the bridged and shared networks; it is
 	// the one root-owned component.
 	SocketVMNetVersion = "1.2.2"
@@ -43,8 +43,8 @@ const (
 
 var (
 	limaSHA256 = map[string]string{
-		"arm64":  "bbdef91774885a0d05f7b048c4eb89ae2bcf3a0c252ae7ca7934e63df76d93c3",
-		"x86_64": "0d6f99c19f6e4bc3c92730c4c29d929e6927f0cb0a0ba1a84383367135a8ff31",
+		"arm64":  "9e9eacce88f37e185c346bad73aa6136f738d8cdf8c3bb23cd42b071824bc66e",
+		"x86_64": "6b776e4bc41f358e6ee01fefcc78e2eb26f11635a0fcff632234af77a566c6c4",
 	}
 	socketVMNetSHA256 = map[string]string{
 		"arm64":  "c7bf62308fbcfdc29bdfb8373c9b1951f7ac2396446e4390919796a94972e6dc",
