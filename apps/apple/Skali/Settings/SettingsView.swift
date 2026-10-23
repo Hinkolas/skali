@@ -27,7 +27,7 @@ struct SettingsView: View {
             case .node(let name): NodeDetailView(name: name)
             case .databases: DatabasePoolsView()
             case .pool(let name): DatabasePoolView(name: name)
-            case .backupTarget: BackupTargetView(backup: session.system.backup)
+            case .backups: BackupsView()
             case .softwareUpdate: SoftwareUpdateView()
             }
         }
@@ -58,11 +58,11 @@ struct SettingsView: View {
                     Label { Text("Databases") } icon: { SettingsIcon(systemImage: "cylinder", tint: .cyan) }
                 }
             }
-            NavigationLink(value: SettingsRoute.backupTarget) {
+            NavigationLink(value: SettingsRoute.backups) {
                 LabeledContent {
                     Text(backupSummary).monospaced()
                 } label: {
-                    Label { Text("Backup Target") } icon: { SettingsIcon(systemImage: "archivebox", tint: .orange) }
+                    Label { Text("Backups") } icon: { SettingsIcon(systemImage: "archivebox", tint: .orange) }
                 }
             }
         }
@@ -224,7 +224,7 @@ extension ReleaseChannel {
 /// The screens under Settings, as navigation values so they can be opened
 /// from elsewhere (a notification, a deep link) by setting the path.
 enum SettingsRoute: Hashable {
-    case account, users, nodes, databases, backupTarget, softwareUpdate
+    case account, users, nodes, databases, backups, softwareUpdate
     /// One node, by name.
     case node(String)
     /// One database pool, by name.
@@ -249,7 +249,7 @@ enum SettingsRoute: Hashable {
         }
         let simple: [String: SettingsRoute] = [
             "account": .account, "users": .users, "nodes": .nodes, "databases": .databases,
-            "backupTarget": .backupTarget, "softwareUpdate": .softwareUpdate,
+            "backups": .backups, "softwareUpdate": .softwareUpdate,
         ]
         guard let route = simple[argument] else { return nil }
         self = route

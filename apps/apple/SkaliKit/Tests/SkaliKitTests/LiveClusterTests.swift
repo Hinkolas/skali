@@ -38,6 +38,8 @@ struct LiveClusterTests {
             _ = try await api.databasePoolMetrics(name: pool.name, window: .hour)
         }
         _ = try await api.backupTarget()
+        // Nil without a target, and on an API-only daemon (no summary route).
+        _ = try await api.backupSummary()
         let updates = try await api.updateStatus()
         #expect(!updates.installed.version.isEmpty)
     }

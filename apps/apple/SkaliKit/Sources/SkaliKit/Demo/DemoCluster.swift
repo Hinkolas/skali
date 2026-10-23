@@ -8,13 +8,15 @@ public struct DemoCluster: ClusterAPI {
     public let user: User
     private let updates: DemoUpdates
     private let directory: DemoUsers
+    private let backups: DemoBackups
 
     /// `update` picks where the cluster's update stands at launch; an
     /// update the demo runs advances with the clock.
-    public init(member: Bool = false, update: DemoUpdates.Scenario = .current) {
+    public init(member: Bool = false, update: DemoUpdates.Scenario = .current, backups: DemoBackups.Scenario = .configured) {
         user = member ? Self.member : Self.user
         updates = DemoUpdates(scenario: update)
         directory = DemoUsers(signedIn: member ? Self.member : Self.user)
+        self.backups = DemoBackups(scenario: backups)
     }
 
     public static let address = ClusterAddress(userInput: "skali.example.com")!
@@ -144,7 +146,22 @@ public struct DemoCluster: ClusterAPI {
 
     public func backupTarget() async throws -> BackupTarget? {
         try requireAdmin()
-        return BackupTarget(name: "offsite", endpoint: "https://s3.example.com", bucket: "skali-backup")
+        return backups.current()
+    }
+
+    public func backupSummary() async throws -> BackupSummary? {
+        try requireAdmin()
+        return backups.summary()
+    }
+
+    public func saveBackupTarget(_ input: BackupTargetInput) async throws -> BackupTarget {
+        try requireAdmin()
+        return try backups.save(input)
+    }
+
+    public func removeBackupTarget() async throws {
+        try requireAdmin()
+        try backups.remove()
     }
 
     public func updateStatus() async throws -> UpdateStatus {

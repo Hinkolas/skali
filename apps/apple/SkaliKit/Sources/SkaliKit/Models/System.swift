@@ -178,19 +178,6 @@ struct DatabasePoolsResponse: Decodable {
     let pools: [DatabasePool]
 }
 
-/// The external S3 backup location (`BackupTarget`, never with its secret).
-public struct BackupTarget: Codable, Hashable, Sendable {
-    public let name: String
-    public let endpoint: String
-    public let bucket: String
-
-    public init(name: String, endpoint: String, bucket: String) {
-        self.name = name
-        self.endpoint = endpoint
-        self.bucket = bucket
-    }
-}
-
 struct BackupTargetResponse: Decodable {
     let target: BackupTarget
 }

@@ -22,6 +22,14 @@ public protocol ClusterAPI: Sendable {
     func databasePoolMetrics(name: String, window: NodeMetrics.Window) async throws -> DatabasePoolMetrics
     /// Admin only; nil when no target is configured.
     func backupTarget() async throws -> BackupTarget?
+    /// Admin only: the target with what its bucket holds and how backups
+    /// run; nil when no target is configured, or the daemon has no summary
+    /// (API-only mode, an older release).
+    func backupSummary() async throws -> BackupSummary?
+    /// Admin only, sudo: replaces the whole target.
+    func saveBackupTarget(_ input: BackupTargetInput) async throws -> BackupTarget
+    /// Admin only, sudo: forgets the target; snapshots in the bucket stay.
+    func removeBackupTarget() async throws
     /// Admin only.
     func updateStatus() async throws -> UpdateStatus
     /// Admin only, and behind the recent sign-in gate.
@@ -122,6 +130,23 @@ extension APIClient: ClusterAPI {
 
     public func updateStatus() async throws -> UpdateStatus {
         try await get("v1/system/updates")
+    }
+
+    public func backupSummary() async throws -> BackupSummary? {
+        do {
+            return try await get("v1/system/backup-target/summary")
+        } catch let error as APIError where error.status == 404 {
+            return nil
+        }
+    }
+
+    public func saveBackupTarget(_ input: BackupTargetInput) async throws -> BackupTarget {
+        let response: BackupTargetResponse = try await put("v1/system/backup-target", body: input)
+        return response.target
+    }
+
+    public func removeBackupTarget() async throws {
+        try await delete("v1/system/backup-target")
     }
 
     public func saveUpdateSettings(_ settings: UpdateSettings) async throws -> UpdateStatus {

@@ -20,6 +20,9 @@ final class ClusterSession {
     /// the last document stays on screen.
     private(set) var updatesDisconnected = false
 
+    /// The Backups screen's state: the summary, or what stands in for it.
+    private(set) var backups: BackupsState = .unknown
+
     /// Every account on the cluster (admins only), oldest first.
     private(set) var users: [User]?
 
@@ -163,6 +166,40 @@ final class ClusterSession {
         }
     }
 
+    /// The target's summary; without one (no target, API-only mode, an
+    /// older daemon), the stored target alone, or that there is none.
+    func loadBackups() async {
+        do {
+            if let summary = try await api.backupSummary() {
+                backups = .summary(summary)
+                system.backup = .set(summary.target)
+            } else if let target = try await api.backupTarget() {
+                backups = .targetOnly(target)
+                system.backup = .set(target)
+            } else {
+                backups = .notConfigured
+                system.backup = .none
+            }
+        } catch is CancellationError {
+        } catch {
+            if handleUnauthorized(error) { return }
+            if case .unknown = backups { backups = .failed(error.localizedDescription) }
+        }
+    }
+
+    func saveBackupTarget(_ input: BackupTargetInput) async throws {
+        let target = try await gated { try await self.api.saveBackupTarget(input) }
+        system.backup = .set(target)
+        await loadBackups()
+    }
+
+    /// Snapshots already in the bucket stay where they are.
+    func removeBackupTarget() async throws {
+        try await gated { try await self.api.removeBackupTarget() }
+        backups = .notConfigured
+        system.backup = .none
+    }
+
     func loadUsers() async {
         do {
             users = try await api.users()
@@ -264,6 +301,16 @@ final class ClusterSession {
         onUnauthorized()
         return true
     }
+}
+
+/// What the Backups screen shows.
+enum BackupsState {
+    case unknown
+    case notConfigured
+    case summary(BackupSummary)
+    /// The daemon offers no summary (API-only mode, an older release).
+    case targetOnly(BackupTarget)
+    case failed(String)
 }
 
 /// What the Settings rows summarize for an instance admin.

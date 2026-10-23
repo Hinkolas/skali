@@ -52,10 +52,11 @@ Launch arguments (Edit Scheme > Run > Arguments):
   stands: `current` (the default), `available`, `updating` or `failed`. An
   update the demo runs advances with the clock, about a minute and a half
   from the first node to verified.
+- `-SkaliDemoBackups none` starts the demo cluster without a backup target.
 - `-SkaliTab settings` (Debug builds only) opens on the given tab: `projects`,
   `settings` or `search`.
 - `-SkaliRoute softwareUpdate` (Debug builds only) pushes a Settings screen:
-  `account`, `users`, `nodes`, `databases`, `backupTarget`, `softwareUpdate`,
+  `account`, `users`, `nodes`, `databases`, `backups`, `softwareUpdate`,
   `node:<name>` for one node, `pool:<name>` for one database pool, or
   `user:<id>` for one user.
 

@@ -139,6 +139,8 @@ struct UsageTile: View {
     let fraction: Double?
     let color: Color
     let caption: String
+    /// A count or a size without a capacity has no bar.
+    var showsBar = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -150,7 +152,9 @@ struct UsageTile: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
                 .contentTransition(.numericText())
-            UsageBar(fraction: fraction, color: color, height: 5)
+            if showsBar {
+                UsageBar(fraction: fraction, color: color, height: 5)
+            }
             Text(caption)
                 .font(.caption2.monospaced())
                 .foregroundStyle(.secondary)
