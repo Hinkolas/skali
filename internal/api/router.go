@@ -507,8 +507,13 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 					// plain admin read; writes stay behind sudo mode below.
 					var bth *backupTargetHandlers
 					if d.BackupTargets != nil {
-						bth = &backupTargetHandlers{targets: d.BackupTargets}
+						bth = &backupTargetHandlers{targets: d.BackupTargets, backups: d.Backups}
 						ac.route(r, "GET", "/system/backup-target", classInstanceAdmin, bth.get)
+						// The overview reads the bucket, so it needs the backup
+						// engine; API-only mode has none.
+						if d.Backups != nil {
+							ac.route(r, "GET", "/system/backup-target/summary", classInstanceAdmin, bth.summary)
+						}
 					}
 
 					// Database pools: budgets and effective parameters are a

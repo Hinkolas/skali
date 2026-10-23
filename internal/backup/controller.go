@@ -103,6 +103,9 @@ type Controller struct {
 	// the restore's hold; deps.Deploy in production, a fake in tests.
 	resume func(ctx context.Context, environmentID, revisionID, restoreID uuid.UUID) error
 
+	// manifests remembers the target's manifests for Summarize.
+	manifests manifestCache
+
 	// mu guards running.
 	mu sync.Mutex
 	// running holds the cancel of every row in execution, keyed by its run,

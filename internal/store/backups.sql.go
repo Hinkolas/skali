@@ -12,6 +12,37 @@ import (
 	"github.com/google/uuid"
 )
 
+const countBackupRuns = `-- name: CountBackupRuns :one
+SELECT count(*) FILTER (WHERE kind = 'backup' AND status = 'succeeded'
+                          AND finished_at >= $1::timestamptz)::bigint AS succeeded,
+       count(*) FILTER (WHERE kind = 'backup' AND status = 'failed'
+                          AND finished_at >= $1::timestamptz)::bigint AS failed,
+       count(*) FILTER (WHERE kind = 'backup' AND status IN ('pending', 'running'))::bigint AS backing_up,
+       count(*) FILTER (WHERE kind = 'restore' AND status IN ('pending', 'running'))::bigint AS restoring
+FROM backups
+`
+
+type CountBackupRunsRow struct {
+	Succeeded int64
+	Failed    int64
+	BackingUp int64
+	Restoring int64
+}
+
+// The Backups overview's activity: backups that finished since a point in
+// time, by outcome, and the backups and restores queued or under way.
+func (q *Queries) CountBackupRuns(ctx context.Context, since time.Time) (CountBackupRunsRow, error) {
+	row := q.db.QueryRow(ctx, countBackupRuns, since)
+	var i CountBackupRunsRow
+	err := row.Scan(
+		&i.Succeeded,
+		&i.Failed,
+		&i.BackingUp,
+		&i.Restoring,
+	)
+	return i, err
+}
+
 const createBackup = `-- name: CreateBackup :one
 INSERT INTO backups (id, kind, environment_id, project_name, environment_name,
                      revision_id, run_id, trigger, strategy, retention_seconds, environment_namespace)
@@ -111,6 +142,38 @@ SELECT id, kind, environment_id, project_name, environment_name, status, snapsho
 
 func (q *Queries) GetBackupByRun(ctx context.Context, runID *uuid.UUID) (Backup, error) {
 	row := q.db.QueryRow(ctx, getBackupByRun, runID)
+	var i Backup
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.EnvironmentID,
+		&i.ProjectName,
+		&i.EnvironmentName,
+		&i.Status,
+		&i.SnapshotKey,
+		&i.RevisionID,
+		&i.RunID,
+		&i.Error,
+		&i.CreatedAt,
+		&i.FinishedAt,
+		&i.Trigger,
+		&i.Strategy,
+		&i.RetentionSeconds,
+		&i.EnvironmentNamespace,
+	)
+	return i, err
+}
+
+const latestFinishedBackup = `-- name: LatestFinishedBackup :one
+SELECT id, kind, environment_id, project_name, environment_name, status, snapshot_key, revision_id, run_id, error, created_at, finished_at, trigger, strategy, retention_seconds, environment_namespace FROM backups
+WHERE kind = 'backup' AND status = $1 AND finished_at IS NOT NULL
+ORDER BY finished_at DESC
+LIMIT 1
+`
+
+// The newest backup run that ended with the given status.
+func (q *Queries) LatestFinishedBackup(ctx context.Context, status string) (Backup, error) {
+	row := q.db.QueryRow(ctx, latestFinishedBackup, status)
 	var i Backup
 	err := row.Scan(
 		&i.ID,

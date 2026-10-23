@@ -12,6 +12,25 @@ import (
 	"github.com/google/uuid"
 )
 
+const countEnvironmentBackupSchedules = `-- name: CountEnvironmentBackupSchedules :one
+SELECT count(*)::bigint AS environments,
+       count(*) FILTER (WHERE backup_schedule <> '')::bigint AS scheduled
+FROM environments
+`
+
+type CountEnvironmentBackupSchedulesRow struct {
+	Environments int64
+	Scheduled    int64
+}
+
+// How many environments exist and how many back up on a schedule.
+func (q *Queries) CountEnvironmentBackupSchedules(ctx context.Context) (CountEnvironmentBackupSchedulesRow, error) {
+	row := q.db.QueryRow(ctx, countEnvironmentBackupSchedules)
+	var i CountEnvironmentBackupSchedulesRow
+	err := row.Scan(&i.Environments, &i.Scheduled)
+	return i, err
+}
+
 const createEnvironment = `-- name: CreateEnvironment :one
 INSERT INTO environments (id, project_id, name, max_role, priority, backup_namespace)
 VALUES ($1::uuid, $2, $3, $4, $5, $1::uuid::text)

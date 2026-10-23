@@ -77,3 +77,9 @@ FROM environments e
 JOIN environment_targets t ON t.environment_id = e.id
 WHERE t.state = 'active' AND t.active_revision_id IS NOT NULL
 ORDER BY e.project_id, e.name;
+
+-- name: CountEnvironmentBackupSchedules :one
+-- How many environments exist and how many back up on a schedule.
+SELECT count(*)::bigint AS environments,
+       count(*) FILTER (WHERE backup_schedule <> '')::bigint AS scheduled
+FROM environments;
