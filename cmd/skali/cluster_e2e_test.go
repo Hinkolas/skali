@@ -101,6 +101,18 @@ func (h *installerHarness) hostCommandEnv(env []string, name string, args ...str
 	return string(out), 0
 }
 
+// invitationPattern finds the credential in the join command an
+// invitation prints.
+var invitationPattern = regexp.MustCompile(`sudo skali cluster join --token '(skali\.[^'\s]+)'`)
+
+// invitationToken extracts the join token from cluster token output.
+func invitationToken(t *testing.T, out string) string {
+	t.Helper()
+	match := invitationPattern.FindStringSubmatch(out)
+	require.NotNil(t, match, "no join command in:\n%s", out)
+	return match[1]
+}
+
 // vmOn runs a command inside the named VM.
 func (h *installerHarness) vmOn(name string, args ...string) (string, int) {
 	h.t.Helper()
@@ -489,9 +501,7 @@ storage:
 	require.Equal(t, 0, code, serverTokenOut)
 	require.Contains(t, serverTokenOut, "one-time server invitation")
 	require.Contains(t, serverTokenOut, "coordinator discovery hints")
-	tokenMatch := regexp.MustCompile(`--token '(skali\.[^']+)'`).FindStringSubmatch(serverTokenOut)
-	require.NotNil(t, tokenMatch, "no join command in:\n%s", serverTokenOut)
-	serverJoinToken := tokenMatch[1]
+	serverJoinToken := invitationToken(t, serverTokenOut)
 
 	serverTokenFile := h.writeFixtureOn(e2eAgentVM, "server-join-token", serverJoinToken+"\n")
 	h.vmOKOn(e2eAgentVM, "chmod", "600", serverTokenFile)
@@ -587,14 +597,7 @@ storage:
 	tokenOut, code := h.vm("sudo", "/tmp/skali", "cluster", "token")
 	require.Equal(t, 0, code, tokenOut)
 	require.Contains(t, tokenOut, `one-time agent invitation for cluster "e2e"`)
-	var joinToken string
-	for line := range strings.SplitSeq(tokenOut, "\n") {
-		if trimmed := strings.TrimSpace(line); strings.HasPrefix(trimmed, "skali.") {
-			joinToken = trimmed
-		}
-	}
-	require.NotEmpty(t, joinToken)
-	require.NotContains(t, joinToken, " ", "the token line must be the bare credential")
+	joinToken := invitationToken(t, tokenOut)
 
 	tokenFile := h.writeFixtureOn(e2eAgentVM, "join-token", joinToken+"\n")
 	h.vmOKOn(e2eAgentVM, "chmod", "600", tokenFile)
@@ -707,7 +710,7 @@ storage:
 	require.NotEqual(t, 0, code, restoreOut)
 	require.Contains(t, restoreOut, "installation record")
 	require.Contains(t, restoreOut, "database backup")
-	require.Contains(t, restoreOut, "not implemented")
+	require.Contains(t, restoreOut, "restore is not available yet")
 
 	// Repeat bare execution with closed stdin performs no mutation.
 	before := h.vmOK("sudo", "k3s", "kubectl", "get", "deploy", "-n", "skali-system",
