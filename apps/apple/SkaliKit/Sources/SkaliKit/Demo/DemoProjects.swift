@@ -478,26 +478,4 @@ extension DemoCluster {
         let (fixture, environment) = try fixture(environmentID: environmentID)
         return activity.start("restart", fixture: fixture, environment: environment, actor: user.id, only: key).id
     }
-
-    public func runtimeLogs(environmentID: String, service: String) -> AsyncThrowingStream<RuntimeLogLine, Error> {
-        // A request log that keeps coming while the screen is open.
-        AsyncThrowingStream { continuation in
-            let task = Task {
-                let pods = ["\(service)-7d9f8c-0", "\(service)-7d9f8c-1"]
-                let paths = ["/", "/api/jobs", "/healthz", "/api/images/42", "/static/app.js", "/api/jobs/17"]
-                var count = 0
-                while !Task.isCancelled {
-                    let path = paths[count % paths.count]
-                    let line = path == "/healthz"
-                        ? "level=debug msg=\"health check\" status=200"
-                        : "level=info msg=request method=GET path=\(path) status=\(count % 11 == 5 ? 500 : 200) duration=\(12 + count * 7 % 90)ms"
-                    continuation.yield(RuntimeLogLine(service: service, pod: pods[count % 2], line: line, time: .now))
-                    count += 1
-                    try? await Task.sleep(for: .milliseconds(count < 12 ? 60 : 1400))
-                }
-                continuation.finish()
-            }
-            continuation.onTermination = { _ in task.cancel() }
-        }
-    }
 }

@@ -30,7 +30,7 @@ struct ServicePageTests {
         #expect(definition.dependents(of: .bucket, "media") == ["web"])
     }
 
-    @Test func decodesConnectionsLogsAndRoutes() throws {
+    @Test func decodesConnectionsAndRoutes() throws {
         let connection = try JSONCoding.decoder.decode(DatabaseConnection.self, from: Data("""
         {"service":"main","phase":"Ready","engine":"postgres","major":17,"isolation":"shared","availability":"single",
          "host":"pg.svc","port":5432,"database":"app_main","credential_version":2}
@@ -40,11 +40,6 @@ struct ServicePageTests {
         {"service":"main","phase":"Provisioning","engine":"postgres","major":17,"isolation":"dedicated","availability":"ha"}
         """.utf8))
         #expect(!pending.isProvisioned)
-
-        let line = try JSONCoding.decoder.decode(RuntimeLogLine.self, from: Data("""
-        {"service":"web","pod":"web-1","line":"GET /","time":"2026-10-24T10:00:00Z","previous":true}
-        """.utf8))
-        #expect(line.previous == true)
 
         let route = try JSONCoding.decoder.decode(RouteStatus.self, from: Data("""
         {"key":"public","domain":"example.com","path":"/app","tls":"automatic","strategy":"round-robin","compress":true,
@@ -110,7 +105,7 @@ struct ServicePageTests {
         #expect(runs.lastSucceededBackup?.id == "0")
     }
 
-    @Test func theDemoServesConnectionsLogsAndRestarts() async throws {
+    @Test func theDemoServesConnectionsAndRestarts() async throws {
         let demo = DemoCluster()
         let project = try #require(DemoCluster.projects.first { $0.name == "birefnet-proxy" })
         let environment = try #require(try await demo.environments(projectID: project.id).first)
@@ -118,8 +113,6 @@ struct ServicePageTests {
         #expect(connection.isProvisioned)
         let credentials = try await demo.revealDatabaseCredentials(environmentID: environment.id, key: "jobs")
         #expect(credentials.url.hasPrefix("postgres://"))
-        var logs = demo.runtimeLogs(environmentID: environment.id, service: "proxy").makeAsyncIterator()
-        #expect(try await logs.next()?.service == "proxy")
         let restart = try await demo.restartApplication(environmentID: environment.id, key: "proxy")
         let tree = try await demo.run(id: restart)
         #expect(tree.run.deployment?.restarts == ["applications.proxy"])

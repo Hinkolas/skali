@@ -2,8 +2,8 @@ import SkaliKit
 import SwiftUI
 
 /// An application: how it is doing and what it uses now, where it answers,
-/// the pods that run it and their logs, what changed it lately, how it is
-/// built and started, and what it talks to and stores.
+/// the pods that run it, what changed it lately, how it is built and
+/// started, and what it talks to and stores.
 struct ApplicationServiceView: View {
     let key: String
     let spec: ApplicationSpec
@@ -12,7 +12,6 @@ struct ApplicationServiceView: View {
     @Environment(\.openURL) private var openURL
     @State private var confirmingRestart = false
     @State private var startedRun: String?
-    @State private var showingLogs = false
     @State private var error: String?
 
     var body: some View {
@@ -39,13 +38,6 @@ struct ApplicationServiceView: View {
 
                 RoutesSection(routes: live?.routes ?? [])
                 podsSection
-                Section {
-                    NavigationLink(value: RuntimeLogsLink(key: key)) {
-                        Label { Text("Live Logs") } icon: { SettingsIcon(systemImage: "text.alignleft", tint: .green) }
-                    }
-                } footer: {
-                    Text("Follows every pod's output as it is written.")
-                }
                 changesSection
                 runtimeSection
                 connectedSection
@@ -57,8 +49,6 @@ struct ApplicationServiceView: View {
         .navigationDestination(for: ApplicationUsageLink.self) { _ in
             ApplicationUsageView(key: key, spec: spec, model: model)
         }
-        .navigationDestination(for: RuntimeLogsLink.self) { _ in RuntimeLogsView(key: key, model: model) }
-        .navigationDestination(isPresented: $showingLogs) { RuntimeLogsView(key: key, model: model) }
         .alert("Could Not Restart", isPresented: Binding { error != nil } set: { if !$0 { error = nil } }) {
             Button("OK") {}
         } message: {
@@ -191,7 +181,6 @@ struct ApplicationServiceView: View {
                     if let url = live?.routes?.first?.url {
                         Button("Open App", systemImage: "arrow.up.forward.app") { openURL(url) }
                     }
-                    Button("Live Logs", systemImage: "text.alignleft") { showingLogs = true }
                 }
                 Section {
                     Button("Restart", systemImage: "arrow.clockwise") { confirmingRestart = true }
@@ -231,11 +220,6 @@ struct ApplicationServiceView: View {
 
 /// Opens an application's usage history.
 struct ApplicationUsageLink: Hashable {
-    let key: String
-}
-
-/// Opens an application's live logs.
-struct RuntimeLogsLink: Hashable {
     let key: String
 }
 

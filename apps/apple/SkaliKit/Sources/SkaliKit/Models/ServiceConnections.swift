@@ -43,21 +43,3 @@ public struct DatabaseCredentials: Codable, Hashable, Sendable {
         self.url = url
     }
 }
-
-/// One line of an application's live log (`RuntimeLogEvent`).
-public struct RuntimeLogLine: Codable, Hashable, Sendable {
-    public let service: String
-    public let pod: String
-    public let line: String
-    public let time: Date?
-    /// From the previous container, after a restart.
-    public let previous: Bool?
-
-    public init(service: String, pod: String, line: String, time: Date? = nil, previous: Bool? = nil) {
-        self.service = service
-        self.pod = pod
-        self.line = line
-        self.time = time
-        self.previous = previous
-    }
-}

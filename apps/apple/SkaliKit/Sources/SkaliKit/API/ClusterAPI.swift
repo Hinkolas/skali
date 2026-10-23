@@ -38,8 +38,6 @@ public protocol ClusterAPI: Sendable {
     func revealDatabaseCredentials(environmentID: String, key: String) async throws -> DatabaseCredentials
     /// Deploy: recreates one application's pods; returns the run's id.
     func restartApplication(environmentID: String, key: String) async throws -> String
-    /// An application's log lines as its pods write them, across pods.
-    func runtimeLogs(environmentID: String, service: String) -> AsyncThrowingStream<RuntimeLogLine, Error>
 
     // MARK: Runs
 
@@ -219,12 +217,6 @@ extension APIClient: ClusterAPI {
     public func restartApplication(environmentID: String, key: String) async throws -> String {
         let response: RunStarted = try await post("v1/environments/\(environmentID)/applications/\(key)/restart")
         return response.runId
-    }
-
-    public func runtimeLogs(environmentID: String, service: String) -> AsyncThrowingStream<RuntimeLogLine, Error> {
-        .decoding(
-            events("v1/environments/\(environmentID)/logs/stream", query: [URLQueryItem(name: "service", value: service)]),
-            event: "log")
     }
 
     public func run(id: String) async throws -> RunTree {

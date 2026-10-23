@@ -132,7 +132,7 @@ extension String {
 
 extension View {
     /// Typesets text as code rather than language: identifiers, URLs and
-    /// log lines must not get hyphens where they wrap. "zxx" is the code
+    /// step logs must not get hyphens where they wrap. "zxx" is the code
     /// for no linguistic content, which carries no hyphenation rules.
     func typesetAsCode() -> some View {
         typesettingLanguage(Locale.Language(identifier: "zxx"))
