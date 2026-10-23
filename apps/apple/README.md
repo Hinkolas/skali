@@ -48,8 +48,14 @@ Launch arguments (Edit Scheme > Run > Arguments):
   nothing persisted. Use it for UI work and screenshots.
 - `-SkaliDemoMember` does the same, signed in as a member instead of an
   instance admin.
+- `-SkaliDemoUpdate available` sets where the demo cluster's software update
+  stands: `current` (the default), `available`, `updating` or `failed`. An
+  update the demo runs advances with the clock, about a minute and a half
+  from the first node to verified.
 - `-SkaliTab settings` (Debug builds only) opens on the given tab: `projects`,
   `settings` or `search`.
+- `-SkaliRoute softwareUpdate` (Debug builds only) pushes a Settings screen:
+  `account`, `users`, `nodes`, `databases`, `backupTarget` or `softwareUpdate`.
 
 ## Admins and members
 

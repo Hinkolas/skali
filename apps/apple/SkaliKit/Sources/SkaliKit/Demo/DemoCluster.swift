@@ -6,9 +6,13 @@ public struct DemoCluster: ClusterAPI {
     /// The signed-in user: an instance admin, or a member whom the admin
     /// routes refuse as a real cluster would.
     public let user: User
+    private let updates: DemoUpdates
 
-    public init(member: Bool = false) {
+    /// `update` picks where the cluster's update stands at launch; an
+    /// update the demo runs advances with the clock.
+    public init(member: Bool = false, update: DemoUpdates.Scenario = .current) {
         user = member ? Self.member : Self.user
+        updates = DemoUpdates(scenario: update)
     }
 
     public static let address = ClusterAddress(userInput: "skali.example.com")!
@@ -71,16 +75,31 @@ public struct DemoCluster: ClusterAPI {
 
     public func updateStatus() async throws -> UpdateStatus {
         try requireAdmin()
-        return UpdateStatus(
-            installed: .init(version: "v0.1.3-rc.8"), summary: .init(state: "current"),
-            channel: .beta, autoUpdate: false, lastCheckedAt: .now.addingTimeInterval(-3600))
+        return updates.status()
     }
 
     public func saveUpdateSettings(_ settings: UpdateSettings) async throws -> UpdateStatus {
         try requireAdmin()
-        return UpdateStatus(
-            installed: .init(version: "v0.1.3-rc.8"), summary: .init(state: "current"),
-            channel: settings.channel, autoUpdate: settings.autoUpdate)
+        updates.save(settings)
+        return updates.status()
+    }
+
+    public func scanForUpdates() async throws -> UpdateStatus {
+        try requireAdmin()
+        updates.scan()
+        return updates.status()
+    }
+
+    public func applyUpdate(version: String) async throws -> UpdateStatus {
+        try requireAdmin()
+        updates.start()
+        return updates.status()
+    }
+
+    public func resumeUpdate() async throws -> UpdateStatus {
+        try requireAdmin()
+        updates.start()
+        return updates.status()
     }
 
     public func startDeviceReauth(clientLabel: String) async throws -> DeviceRequest {

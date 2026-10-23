@@ -18,6 +18,12 @@ public protocol ClusterAPI: Sendable {
     func updateStatus() async throws -> UpdateStatus
     /// Admin only, and behind the recent sign-in gate.
     func saveUpdateSettings(_ settings: UpdateSettings) async throws -> UpdateStatus
+    /// Admin only: checks the release feed now.
+    func scanForUpdates() async throws -> UpdateStatus
+    /// Admin only, sudo: moves every node to `version`, controllers first.
+    func applyUpdate(version: String) async throws -> UpdateStatus
+    /// Admin only, sudo: continues a failed update's remaining steps.
+    func resumeUpdate() async throws -> UpdateStatus
     /// Opens a device request that re-confirms this session (sudo mode).
     func startDeviceReauth(clientLabel: String) async throws -> DeviceRequest
     func pollDevice(deviceCode: String) async throws -> DevicePoll
@@ -83,6 +89,18 @@ extension APIClient: ClusterAPI {
         try await put("v1/system/updates/settings", body: settings)
     }
 
+    public func scanForUpdates() async throws -> UpdateStatus {
+        try await post("v1/system/updates/scan")
+    }
+
+    public func applyUpdate(version: String) async throws -> UpdateStatus {
+        try await post("v1/system/updates/apply", body: UpdateApply(version: version))
+    }
+
+    public func resumeUpdate() async throws -> UpdateStatus {
+        try await post("v1/system/updates/resume")
+    }
+
     public func startDeviceLogin(clientLabel: String) async throws -> DeviceRequest {
         try await post("v1/auth/device/requests", body: DeviceStart(clientLabel: clientLabel))
     }
@@ -141,6 +159,10 @@ private struct TwoFactorCode: Encodable {
 
 private struct BackupCodesResponse: Decodable {
     let backupCodes: [String]
+}
+
+private struct UpdateApply: Encodable {
+    let version: String
 }
 
 private struct DeviceStart: Encodable {
