@@ -124,10 +124,20 @@ public struct DemoCluster: ClusterAPI {
 
     public func databasePools() async throws -> [DatabasePool] {
         try requireAdmin()
-        return [
-            DatabasePool(name: "shared", engine: "postgres", major: 18, state: "ready"),
-            DatabasePool(name: "analytics", engine: "postgres", major: 17, state: "ready"),
-        ]
+        return DemoPools.pools
+    }
+
+    public func databasePool(name: String) async throws -> DatabasePoolDetail {
+        try requireAdmin()
+        guard let detail = DemoPools.detail(name) else {
+            throw APIError.server(status: 404, code: "not_found", message: "database pool not found")
+        }
+        return detail
+    }
+
+    public func databasePoolMetrics(name: String, window: NodeMetrics.Window) async throws -> DatabasePoolMetrics {
+        try requireAdmin()
+        return DemoPools.metrics(name, window: window)
     }
 
     public func backupTarget() async throws -> BackupTarget? {

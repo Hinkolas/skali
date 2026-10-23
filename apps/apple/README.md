@@ -56,7 +56,7 @@ Launch arguments (Edit Scheme > Run > Arguments):
   `settings` or `search`.
 - `-SkaliRoute softwareUpdate` (Debug builds only) pushes a Settings screen:
   `account`, `users`, `nodes`, `databases`, `backupTarget`, `softwareUpdate`,
-  or `node:<name>` for one node.
+  `node:<name>` for one node, or `pool:<name>` for one database pool.
 
 ## Admins and members
 

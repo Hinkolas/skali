@@ -61,7 +61,6 @@ private struct NodeRow: View {
     let usage: NodeUsage?
 
     @ScaledMetric(relativeTo: .headline) private var tile: CGFloat = 38
-    @ScaledMetric(relativeTo: .caption2) private var barWidth: CGFloat = 52
 
     var body: some View {
         HStack(spacing: 12) {
@@ -77,12 +76,10 @@ private struct NodeRow: View {
             }
             Spacer(minLength: 8)
             if node.ready {
-                Grid(alignment: .leading, horizontalSpacing: 6, verticalSpacing: 5) {
-                    bar("cpu", usage?.cpuFraction, .usageCPU)
-                    bar("mem", usage?.memoryFraction, .usageMemory)
-                }
-                .font(.caption2.monospaced())
-                .foregroundStyle(.secondary)
+                RowUsageBars(bars: [
+                    .init(label: "cpu", fraction: usage?.cpuFraction, color: .usageCPU),
+                    .init(label: "mem", fraction: usage?.memoryFraction, color: .usageMemory),
+                ])
             }
         }
         .padding(.vertical, 2)
@@ -94,15 +91,6 @@ private struct NodeRow: View {
         if !node.ready { return "offline · \(node.summary)" }
         if !node.schedulable { return "cordoned · \(node.summary)" }
         return node.summary
-    }
-
-    private func bar(_ label: String, _ fraction: Double?, _ color: Color) -> some View {
-        GridRow {
-            Text(label)
-            UsageBar(fraction: fraction, color: color)
-                .frame(width: barWidth)
-        }
-        .accessibilityHidden(true)
     }
 
     private var accessibilityUsage: String {

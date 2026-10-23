@@ -30,7 +30,11 @@ struct LiveClusterTests {
         _ = try await api.nodes()
         _ = try await api.nodeMetrics(window: .hour)
         _ = try await api.nodeStorage()
-        _ = try await api.databasePools()
+        let pools = try await api.databasePools()
+        if let pool = pools.first {
+            _ = try await api.databasePool(name: pool.name)
+            _ = try await api.databasePoolMetrics(name: pool.name, window: .hour)
+        }
         _ = try await api.backupTarget()
         let updates = try await api.updateStatus()
         #expect(!updates.installed.version.isEmpty)

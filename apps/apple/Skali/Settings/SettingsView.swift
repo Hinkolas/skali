@@ -24,7 +24,8 @@ struct SettingsView: View {
             case .users: PlaceholderView(title: "Users", systemImage: "person.2")
             case .nodes: NodesView()
             case .node(let name): NodeDetailView(name: name)
-            case .databases: DatabasePoolsView(pools: session.system.pools ?? [])
+            case .databases: DatabasePoolsView()
+            case .pool(let name): DatabasePoolView(name: name)
             case .backupTarget: BackupTargetView(backup: session.system.backup)
             case .softwareUpdate: SoftwareUpdateView()
             }
@@ -221,11 +222,18 @@ enum SettingsRoute: Hashable {
     case account, users, nodes, databases, backupTarget, softwareUpdate
     /// One node, by name.
     case node(String)
+    /// One database pool, by name.
+    case pool(String)
 
-    /// Parses `softwareUpdate` or `node:skali-app-04` (debug launch arguments).
+    /// Parses `softwareUpdate`, `node:skali-app-04` or `pool:shared`
+    /// (debug launch arguments).
     init?(argument: String) {
         if argument.hasPrefix("node:") {
             self = .node(String(argument.dropFirst(5)))
+            return
+        }
+        if argument.hasPrefix("pool:") {
+            self = .pool(String(argument.dropFirst(5)))
             return
         }
         let simple: [String: SettingsRoute] = [

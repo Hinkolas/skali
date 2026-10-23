@@ -16,6 +16,10 @@ public protocol ClusterAPI: Sendable {
     func nodeStorage() async throws -> [NodeStorage]
     /// Admin only.
     func databasePools() async throws -> [DatabasePool]
+    /// Admin only: one pool with its instances, databases and incidents.
+    func databasePool(name: String) async throws -> DatabasePoolDetail
+    /// Admin only: one pool's usage over `window`.
+    func databasePoolMetrics(name: String, window: NodeMetrics.Window) async throws -> DatabasePoolMetrics
     /// Admin only; nil when no target is configured.
     func backupTarget() async throws -> BackupTarget?
     /// Admin only.
@@ -83,6 +87,17 @@ extension APIClient: ClusterAPI {
     public func databasePools() async throws -> [DatabasePool] {
         let response: DatabasePoolsResponse = try await get("v1/system/database-pools")
         return response.pools
+    }
+
+    public func databasePool(name: String) async throws -> DatabasePoolDetail {
+        let response: DatabasePoolResponse = try await get("v1/system/database-pools/\(name)")
+        return response.pool
+    }
+
+    public func databasePoolMetrics(name: String, window: NodeMetrics.Window) async throws -> DatabasePoolMetrics {
+        try await get(
+            "v1/system/database-pools/\(name)/metrics",
+            query: [URLQueryItem(name: "window", value: window.rawValue)])
     }
 
     public func backupTarget() async throws -> BackupTarget? {
@@ -172,6 +187,10 @@ private struct TwoFactorCode: Encodable {
 
 private struct BackupCodesResponse: Decodable {
     let backupCodes: [String]
+}
+
+private struct DatabasePoolResponse: Decodable {
+    let pool: DatabasePoolDetail
 }
 
 private struct UpdateApply: Encodable {

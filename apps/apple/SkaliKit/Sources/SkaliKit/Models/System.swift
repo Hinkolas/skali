@@ -174,23 +174,6 @@ struct NodesResponse: Decodable {
     let nodes: [ClusterNode]
 }
 
-/// A database pool (`GET /v1/system/database-pools`, the fields the app reads).
-public struct DatabasePool: Codable, Hashable, Sendable, Identifiable {
-    public let name: String
-    public let engine: String?
-    public let major: Int?
-    public let state: String?
-
-    public init(name: String, engine: String? = nil, major: Int? = nil, state: String? = nil) {
-        self.name = name
-        self.engine = engine
-        self.major = major
-        self.state = state
-    }
-
-    public var id: String { name }
-}
-
 struct DatabasePoolsResponse: Decodable {
     let pools: [DatabasePool]
 }

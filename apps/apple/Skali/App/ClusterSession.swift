@@ -20,6 +20,11 @@ final class ClusterSession {
     /// the last document stays on screen.
     private(set) var updatesDisconnected = false
 
+    /// The newest usage sample per pool name.
+    private(set) var poolUsage: [String: DatabasePoolMetrics.Current] = [:]
+    /// Each opened pool's instances, databases and incidents, by name.
+    private(set) var poolDetails: [String: DatabasePoolDetail] = [:]
+
     /// Current CPU, memory and disk per node name.
     private(set) var nodeUsage: [String: NodeUsage] = [:]
 
@@ -109,6 +114,35 @@ final class ClusterSession {
             nodeUsage = NodeUsage.byNode(metrics: metricsValue, storage: storageValue)
         }
         if let updates = await updates { system.updates = updates }
+    }
+
+    /// The pools and their newest usage sample (one metrics read per pool;
+    /// a cluster runs a handful).
+    func loadPools() async {
+        do {
+            let pools = try await api.databasePools()
+            system.pools = pools
+            let api = self.api
+            let samples = await withTaskGroup(of: (String, DatabasePoolMetrics.Current?).self) { group in
+                for pool in pools {
+                    group.addTask { (pool.name, try? await api.databasePoolMetrics(name: pool.name, window: .hour).current) }
+                }
+                var samples: [String: DatabasePoolMetrics.Current] = [:]
+                for await (name, current) in group { samples[name] = current }
+                return samples
+            }
+            poolUsage = samples
+        } catch {
+            _ = handleUnauthorized(error)
+        }
+    }
+
+    /// One pool with its instances and databases.
+    func loadPool(_ name: String) async {
+        async let detail = try? api.databasePool(name: name)
+        async let metrics = try? api.databasePoolMetrics(name: name, window: .hour)
+        if let detail = await detail { poolDetails[name] = detail }
+        if let current = await metrics?.current { poolUsage[name] = current }
     }
 
     /// Re-reads the update document, keeping the last one when the cluster
