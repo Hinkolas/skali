@@ -9,7 +9,7 @@ apps/apple/
 ├── Skali/             the iOS/iPadOS app target: SwiftUI screens and app state
 ├── SkaliKit/          Swift package shared by every Apple target: API client, models,
 │                      browser sign-in, Keychain storage, presentation rollups, fixtures
-└── Config/            Info.plist additions the build settings cannot express
+└── Config/            Info.plist additions and the base build configuration
 ```
 
 There is one project for all Apple platforms. Everything below the UI lives
@@ -32,9 +32,15 @@ xcodebuild -project apps/apple/Skali.xcodeproj -scheme Skali \
   -destination 'generic/platform=iOS Simulator' build
 ```
 
-Simulator builds need no signing. To run the app on a device, pick your team
-under Signing & Capabilities. Xcode keeps the choice in your user data, so it
-is never committed.
+Simulator builds need no signing. To run the app on a device, put your team
+in `Config/Local.xcconfig`, which git ignores:
+
+```
+DEVELOPMENT_TEAM = ABCDE12345
+```
+
+Do not pick the team under Signing & Capabilities: Xcode writes that choice
+into `project.pbxproj`, where it would be committed.
 
 Launch arguments (Edit Scheme > Run > Arguments):
 

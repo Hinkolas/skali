@@ -1,0 +1,10 @@
+// Base configuration of the Skali app target (the target's own build
+// settings in the project still apply on top).
+//
+// Signing is per developer and stays out of the repository: put your team
+// in Config/Local.xcconfig, which git ignores, for example
+//
+//     DEVELOPMENT_TEAM = ABCDE12345
+//
+// Simulator builds need no team.
+#include? "Local.xcconfig"

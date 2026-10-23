@@ -14,6 +14,7 @@
 		5C0A00000000000000000201 /* Skali.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Skali.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		5C0A00000000000000000202 /* SkaliKit */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = SkaliKit; sourceTree = "<group>"; };
 		5C0A00000000000000000203 /* Skali-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "Skali-Info.plist"; sourceTree = "<group>"; };
+		5C0A00000000000000000204 /* Skali.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Skali.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -58,6 +59,7 @@
 			isa = PBXGroup;
 			children = (
 				5C0A00000000000000000203 /* Skali-Info.plist */,
+				5C0A00000000000000000204 /* Skali.xcconfig */,
 			);
 			path = Config;
 			sourceTree = "<group>";
@@ -197,6 +199,7 @@
 		};
 		5C0A00000000000000000A03 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 5C0A00000000000000000204 /* Skali.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -235,6 +238,7 @@
 		};
 		5C0A00000000000000000A04 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 5C0A00000000000000000204 /* Skali.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
