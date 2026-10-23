@@ -7,3 +7,6 @@ build/
 # SwiftPM
 .build/
 .swiftpm/
+
+# Per-developer signing (see Config/Skali.xcconfig)
+Config/Local.xcconfig
