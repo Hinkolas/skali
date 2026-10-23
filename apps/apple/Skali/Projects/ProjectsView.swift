@@ -4,6 +4,7 @@ import SwiftUI
 /// The project list: every project the account can see, sorted the way the
 /// person chose, with pull to refresh.
 struct ProjectsView: View {
+    @Environment(AppModel.self) private var model
     @Environment(ClusterSession.self) private var session
     @AppStorage("projects.sort") private var sort: ProjectSort = .nameAscending
     @AppStorage("projects.mineOnly") private var mineOnly = false
@@ -11,6 +12,7 @@ struct ProjectsView: View {
     var body: some View {
         content
             .navigationTitle("Projects")
+            .navigationSubtitle(subtitle)
             .toolbar { optionsMenu }
             .navigationDestination(for: Project.self) { ProjectDetailView(project: $0) }
             .task { await session.loadProjects() }
@@ -25,6 +27,8 @@ struct ProjectsView: View {
                     ProjectRow(project: project)
                 }
             }
+            // Room between the title block and the list, as Notes leaves.
+            .contentMargins(.top, 14, for: .scrollContent)
             .overlay {
                 if visible.isEmpty { emptyState(hasAny: !projects.isEmpty) }
             }
@@ -40,6 +44,16 @@ struct ProjectsView: View {
             ProgressView()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+
+    /// A short line under the title, as Notes has ("641 notes"): the count,
+    /// and which cluster once there is more than one to tell apart.
+    private var subtitle: String {
+        guard let projects = session.projects else { return "" }
+        let count = visibleProjects(projects).count
+        let projectCount = count == 1 ? "1 project" : "\(count) projects"
+        guard model.accounts.count > 1 else { return projectCount }
+        return "\(session.account.displayName) · \(projectCount)"
     }
 
     private func visibleProjects(_ projects: [Project]) -> [Project] {
@@ -70,6 +84,14 @@ struct ProjectsView: View {
     }
 
     @ToolbarContentBuilder private var optionsMenu: some ToolbarContent {
+        // Under the large title at body size, as Notes shows its count;
+        // `navigationSubtitle` covers the small title once scrolled.
+        ToolbarItem(placement: .largeSubtitle) {
+            Text(subtitle)
+                .font(.body)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
         ToolbarItem(placement: .primaryAction) {
             Menu {
                 Picker("Sort By", selection: $sort) {
