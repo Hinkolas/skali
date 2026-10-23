@@ -2,25 +2,30 @@ import SkaliKit
 import SwiftUI
 import UIKit
 
-/// A service kind's icon on its tinted tile, with "×2" when there are more.
+/// A service kind's icon on its tinted tile, with "×2" when there are more:
+/// the Studio's kind chip (TypeBadge). The tile is a square without a count,
+/// and the count is set like the listing's text beside it.
 struct ServiceKindBadge: View {
     let kind: ServiceKind
     let count: Int
 
+    @ScaledMetric(relativeTo: .footnote) private var height: CGFloat = 26
+
     var body: some View {
-        HStack(spacing: 3) {
+        HStack(spacing: 4) {
             Image(systemName: kind.systemImage)
-                .imageScale(.small)
+                .font(.system(
+                    size: SymbolSizing.pointSize(for: kind.systemImage, base: height * 0.58, target: height * 0.64),
+                    weight: .medium))
             if count > 1 {
                 Text("×\(count)")
-                    .monospacedDigit()
+                    .font(.footnote.monospaced().weight(.medium))
             }
         }
-        .font(.footnote.weight(.medium))
         .foregroundStyle(kind.tint)
-        .padding(.horizontal, 7)
-        .frame(minWidth: 26, minHeight: 24)
-        .background(kind.tint.opacity(0.16), in: .rect(cornerRadius: 7))
+        .padding(.horizontal, count > 1 ? height * 0.26 : 0)
+        .frame(minWidth: height, minHeight: height)
+        .background(kind.tint.opacity(0.16), in: .rect(cornerRadius: height * 0.27))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(count) \(count == 1 ? kind.label.lowercased() : kind.pluralLabel)")
     }
@@ -57,11 +62,8 @@ struct HealthDot: View {
     }
 }
 
-/// The colored tile behind a Settings row's symbol. SF Symbols differ in
-/// shape at one point size (person.2 is far wider than cylinder), so each
-/// glyph's point size is reduced until its area matches a square glyph's.
-/// Changing the point size, not scaling the image, keeps the stroke weight
-/// the same on every tile. Tile and glyph scale with Dynamic Type.
+/// The colored tile behind a Settings row's symbol. Tile and glyph scale
+/// with Dynamic Type; `SymbolSizing` keeps wide and narrow glyphs alike.
 struct SettingsIcon: View {
     let systemImage: String
     var tint: Color = .secondary
@@ -70,16 +72,23 @@ struct SettingsIcon: View {
 
     var body: some View {
         Image(systemName: systemImage)
-            .font(.system(size: pointSize, weight: .medium))
+            .font(.system(
+                size: SymbolSizing.pointSize(for: systemImage, base: side * 0.47, target: side * 0.57),
+                weight: .medium))
             .foregroundStyle(tint)
             .frame(width: side, height: side)
             .background(tint.opacity(0.15), in: .rect(cornerRadius: side * 0.26))
             .accessibilityHidden(true)
     }
+}
 
-    private var pointSize: CGFloat {
-        let base = side * 0.47
-        let target = side * 0.57
+/// SF Symbols differ in shape at one point size (person.2 is far wider than
+/// cylinder), so tiles that show several of them side by side read uneven.
+/// The point size is reduced until the glyph's area matches a `target`
+/// square. Changing the point size, rather than scaling the image, keeps
+/// the stroke weight equal across tiles.
+enum SymbolSizing {
+    static func pointSize(for systemImage: String, base: CGFloat, target: CGFloat) -> CGFloat {
         let configuration = UIImage.SymbolConfiguration(pointSize: base, weight: .medium)
         guard let size = UIImage(systemName: systemImage, withConfiguration: configuration)?.size,
               size.width > 0, size.height > 0
