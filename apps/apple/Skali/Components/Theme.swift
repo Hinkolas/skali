@@ -17,7 +17,7 @@ extension ServiceKind {
     var systemImage: String {
         switch self {
         case .application: "shippingbox"
-        case .database: "cylinder"
+        case .database: "cylinder.split.1x2"
         case .bucket: "externaldrive"
         }
     }
