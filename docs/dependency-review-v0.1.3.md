@@ -105,7 +105,7 @@ implementation/verification reference or an explicit, bounded decision.
 | D1 | **Before stable: update PostgreSQL 17/18 system images and assess pgvector.** Pins moved from 17.9/18.4 to 17.11/18.6 on branch `fix/postgres-patch-updates`; see [PostgreSQL patch updates](postgres-patch-updates.md#2026-10-22-179--1711-and-184--186). | Choose maintained same-major images containing at least the applicable 17.11/18.6 core fixes; scan both architectures and extension/OS packages. Verify provisioning, extensions, role isolation, SQL, logical backup/restore, and existing-pool patch upgrades. Catalog changes affect newly created pools; persisted pools retain their copied image, so demonstrate how existing installs receive the fix too. **Done:** image comparison, release-note classification, scans (below), automatic serialized pool patch updates with unit, DB and k3d live tests. **Remaining:** rehearse an upgrade from v0.1.3-rc.7 with existing pools on the old images, covering provisioning, extensions, SQL and backup/restore after the move; publish the tenant follow-ups in the release notes. |
 | D2 | **After the next RC, before stable: address registry 2.8.3 with [#242](https://github.com/Hinkolas/skali/issues/242).** | Owner decision on 2026-10-22: combine the registry dependency work with the internal-S3 storage/replaceable-replica rework; retain the current registry for the next RC. Its binary uses Go 1.20.8 and its Alpine 3.18.12 base is end of support. Scan the selected maintained image and verify existing-data migration, token auth/signatures, push/pull, import/blob mounting, cross-replica behavior and the slow authenticated upload regression. Verify this substantive change in a later RC before v0.1.3 stable. Distribution 3.1.2 is a candidate to evaluate, not an approved drop-in upgrade. |
 | D3 | **Before stable: disposition k3s and its edge/runtime dependencies.** | Inspect the k3s, containerd/runc/CNI, Traefik, CoreDNS, Helm helper, local-path and metrics-server findings. Select a supported patch bundle or document advisory-specific non-applicability; update the installer/localdev/built-in inventory together. Rehearse cluster and dev upgrades, network policies, aliases/TLS, and slow pushes. |
-| D4 | **Before stable: SeaweedFS and CNPG/cert-manager operator review.** | Scan maintained candidates/rebuilds and separate used server paths from unused bundled features. For SeaweedFS verify authenticated S3, bootstrap deny identity, credential rotation/retirement, bucket deletion/quota, restore and cancellation, and metadata/replication behavior. For operators verify bootstrap, reconciliation and ACME on the chosen versions. |
+| D4 | **Before stable: SeaweedFS and CNPG/cert-manager operator review.** | Scan maintained candidates/rebuilds and separate used server paths from unused bundled features. For SeaweedFS verify authenticated S3, bootstrap deny identity, credential rotation/retirement, bucket deletion/quota, restore and cancellation, and metadata/replication behavior. For operators verify bootstrap, reconciliation and ACME on the chosen versions. **Done for rc.9:** SeaweedFS 4.48 (telemetry off), CNPG 1.30.1, cert-manager 1.21.2; see [operators and object storage](#operators-and-object-storage--2026-10-23). **Remaining:** rehearse the rc.8 → rc.9 upgrade on khz. |
 | D5 | **Before a release supporting Longhorn: disposition its full image set.** | Manager/engine/instance/share/backing/support/UI and CSI images contain findings. Upgrade as a compatible set or document exact non-applicability. Verify existing-volume attach, read/write, restart, backup/restore, node disruption and upgrade. Local-path testing does not validate this driver. |
 | D6 | **Before publishing: review build infrastructure and release binaries.** | BuildKit v0.33.1, binfmt/QEMU, Node build image, CI PostgreSQL, GoReleaser and sqlc have findings. Use updated/rebuilt tools or document the actual affected command/input boundary. Record exact resolved GoReleaser/Node/action versions in the final release run. Preserve generated-store consistency when changing sqlc. **Done for rc.8:** BuildKit v0.34.1, GoReleaser pinned to v2.18.3; binfmt, Node, CI PostgreSQL and sqlc dispositioned in [candidate build inputs](#candidate-build-inputs--2026-10-22). **Remaining:** record the resolved action and Node versions from the release run. |
 | D7 | **Before declaring installer/dev review clean: refresh or disposition downloaded k3d/Lima binaries and native networking.** | The pinned k3d 5.9.0 and Lima 2.2.0 executables contain vulnerable Go symbols, including the current x509 distrust advisory. Change versions/checksums together or provide a bounded applicability decision; retest native dev/VM creation and upgrade on supported hosts. Include socket_vmnet 1.2.2 and the guest OS in the native review. |
@@ -175,6 +175,38 @@ Floating builder and example tags resolved on 2026-10-22:
 `golang:1.26.10-alpine` and `golang:1.26-alpine` `sha256:27f2d3b8…7cba`,
 `alpine:3.22` `sha256:d406446b…a654`, `python:3.12-alpine`
 `sha256:b658b05c…815d`, `node:22-alpine` `sha256:fe4f6d74…9914`.
+
+### Operators and object storage — 2026-10-23
+
+D4 was taken up for rc.9 with Trivy 0.76.1 and the advisory database of
+2026-10-22 19:14 UTC. The old pins were rescanned with the same database; counts
+are identical on amd64 and arm64.
+
+| Input | Change | Evidence and decision |
+| --- | --- | --- |
+| SeaweedFS | `chrislusf/seaweedfs:4.39` → `4.48` (`sha256:4e61d15f…872d`, Alpine 3.24.2) | 0/23/28/28/5 → 0/5/15/1/3. 4.48 is the newest release; its four standard-library highs and one x/net high are fixed in Go 1.26.9/1.26.10 and x/net 0.60.0, newer than its build. From 4.41 the master reports anonymous cluster statistics to telemetry.seaweedfs.com once a day unless disabled, so both rendered shapes now pass `-telemetry=false` / `-master.telemetry=false`. 4.47's `createTable` change only normalises `true`/`false`; skali's custom `postgres2` template is used as before. 4.46 binds the admin UI to loopback by default; skali does not run it. |
+| CNPG | `1.29.2` → `1.30.1` (`sha256:923c267e…c07`, Debian 13.7) | 0/38/30/2/1 → 0/10/26/2/1. 1.29.3 is the final 1.29 release and 1.29 is no longer supported, so the update moves to the supported 1.30 line. 1.30 adds authenticated operator calls to the instance manager (GHSA-7qwx-x8ff-3px9, not backported); pool policies admit tenants only on 5432, so tenants could not reach that endpoint before either. The manifest is vendored verbatim; besides the image it adds the `DatabaseRole` CRD and its RBAC. The remaining highs are the same Go/x/net set as SeaweedFS. |
+| cert-manager | `v1.21.1` → `v1.21.2` (controller `sha256:70f532fd…12b8`, webhook `sha256:a60e2dac…57ae`, cainjector `sha256:c85268c6…7562`, acmesolver `sha256:699b40d6…2503`) | Controller/webhook 0/17/16/4/1 → 0/5/13/4/2; cainjector 0/15/15/1/1 → 0/5/13/1/2; acmesolver 0/14/13/1/0 → 0/5/13/1/1. A patch release; the vendored manifest differs from 1.21.1 only in versions. It also stops ACME response bodies reaching Issuer conditions and Events. The remaining highs are the same Go/x/net set. |
+
+The Go 1.26.9/1.26.10 and x/net 0.60.0 fixes are not in any published
+release of the three projects yet. Each is the newest available; the
+residual findings clear only with an upstream rebuild.
+
+An operator upgrade replaces every PostgreSQL pod once: on k3d a
+two-instance 17.11 cluster with 10,000 rows went from 1.29.2 to the bundled
+1.30.1 manifest, the replica was recreated first, then the primary restarted
+in place without a switchover (about 20 s unavailable). Rows and checksum
+matched afterwards, the replica streamed again, and the instances ran the
+1.30.1 bootstrap controller. Each of `skali-db` and the shared pools does
+this once during the platform upgrade.
+
+With these pins, `task test:live` passed on k3d (k3s v1.36.3): 42 live tests
+across kube, bundle, observe, reconcile, substrate, CNPG, SeaweedFS and backup,
+including the bucket contracts, cold object-store boot, credential rotation,
+pool patch update, pgvector and bucket restore on SeaweedFS 4.48. The
+destructive `TestLiveClusterRestartRecovery` runs only on its own and was not
+run. A standalone 4.48 `weed server` logs its telemetry destination without the
+flag and nothing with it.
 
 ## Downloaded and local tool binaries
 
@@ -348,3 +380,9 @@ where the counts agree they are shown once for readability.
 | `alpine:3.24.3@sha256:b3413572228e34bd1c9245f5565e6cd127005655e8a7899aef33d8e83255c9e6` (D8, 2026-10-22) | build | amd64, arm64 | 0/0/0/0/0 |
 | `moby/buildkit:v0.34.1@sha256:99368f3e46177c6405b9740e4461d91cee004128daeecca78d4ceac50ec1da5c` (D6, 2026-10-22) | build | amd64, arm64 | amd64: 0/97/86/9/8; arm64: 0/93/82/5/8 |
 | Local rc.8 release image on Alpine 3.24.3, BuildKit v0.34.1 (D8, 2026-10-22) | candidate | amd64, arm64 | 0/0/0/0/1 |
+| `chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d` (D4, 2026-10-23) | runtime | amd64, arm64 | 0/5/15/1/3 |
+| `ghcr.io/cloudnative-pg/cloudnative-pg:1.30.1@sha256:923c267ec29636db3bee20f993d0ec4973fa22998e1adad37da79e4d32b5bc07` (D4, 2026-10-23) | runtime | amd64, arm64 | 0/10/26/2/1 |
+| `quay.io/jetstack/cert-manager-acmesolver:v1.21.2@sha256:699b40d622211ab7accad8a21b04c5fbaa1841ef7a12621e8de492dbe27b2503` (D4, 2026-10-23) | runtime | amd64, arm64 | 0/5/13/1/1 |
+| `quay.io/jetstack/cert-manager-cainjector:v1.21.2@sha256:c85268c64f2e0e76684bf5fe8906caff34b82523561c6affe0fae3546bd87562` (D4, 2026-10-23) | runtime | amd64, arm64 | 0/5/13/1/2 |
+| `quay.io/jetstack/cert-manager-controller:v1.21.2@sha256:70f532fd9cfde0b09d55687200942399d89838bc2d5d5b45152eb799a15912b8` (D4, 2026-10-23) | runtime | amd64, arm64 | 0/5/13/4/2 |
+| `quay.io/jetstack/cert-manager-webhook:v1.21.2@sha256:a60e2dac46dbb8a7f3df95c54ce941012f54c2fe022f0ee55aaa1ab40ed957ae` (D4, 2026-10-23) | runtime | amd64, arm64 | 0/5/13/4/2 |

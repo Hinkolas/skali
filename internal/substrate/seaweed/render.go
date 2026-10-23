@@ -350,7 +350,8 @@ func renderMasters(spec StoreSpec) *appsv1.StatefulSet {
 	// -volumeSizeLimitMB pins volumes small (8 GB, not the 30 GB default):
 	// volumes seal sooner, vacuum passes are smaller, rebalancing is
 	// finer-grained. New volumes only, which is why it is right from day
-	// one.
+	// one. -telemetry=false: since 4.41 the leader master otherwise reports
+	// cluster statistics to telemetry.seaweedfs.com once a day.
 	args := []string{
 		"master",
 		"-mdir=/data",
@@ -360,6 +361,7 @@ func renderMasters(spec StoreSpec) *appsv1.StatefulSet {
 		"-peers=" + peers,
 		"-volumeSizeLimitMB=8000",
 		"-defaultReplication=" + spec.Replication,
+		"-telemetry=false",
 	}
 	labels := componentLabels(MasterService)
 	return &appsv1.StatefulSet{
@@ -625,6 +627,7 @@ func renderAllInOne(spec StoreSpec) *appsv1.Deployment {
 		"server",
 		"-dir=/data",
 		"-master.volumeSizeLimitMB=1000",
+		"-master.telemetry=false",
 		fmt.Sprintf("-master.port=%d", MasterPort),
 		fmt.Sprintf("-volume.port=%d", VolumePort),
 		"-volume.max=0",

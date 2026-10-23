@@ -106,6 +106,23 @@ func TestRenderDevServicesSelectAllInOne(t *testing.T) {
 	require.True(t, names[MasterService] && names[FilerService] && names[S3Service])
 }
 
+// The master reports to telemetry.seaweedfs.com unless told not to (the
+// default since 4.41); both shapes opt out.
+func TestRenderDisablesTelemetry(t *testing.T) {
+	t.Parallel()
+	spec := StoreSpec{Namespace: "skali-platform", Masters: 3, Filers: 2, Replication: "001", Managed: true}
+	for _, object := range RenderProduction(spec) {
+		if sts, ok := object.(*appsv1.StatefulSet); ok {
+			require.Contains(t, sts.Spec.Template.Spec.Containers[0].Args, "-telemetry=false")
+		}
+	}
+	for _, object := range RenderDev(StoreSpec{Namespace: "skali-platform", Masters: 1, Replication: "000"}) {
+		if deployment, ok := object.(*appsv1.Deployment); ok {
+			require.Contains(t, deployment.Spec.Template.Spec.Containers[0].Args, "-master.telemetry=false")
+		}
+	}
+}
+
 func TestTopologyDerivation(t *testing.T) {
 	t.Parallel()
 	require.Equal(t, 1, MastersForNodes(1))
