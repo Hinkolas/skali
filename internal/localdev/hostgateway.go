@@ -108,6 +108,15 @@ func verifyHostGateway(ctx context.Context, client *kube.Client, progress Progre
 			return fmt.Errorf("localdev: %s does not resolve in the cluster DNS %s after the NodeHosts repair; "+
 				"last answer:\n%s", hostGatewayName, hostGatewayDNSWait, strings.TrimSpace(string(out)))
 		}
+		// The repair can lose a race with the boot that follows the node-IP
+		// pin restart: the configmap from the first boot is already there,
+		// so the repair patches it at once, and k3s's addon controller then
+		// re-applies the bundled coredns manifest without the entry (the
+		// dev end-to-end suite lost it on k3s v1.36.5, not on v1.36.3). Put
+		// it back whenever it is missing; the patch only touches NodeHosts.
+		if _, err := ensureCoreDNSHosts(ctx, client, ip); err != nil {
+			return err
+		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
