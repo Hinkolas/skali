@@ -598,8 +598,14 @@ func TestDevEndToEnd(t *testing.T) {
 			require.Contains(t, body, "hello from skali", "the previous revision keeps serving after a failed completion")
 		}
 
+		// A completed deployment already runs this source, so dev has
+		// nothing left to deploy; a failed one is deployed again.
 		out = h.run(false, "", "dev", "-d")
-		require.Contains(t, out, "ready")
+		if settled == "completed" {
+			require.Contains(t, out, "nothing to deploy")
+		} else {
+			require.Contains(t, out, "ready")
+		}
 		h.waitRoute("hello again from skali", 5*time.Minute)
 	})
 

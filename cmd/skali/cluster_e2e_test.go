@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -82,8 +83,16 @@ func (h *installerHarness) ensureVM(name string) {
 // hostCommand runs a command on the developer machine.
 func (h *installerHarness) hostCommand(name string, args ...string) (string, int) {
 	h.t.Helper()
+	return h.hostCommandEnv(nil, name, args...)
+}
+
+// hostCommandEnv runs a command on the developer machine with env as its
+// whole environment; nil inherits this process's.
+func (h *installerHarness) hostCommandEnv(env []string, name string, args ...string) (string, int) {
+	h.t.Helper()
 	command := exec.Command(name, args...)
 	command.Dir = h.repoRoot
+	command.Env = env
 	out, err := command.CombinedOutput()
 	if exit, ok := err.(*exec.ExitError); ok {
 		return string(out), exit.ExitCode()
@@ -367,10 +376,12 @@ storage:
 	require.Contains(t, statusOut, "v0.0.0-dev (current)")
 	require.Contains(t, statusOut, "skalid healthy")
 
-	// Idempotence: a second upgrade has nothing to do.
+	// Without --image-tar, upgrading a reconciled cluster is a managed
+	// update submitted through a Skali remote. Root has none in the VM, so
+	// the bare upgrade refuses instead of acting locally.
 	repeatUpgrade, code := h.vm("sudo", "/tmp/skali", "cluster", "upgrade", "--yes")
-	require.Equal(t, 0, code, repeatUpgrade)
-	require.Contains(t, repeatUpgrade, "already current, nothing to do")
+	require.NotEqual(t, 0, code, repeatUpgrade)
+	require.Contains(t, repeatUpgrade, "select and authenticate a Skali remote first")
 
 	// Registry token protocol phase, driven with curl against the NodePort
 	// and skalid's ClusterIP (both reachable from the node without DNS or
@@ -471,19 +482,16 @@ storage:
 	require.Equal(t, 0, code, agentStatus)
 	require.Contains(t, agentStatus, "fresh")
 
-	// Server enrollment uses a one-time auth-only invitation. It carries
-	// neither the coordinator endpoint nor a k3s credential.
+	// Server enrollment uses a one-time invitation. It carries coordinator
+	// discovery hints but no k3s credential; the coordinator verifies the
+	// role and capabilities.
 	serverTokenOut, code := h.vm("sudo", "/tmp/skali", "cluster", "token", "--role", "server")
 	require.Equal(t, 0, code, serverTokenOut)
 	require.Contains(t, serverTokenOut, "one-time server invitation")
-	require.Contains(t, serverTokenOut, "authentication only")
-	var serverJoinToken string
-	for line := range strings.SplitSeq(serverTokenOut, "\n") {
-		if trimmed := strings.TrimSpace(line); strings.HasPrefix(trimmed, "skali.") {
-			serverJoinToken = trimmed
-		}
-	}
-	require.NotEmpty(t, serverJoinToken)
+	require.Contains(t, serverTokenOut, "coordinator discovery hints")
+	tokenMatch := regexp.MustCompile(`--token '(skali\.[^']+)'`).FindStringSubmatch(serverTokenOut)
+	require.NotNil(t, tokenMatch, "no join command in:\n%s", serverTokenOut)
+	serverJoinToken := tokenMatch[1]
 
 	serverTokenFile := h.writeFixtureOn(e2eAgentVM, "server-join-token", serverJoinToken+"\n")
 	h.vmOKOn(e2eAgentVM, "chmod", "600", serverTokenFile)
@@ -535,13 +543,14 @@ storage:
 	require.Contains(t, statusOut, "even count")
 
 	// Version-2 has no init owner: every active server can inspect the
-	// shared coordinator and the already-current bundle.
+	// shared coordinator, and a bare upgrade there takes the same managed
+	// path as on the first server.
 	secondStatus, code := h.vmOn(e2eAgentVM, "sudo", "/tmp/skali", "cluster", "status")
 	require.Equal(t, 0, code, secondStatus)
 	require.Contains(t, secondStatus, "converged")
 	secondUpgrade, code := h.vmOn(e2eAgentVM, "sudo", "/tmp/skali", "cluster", "upgrade", "--yes")
-	require.Equal(t, 0, code, secondUpgrade)
-	require.Contains(t, secondUpgrade, "already current, nothing to do")
+	require.NotEqual(t, 0, code, secondUpgrade)
+	require.Contains(t, secondUpgrade, "select and authenticate a Skali remote first")
 
 	// Removal is staged centrally. Apply drains and deletes membership,
 	// then the remote agent acknowledges installer-owned local cleanup.
