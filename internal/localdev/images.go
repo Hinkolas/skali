@@ -22,11 +22,11 @@ import (
 func k3sBuiltinImages() []string {
 	return []string{
 		"rancher/mirrored-pause:3.10.2",
-		"rancher/mirrored-coredns-coredns:1.14.6",
+		"rancher/mirrored-coredns-coredns:1.14.7",
 		"rancher/klipper-helm:v0.13.3-build20260727",
-		"rancher/mirrored-library-traefik:3.7.8",
+		"rancher/mirrored-library-traefik:3.7.13",
 		"rancher/klipper-lb:v0.4.17",
-		"rancher/local-path-provisioner:v0.0.36",
+		"rancher/local-path-provisioner:v0.0.37",
 		"rancher/mirrored-metrics-server:v0.9.0",
 		"rancher/mirrored-library-busybox:1.37.0",
 	}

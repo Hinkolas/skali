@@ -104,7 +104,7 @@ implementation/verification reference or an explicit, bounded decision.
 | --- | --- | --- |
 | D1 | **Before stable: update PostgreSQL 17/18 system images and assess pgvector.** Pins moved from 17.9/18.4 to 17.11/18.6 on branch `fix/postgres-patch-updates`; see [PostgreSQL patch updates](postgres-patch-updates.md#2026-10-22-179--1711-and-184--186). | Choose maintained same-major images containing at least the applicable 17.11/18.6 core fixes; scan both architectures and extension/OS packages. Verify provisioning, extensions, role isolation, SQL, logical backup/restore, and existing-pool patch upgrades. Catalog changes affect newly created pools; persisted pools retain their copied image, so demonstrate how existing installs receive the fix too. **Done:** image comparison, release-note classification, scans (below), automatic serialized pool patch updates with unit, DB and k3d live tests. **Remaining:** rehearse an upgrade from v0.1.3-rc.7 with existing pools on the old images, covering provisioning, extensions, SQL and backup/restore after the move; publish the tenant follow-ups in the release notes. |
 | D2 | **After the next RC, before stable: address registry 2.8.3 with [#242](https://github.com/Hinkolas/skali/issues/242).** | Owner decision on 2026-10-22: combine the registry dependency work with the internal-S3 storage/replaceable-replica rework; retain the current registry for the next RC. Its binary uses Go 1.20.8 and its Alpine 3.18.12 base is end of support. Scan the selected maintained image and verify existing-data migration, token auth/signatures, push/pull, import/blob mounting, cross-replica behavior and the slow authenticated upload regression. Verify this substantive change in a later RC before v0.1.3 stable. Distribution 3.1.2 is a candidate to evaluate, not an approved drop-in upgrade. |
-| D3 | **Before stable: disposition k3s and its edge/runtime dependencies.** | Inspect the k3s, containerd/runc/CNI, Traefik, CoreDNS, Helm helper, local-path and metrics-server findings. Select a supported patch bundle or document advisory-specific non-applicability; update the installer/localdev/built-in inventory together. Rehearse cluster and dev upgrades, network policies, aliases/TLS, and slow pushes. |
+| D3 | **Before stable: disposition k3s and its edge/runtime dependencies.** | Inspect the k3s, containerd/runc/CNI, Traefik, CoreDNS, Helm helper, local-path and metrics-server findings. Select a supported patch bundle or document advisory-specific non-applicability; update the installer/localdev/built-in inventory together. Rehearse cluster and dev upgrades, network policies, aliases/TLS, and slow pushes. **Done for rc.9:** k3s v1.36.5+k3s1 with Traefik 3.7.13; see [k3s and edge](#k3s-and-edge--2026-10-23). **Remaining:** rehearse the rc.8 → rc.9 upgrade and a slow authenticated push on khz. |
 | D4 | **Before stable: SeaweedFS and CNPG/cert-manager operator review.** | Scan maintained candidates/rebuilds and separate used server paths from unused bundled features. For SeaweedFS verify authenticated S3, bootstrap deny identity, credential rotation/retirement, bucket deletion/quota, restore and cancellation, and metadata/replication behavior. For operators verify bootstrap, reconciliation and ACME on the chosen versions. **Done for rc.9:** SeaweedFS 4.48 (telemetry off), CNPG 1.30.1, cert-manager 1.21.2; see [operators and object storage](#operators-and-object-storage--2026-10-23). **Remaining:** rehearse the rc.8 → rc.9 upgrade on khz. |
 | D5 | **Before a release supporting Longhorn: disposition its full image set.** | Manager/engine/instance/share/backing/support/UI and CSI images contain findings. Upgrade as a compatible set or document exact non-applicability. Verify existing-volume attach, read/write, restart, backup/restore, node disruption and upgrade. Local-path testing does not validate this driver. |
 | D6 | **Before publishing: review build infrastructure and release binaries.** | BuildKit v0.33.1, binfmt/QEMU, Node build image, CI PostgreSQL, GoReleaser and sqlc have findings. Use updated/rebuilt tools or document the actual affected command/input boundary. Record exact resolved GoReleaser/Node/action versions in the final release run. Preserve generated-store consistency when changing sqlc. **Done for rc.8:** BuildKit v0.34.1, GoReleaser pinned to v2.18.3; binfmt, Node, CI PostgreSQL and sqlc dispositioned in [candidate build inputs](#candidate-build-inputs--2026-10-22). **Remaining:** record the resolved action and Node versions from the release run. |
@@ -207,6 +207,40 @@ pool patch update, pgvector and bucket restore on SeaweedFS 4.48. The
 destructive `TestLiveClusterRestartRecovery` runs only on its own and was not
 run. A standalone 4.48 `weed server` logs its telemetry destination without the
 flag and nothing with it.
+
+### k3s and edge — 2026-10-23
+
+D3 was taken up for rc.9 with Trivy 0.76.1 (advisory database of 2026-10-22
+19:14 UTC) and govulncheck 1.7.0 in binary mode. k3s v1.36.5+k3s1 is the
+newest 1.36 patch and the `stable` channel; it stays on the installed minor,
+so managed and local clusters move in place. Counts are identical on amd64
+and arm64.
+
+| Component | Change | Evidence and decision |
+| --- | --- | --- |
+| k3s | `v1.36.3+k3s1` → `v1.36.5+k3s1` (`rancher/k3s` `sha256:057cfd5a…29bb`); installer pin, k3d image, vendored `get.k3s.io` | 0/87/76/10/3 → 0/46/73/10/3. Kubernetes 1.36.5, containerd 2.3.4-k3s1.36, runc 1.4.2. The remaining highs are Go standard-library and x/net advisories in k3s, runc, containerd's shim and the CNI plugins, x/crypto/ssh in k3s, and two `docker/docker` matches without a fix. govulncheck finds x/crypto/ssh client, server and agent symbols in the k3s binary (`ssh.Dial`, `ssh.NewServerConn`, `agent.ServeAgent`), but k3s opens no SSH listener: on the Lima server its sockets are the API server (6443), kubelet (10250), etcd, the embedded registry mirror (5001) and loopback-only ports. The refreshed install script differs from the previous copy only in Flatcar/CoreOS detection. |
+| Traefik | `3.7.8` → `3.7.13` (`sha256:f86a2cab…1259`) | 1/30/28/18/3 → 0/7/22/17/3; removes critical CVE-2026-88007. The remaining highs are Go 1.26.8 standard library, x/net and Alpine's OpenSSL. Both k3s releases ship the same upstream chart (40.1.0), and skali's `HelmChartConfig` overlay still renders: on k3d with 1.36.5 the Deployment runs with `readTimeout=30m`, cross-namespace CRD backends, router labels and the exposed metrics port. |
+| CoreDNS | `1.14.6` → `1.14.7` (`sha256:7efd3c63…a286`) | 0/33/22/1/2 → 0/22/22/1/2. |
+| local-path-provisioner | `v0.0.36` → `v0.0.37` (`sha256:e757967a…a86f`) | 0/178/145/43/3 → 0/15/13/1/0. |
+| klipper-helm | unchanged `v0.13.3-build20260727` | 0/91/80/6/5, in Helm and its helpers (Go 1.26.5, x/crypto, oras-go). k3s 1.36.5 still pins this build; newer builds exist upstream but are not part of a k3s release. It runs only as the short-lived Job that installs k3s's own Traefik chart from tarballs k3s serves itself, and exposes no listener. Kept with k3s's pin. |
+| metrics-server | unchanged `v0.9.0` | 0/20/18/4/1, Go 1.26.4 standard library and grpc. v0.9.0 is the newest release. Kept. |
+| klipper-lb, pause, busybox | unchanged | 0/0/0/0/2, 0/0/0/0/0, 0/0/0/0/0. |
+
+The built-in image list in `internal/localdev/images.go` matches the release's
+`k3s-images.txt` exactly.
+
+Verification on 2026-10-23: all Go tests with the database; `task test:live`
+on a k3d cluster recreated on 1.36.5 passed except three tests, which pass on
+rerun. Two CNPG tests started before the substrate package had installed the
+operator on the fresh cluster, and the pod-event propagation test ran while
+the Lima suite was starting; alone it passed five times with deletions visible
+after about 105 ms. `task test:cluster` installed k3s 1.36.2 on Lima and
+upgraded it to 1.36.5: k3s version, installation record, bundle re-converge,
+registry credential heal and `skalid healthy` all passed. The suite then fails
+at its repeat-upgrade step, which needs a selected Skali remote on a
+reconciled cluster; this is independent of the k3s version. The Lima server
+template grows from 30 to 40 GiB: Longhorn's 30 % reserve left 19.6 GiB
+schedulable, below the 20 GiB registry volume.
 
 ## Downloaded and local tool binaries
 
@@ -386,3 +420,7 @@ where the counts agree they are shown once for readability.
 | `quay.io/jetstack/cert-manager-cainjector:v1.21.2@sha256:c85268c64f2e0e76684bf5fe8906caff34b82523561c6affe0fae3546bd87562` (D4, 2026-10-23) | runtime | amd64, arm64 | 0/5/13/1/2 |
 | `quay.io/jetstack/cert-manager-controller:v1.21.2@sha256:70f532fd9cfde0b09d55687200942399d89838bc2d5d5b45152eb799a15912b8` (D4, 2026-10-23) | runtime | amd64, arm64 | 0/5/13/4/2 |
 | `quay.io/jetstack/cert-manager-webhook:v1.21.2@sha256:a60e2dac46dbb8a7f3df95c54ce941012f54c2fe022f0ee55aaa1ab40ed957ae` (D4, 2026-10-23) | runtime | amd64, arm64 | 0/5/13/4/2 |
+| `rancher/k3s:v1.36.5-k3s1@sha256:057cfd5a9d51b89f1f0ee139c28d5d5fdd5aa7ddeac2742a0ba90c6dbc0329bb` (D3, 2026-10-23) | runtime | amd64, arm64 | 0/46/73/10/3 |
+| `rancher/mirrored-library-traefik:3.7.13@sha256:f86a2cab1b5c649070c49f883c743dd32d8485a56e3368c5f93b9e91f1e91259` (D3, 2026-10-23) | runtime | amd64, arm64 | 0/7/22/17/3 |
+| `rancher/mirrored-coredns-coredns:1.14.7@sha256:7efd3c635b03efd68c4e8398fc45f0d993d0e9ab016f72c1cefb0fd6d01aa286` (D3, 2026-10-23) | runtime | amd64, arm64 | 0/22/22/1/2 |
+| `rancher/local-path-provisioner:v0.0.37@sha256:e757967a5ec338f6a9b371c5a9688bedaa8c3578ea3dd4db329ea0084be0a86f` (D3, 2026-10-23) | runtime | amd64, arm64 | 0/15/13/1/0 |

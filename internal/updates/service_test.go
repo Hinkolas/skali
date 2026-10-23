@@ -11,6 +11,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/Hinkolas/skali/internal/clusterstate"
+	"github.com/Hinkolas/skali/internal/installer"
 	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/layout"
 	"github.com/Hinkolas/skali/internal/store"
@@ -149,7 +150,7 @@ func managedCluster(t *testing.T, now time.Time) *Cluster {
 	state, err := clusterstate.NewSeedState("test", clusterstate.Node{
 		ID: "seed", InstallationID: "install", Name: "seed", Role: layout.RoleServer,
 		Capabilities: append([]string(nil), layout.Capabilities...),
-		K3sVersion:   "v1.36.3+k3s1", AgentVersion: "v0.1.0",
+		K3sVersion:   installer.K3sVersion, AgentVersion: "v0.1.0",
 	}, now)
 	require.NoError(t, err)
 	_, err = state.EditCandidate(now, func(_ map[string]clusterstate.RevisionNode, platform *clusterstate.PlatformState) error {

@@ -1,6 +1,6 @@
 #!/bin/sh
-# Vendored copy of https://get.k3s.io, fetched 2026-08-13 for the pinned
-# k3s release v1.36.3+k3s1. Refresh this asset whenever the pin in
+# Vendored copy of https://get.k3s.io, fetched 2026-10-23 for the pinned
+# k3s release v1.36.5+k3s1. Refresh this asset whenever the pin in
 # internal/installer/installer.go moves.
 set -e
 set -o noglob
@@ -616,8 +616,8 @@ setup_selinux() {
             rpm_site_infix=slemicro
         fi
 
-    # cover any atomic fedora flavors using rpm-ostree
-    elif  { [ "${ID:-}" = fedora ] || [ "${ID_LIKE:-}" = fedora ]; } && [ -n "${OSTREE_VERSION:-}" ]; then
+    # cover coreos derivatives like flatcar, plus any atomic fedora flavors using rpm-ostree
+    elif [ "${ID_LIKE:-}" = coreos ] || { { [ "${ID:-}" = fedora ] || [ "${ID_LIKE:-}" = fedora ]; } && [ -n "${OSTREE_VERSION:-}" ]; }; then
         rpm_target=coreos
         rpm_site_infix=coreos
         package_installer=rpm-ostree
