@@ -1,5 +1,6 @@
 import SkaliKit
 import SwiftUI
+import UIKit
 
 /// A service kind's icon on its tinted tile, with "×2" when there are more.
 struct ServiceKindBadge: View {
@@ -56,9 +57,11 @@ struct HealthDot: View {
     }
 }
 
-/// The colored tile behind a Settings row's symbol. The glyph stays about
-/// half the tile's height so wide and tall symbols keep even insets, and
-/// both scale with Dynamic Type.
+/// The colored tile behind a Settings row's symbol. SF Symbols differ in
+/// shape at one point size (person.2 is far wider than cylinder), so each
+/// glyph's point size is reduced until its area matches a square glyph's.
+/// Changing the point size, not scaling the image, keeps the stroke weight
+/// the same on every tile. Tile and glyph scale with Dynamic Type.
 struct SettingsIcon: View {
     let systemImage: String
     var tint: Color = .secondary
@@ -67,11 +70,21 @@ struct SettingsIcon: View {
 
     var body: some View {
         Image(systemName: systemImage)
-            .font(.system(size: side * 0.47, weight: .medium))
+            .font(.system(size: pointSize, weight: .medium))
             .foregroundStyle(tint)
             .frame(width: side, height: side)
             .background(tint.opacity(0.15), in: .rect(cornerRadius: side * 0.26))
             .accessibilityHidden(true)
+    }
+
+    private var pointSize: CGFloat {
+        let base = side * 0.47
+        let target = side * 0.57
+        let configuration = UIImage.SymbolConfiguration(pointSize: base, weight: .medium)
+        guard let size = UIImage(systemName: systemImage, withConfiguration: configuration)?.size,
+              size.width > 0, size.height > 0
+        else { return base }
+        return base * min(1, target / (size.width * size.height).squareRoot())
     }
 }
 
