@@ -28,6 +28,8 @@ struct LiveClusterTests {
 
     @Test func readsTheAdminOverview() async throws {
         _ = try await api.nodes()
+        _ = try await api.nodeMetrics(window: .hour)
+        _ = try await api.nodeStorage()
         _ = try await api.databasePools()
         _ = try await api.backupTarget()
         let updates = try await api.updateStatus()
