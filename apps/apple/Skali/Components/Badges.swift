@@ -9,23 +9,23 @@ struct ServiceKindBadge: View {
     let kind: ServiceKind
     let count: Int
 
-    @ScaledMetric(relativeTo: .footnote) private var height: CGFloat = 26
+    @ScaledMetric(relativeTo: .caption) private var height: CGFloat = 22
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 3) {
             Image(systemName: kind.systemImage)
                 .font(.system(
                     size: SymbolSizing.pointSize(for: kind.systemImage, base: height * 0.58, target: height * 0.64),
                     weight: .medium))
             if count > 1 {
                 Text("×\(count)")
-                    .font(.footnote.monospaced().weight(.medium))
+                    .font(.caption.monospaced().weight(.medium))
             }
         }
         .foregroundStyle(kind.tint)
-        .padding(.horizontal, count > 1 ? height * 0.26 : 0)
+        .padding(.horizontal, count > 1 ? height * 0.28 : 0)
         .frame(minWidth: height, minHeight: height)
-        .background(kind.tint.opacity(0.16), in: .rect(cornerRadius: height * 0.27))
+        .background(kind.tint.opacity(0.16), in: .rect(cornerRadius: height * 0.28))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(count) \(count == 1 ? kind.label.lowercased() : kind.pluralLabel)")
     }
@@ -37,12 +37,12 @@ struct TagChip: View {
 
     var body: some View {
         Text(text)
-            .font(.caption.monospaced())
+            .font(.caption2.monospaced())
             .foregroundStyle(.secondary)
             .lineLimit(1)
-            .padding(.horizontal, 7)
+            .padding(.horizontal, 6)
             .padding(.vertical, 2)
-            .background(.fill.tertiary, in: .rect(cornerRadius: 6))
+            .background(.fill.tertiary, in: .rect(cornerRadius: 5))
             .fixedSize()
     }
 }
@@ -54,8 +54,8 @@ struct HealthDot: View {
     var body: some View {
         Circle()
             .fill(health.tint)
-            .frame(width: 10, height: 10)
-            .padding(3)
+            .frame(width: 8, height: 8)
+            .padding(2.5)
             .background(health.tint.opacity(0.2), in: .circle)
             .accessibilityElement()
             .accessibilityLabel(health.label)

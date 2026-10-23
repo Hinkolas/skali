@@ -3,15 +3,17 @@ import SwiftUI
 
 /// One project in a list: name and environment on the first line, the
 /// service kinds, count and last activity under it, health on the right.
+/// Sized like the system's two-line list rows (Mail, Files): a headline
+/// over a caption line, at Dynamic Type's text styles.
 struct ProjectRow: View {
     let project: Project
 
     var body: some View {
         HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 6) {
                     Text(project.label)
-                        .font(.title3.weight(.semibold))
+                        .font(.headline)
                         .lineLimit(1)
                         .truncationMode(.tail)
                     environments
@@ -26,7 +28,7 @@ struct ProjectRow: View {
                 HealthDot(health: project.worstHealth)
             }
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 2)
         .accessibilityElement(children: .combine)
     }
 
@@ -44,7 +46,7 @@ struct ProjectRow: View {
     }
 
     private var details: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 4) {
             if let counts = project.summary?.serviceCounts {
                 ForEach(ServiceKind.allCases, id: \.self) { kind in
                     let count = counts.count(of: kind)
@@ -54,10 +56,10 @@ struct ProjectRow: View {
                 }
             }
             Text(detailLine)
-                .font(.footnote.monospaced())
+                .font(.caption.monospaced())
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
-                .padding(.leading, 2)
+                .padding(.leading, 3)
         }
     }
 
