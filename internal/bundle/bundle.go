@@ -74,7 +74,10 @@ const (
 	// local-path, so everything that wants replicated storage names this
 	// class explicitly.
 	StorageClassName = "skali-app"
-	RegistryImage    = "registry:2.8.3"
+	// RegistryImage is CNCF Distribution 3, which reads its config from
+	// /etc/distribution and trusts token keys from the rendered JWKS (see
+	// registrytoken.TrustedKeySet).
+	RegistryImage = "registry:3.1.2"
 	// RegistryNodePort is the stable node port the host maps its loopback
 	// registry port onto.
 	RegistryNodePort = 30500
@@ -314,6 +317,8 @@ func (p *Production) validate() error {
 		return errors.New("bundle: production profile: registry domain is required")
 	case p.TokenKeyPEM == "" || p.TokenCertPEM == "":
 		return errors.New("bundle: production profile: registry token keypair is required")
+	case !validTokenCert(p.TokenCertPEM):
+		return errors.New("bundle: production profile: registry token certificate is not an ECDSA P-256 certificate")
 	case p.NodePullSecret == "":
 		return errors.New("bundle: production profile: node pull secret is required")
 	case p.ACMEEmail == "":
@@ -781,10 +786,12 @@ func registryYAML(profile Profile) string {
 			production.RegistryDomain + "/token" +
 			"\n        service: " + registrytoken.Service +
 			"\n        issuer: " + registrytoken.Issuer +
-			"\n        rootcertbundle: /etc/skali/registry-token/cert.pem"
+			"\n        rootcertbundle: /etc/skali/registry-token/cert.pem" +
+			"\n        jwks: /etc/skali/registry-token/jwks.json"
 		certMount = "\n            - name: token-cert\n              mountPath: /etc/skali/registry-token"
 		certVolume = "\n        - name: token-cert\n          secret:\n            secretName: skali-registry-token" +
-			"\n            items:\n              - key: cert.pem\n                path: cert.pem"
+			"\n            items:\n              - key: cert.pem\n                path: cert.pem" +
+			"\n              - key: jwks.json\n                path: jwks.json"
 		tokenPrefix = registryTokenSecretYAML(production)
 		ingressSuffix = registryIngressYAML(production)
 	}
@@ -842,7 +849,7 @@ spec:
             - name: data
               mountPath: /var/lib/registry
             - name: config
-              mountPath: /etc/docker/registry%[7]s
+              mountPath: /etc/distribution%[7]s
       volumes:
         - name: data
           persistentVolumeClaim:
@@ -870,9 +877,11 @@ spec:
 
 // registryTokenSecretYAML renders the token trust material: skalid reads
 // the signing key and the node pull secret, the registry mounts only the
-// certificate. It precedes the registry Deployment in the stage so the pod
-// never waits on a missing mount.
+// certificate and the JWKS derived from it. It precedes the registry
+// Deployment in the stage so the pod never waits on a missing mount.
 func registryTokenSecretYAML(production *Production) string {
+	// validate rejected a certificate the JWKS cannot be built from.
+	jwks, _ := registrytoken.TrustedKeySet([]byte(production.TokenCertPEM))
 	return fmt.Sprintf(`apiVersion: v1
 kind: Secret
 metadata:
@@ -882,12 +891,21 @@ type: Opaque
 data:
   key.pem: %[2]s
   cert.pem: %[3]s
+  jwks.json: %[5]s
   node-secret: %[4]s
 ---
 `, Namespace,
 		base64.StdEncoding.EncodeToString([]byte(production.TokenKeyPEM)),
 		base64.StdEncoding.EncodeToString([]byte(production.TokenCertPEM)),
-		base64.StdEncoding.EncodeToString([]byte(production.NodePullSecret)))
+		base64.StdEncoding.EncodeToString([]byte(production.NodePullSecret)),
+		base64.StdEncoding.EncodeToString(jwks))
+}
+
+// validTokenCert reports whether the registry can be given a JWKS for the
+// token signing certificate.
+func validTokenCert(certPEM string) bool {
+	_, err := registrytoken.TrustedKeySet([]byte(certPEM))
+	return err == nil
 }
 
 // redirectMiddlewareYAML renders the shared skali-system redirectScheme
