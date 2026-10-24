@@ -29,9 +29,12 @@ private struct ProjectOverviewScreen: View {
     @Environment(\.openURL) private var openURL
     @State private var showingStorage = false
     @State private var confirmingRestart = false
+    @State private var confirmingStop = false
+    @State private var deletingEnvironment = false
     @State private var deploying: DeploySheet.Kind?
     @State private var accepting: IncompleteRestore?
-    @State private var actionError: String?
+    @State private var startedRun: String?
+    @State private var failure: ActionFailure?
 
     var body: some View {
         EnvironmentGate(model: model) { overview($0) }
@@ -67,10 +70,16 @@ private struct ProjectOverviewScreen: View {
                     AcceptRestoreSheet(restore: restore, environment: environment, model: model)
                 }
             }
-            .alert("Could Not Restart", isPresented: Binding { actionError != nil } set: { if !$0 { actionError = nil } }) {
+            .sheet(isPresented: $deletingEnvironment) {
+                if let environment = model.environment {
+                    DeleteEnvironmentSheet(environment: environment, model: model)
+                }
+            }
+            .navigationDestination(item: $startedRun) { RunDetailView(runID: $0, model: model) }
+            .alert(failure?.title ?? "", isPresented: Binding { failure != nil } set: { if !$0 { failure = nil } }) {
                 Button("OK") {}
             } message: {
-                Text(actionError ?? "")
+                Text(failure?.message ?? "")
             }
             .onChange(of: model.status == nil, initial: true) { openInitialSheet() }
     }
@@ -212,6 +221,22 @@ private struct ProjectOverviewScreen: View {
                 Section {
                     Button("Open in Studio", systemImage: "safari") { openURL(model.studioURL()) }
                 }
+                if let environment = model.environment {
+                    Section {
+                        Button { confirmingStop = true } label: {
+                            Text("Stop Environment…")
+                            if let reason = stopRefusal(environment) { Text(reason) }
+                            Image(systemName: "stop.circle")
+                        }
+                        .disabled(!mayDeploy || stopRefusal(environment) != nil)
+                        Button(role: .destructive) { deletingEnvironment = true } label: {
+                            Text("Delete Environment…")
+                            if let reason = deleteRefusal(environment) { Text(reason) }
+                            Image(systemName: "trash")
+                        }
+                        .disabled(!mayDeploy || deleteRefusal(environment) != nil)
+                    }
+                }
             } label: {
                 Label("More", systemImage: "ellipsis")
             }
@@ -222,6 +247,13 @@ private struct ProjectOverviewScreen: View {
                 Button("Restart Applications") { restart() }
             } message: {
                 Text("Recreates their pods with the same revision, values and images. Databases, buckets and stored data are untouched.")
+            }
+            .confirmationDialog(
+                "Stop \(model.environment?.name ?? "")?", isPresented: $confirmingStop, titleVisibility: .visible
+            ) {
+                Button("Stop Environment", role: .destructive) { stop() }
+            } message: {
+                Text("Takes the running workloads down. Values, revisions and volumes stay, and the next deploy starts the environment again.")
             }
         }
     }
@@ -251,6 +283,7 @@ private struct ProjectOverviewScreen: View {
         case "promote": deploying = .promote
         case "redeploy": deploying = .redeploy
         case "accept": accepting = status.incompleteRestore
+        case "delete": deletingEnvironment = true
         default: break
         }
         #endif
@@ -267,13 +300,30 @@ private struct ProjectOverviewScreen: View {
     private func restart() {
         Task {
             do {
-                try await model.restartApplications()
+                startedRun = try await model.restartApplications()
             } catch is CancellationError {
             } catch {
-                actionError = error.localizedDescription
+                failure = ActionFailure(title: "Could Not Restart", message: error.localizedDescription)
             }
         }
     }
+
+    private func stop() {
+        Task {
+            do {
+                startedRun = try await model.stopEnvironment()
+            } catch is CancellationError {
+            } catch {
+                failure = ActionFailure(title: "Could Not Stop", message: error.localizedDescription)
+            }
+        }
+    }
+}
+
+/// An action that could not start, for the alert.
+private struct ActionFailure {
+    let title: String
+    let message: String
 }
 
 /// A run's state beside its row: a dot and a short word.

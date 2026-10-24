@@ -89,13 +89,7 @@ struct EnvironmentGate<Content: View>: View {
                         "Environment Locked", systemImage: "lock",
                         description: Text("You can see that \(environment.name) exists, but not what runs in it. A project admin can give you access."))
                 } else if environment.state == "releasing" {
-                    ContentUnavailableView {
-                        Label("Deleting \(environment.name)", systemImage: "trash")
-                    } description: {
-                        Text("The environment and its data are being deleted.")
-                    } actions: {
-                        ProgressView()
-                    }
+                    DeletingEnvironmentView(environment: environment, model: model)
                 } else {
                     content(environment)
                 }

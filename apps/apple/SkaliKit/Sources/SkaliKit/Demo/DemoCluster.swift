@@ -58,7 +58,7 @@ public struct DemoCluster: ClusterAPI {
     }
 
     public func projects() async throws -> [Project] {
-        Self.projects
+        DemoProjects.fixtures.map { DemoProjects.project($0, environments: environments($0)) }
     }
 
     public func nodes() async throws -> [ClusterNode] {
@@ -271,5 +271,5 @@ public struct DemoCluster: ClusterAPI {
     // MARK: Fixtures
 
     /// Every project of the demo cluster (DemoProjects holds the fixtures).
-    public static let projects: [Project] = DemoProjects.fixtures.map(DemoProjects.project)
+    public static let projects: [Project] = DemoProjects.fixtures.map { DemoProjects.project($0) }
 }

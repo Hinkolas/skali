@@ -1,9 +1,10 @@
 import Foundation
 
-// Promoting and redeploying from the apps, as the Studio's promote and
-// redeploy flows do (studio/src/lib/components/run/PromoteModal.svelte,
-// RedeployModal.svelte), and the hold an incomplete restore keeps
-// (IncompleteRestoreBanner.svelte).
+// What the apps do to a whole environment, as the Studio's Actions menu
+// does (studio/src/lib/components/shell/EnvActions.svelte): promoting and
+// redeploying (run/PromoteModal.svelte, RedeployModal.svelte), stopping
+// and deleting (lib/environments.ts), and the hold an incomplete restore
+// keeps (run/IncompleteRestoreBanner.svelte).
 
 extension ClusterAPI {
     /// Starts a promotion or a redeploy: opens the deployment, checks that
@@ -98,6 +99,26 @@ public func redeployRefusal(_ environment: ProjectEnvironment, status: Environme
     if let status, status.activeRevision == nil { return "nothing is running yet" }
     if let active = runs?.first(where: \.isActive) { return "a \(active.kindLabel) is running" }
     return nil
+}
+
+/// Why the environment cannot be stopped; nil when it may be.
+public func stopRefusal(_ environment: ProjectEnvironment) -> String? {
+    if environment.role < .admin { return "admin access required" }
+    if environment.state == "down" { return "already stopped" }
+    return nil
+}
+
+/// Why the environment cannot be deleted; nil when it may be.
+public func deleteRefusal(_ environment: ProjectEnvironment) -> String? {
+    environment.role < .admin ? "admin access required" : nil
+}
+
+extension [Run] {
+    /// The delete under way: the newest purge in flight, else any run in
+    /// flight (the reconciler may not have adopted the decision yet).
+    public var deletionRun: Run? {
+        first { $0.kind == "purge" && $0.isActive } ?? first(where: \.isActive)
+    }
 }
 
 extension RevisionRef {

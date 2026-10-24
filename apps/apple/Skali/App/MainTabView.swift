@@ -93,8 +93,8 @@ extension AppTab {
     }
 
     /// Debug builds open the overview's sheet named by
-    /// `-SkaliProjectSheet <sheet>`: `promote`, `redeploy`, or `accept`
-    /// for an environment an incomplete restore holds.
+    /// `-SkaliProjectSheet <sheet>`: `promote`, `redeploy`, `delete`, or
+    /// `accept` for an environment an incomplete restore holds.
     static var initialProjectSheet: String? {
         #if DEBUG
         UserDefaults.standard.string(forKey: "SkaliProjectSheet")

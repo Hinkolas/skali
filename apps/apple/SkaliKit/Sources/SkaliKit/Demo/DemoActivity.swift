@@ -6,7 +6,8 @@ import Synchronization
 /// this launch. A run started here progresses with the clock and settles
 /// after a few seconds; a backup's snapshot appears when it succeeds, a
 /// deployment moves the environment to its revision, and a cancelled
-/// restore holds the environment down until its data is accepted.
+/// restore holds the environment down until its data is accepted. A stop
+/// takes it down until the next deployment; a delete removes it.
 public final class DemoActivity: Sendable {
     private struct Started: Sendable {
         var run: Run
@@ -46,6 +47,9 @@ public final class DemoActivity: Sendable {
         var lastPromotionTarget: String?
         /// Deployed in this launch, so its values are current.
         var valuesCurrent = false
+        /// Being deleted, and once that run settled, gone.
+        var releasing = false
+        var deleted = false
 
         var isDown: Bool { revision == nil }
     }
@@ -64,6 +68,7 @@ public final class DemoActivity: Sendable {
     func apply(_ environment: ProjectEnvironment, fixture: DemoProjects.Fixture) -> ProjectEnvironment {
         let override = state.withLock { $0.schedules[environment.id] }
         let now = environmentState(fixture, environment.name)
+        let state = now.releasing ? "releasing" : now.isDown ? "down" : "active"
         var settings = environment.settings
         if let override, let current = settings {
             settings = EnvironmentSettings(
@@ -73,8 +78,8 @@ public final class DemoActivity: Sendable {
         return ProjectEnvironment(
             id: environment.id, projectId: environment.projectId, name: environment.name,
             access: environment.access, createdAt: environment.createdAt, settings: settings,
-            lastPromotionTarget: now.lastPromotionTarget, state: now.isDown ? "down" : "active",
-            health: now.isDown ? .unknown : environment.health, healthEvaluatedAt: environment.healthEvaluatedAt)
+            lastPromotionTarget: now.lastPromotionTarget, state: state,
+            health: state == "active" ? environment.health : .unknown, healthEvaluatedAt: environment.healthEvaluatedAt)
     }
 
     func setSchedule(_ schedule: BackupSchedule?, environmentID: String) {
@@ -193,6 +198,12 @@ public final class DemoActivity: Sendable {
                 }
             case "restore-accept":
                 result.hold = nil
+            case "teardown":
+                result.revision = nil
+            case "purge":
+                result.revision = nil
+                result.releasing = true
+                result.deleted = run.status == "succeeded"
             case "deployment" where run.status != "cancelled":
                 if let revision = entry.revision {
                     result.revision = revision
@@ -309,6 +320,21 @@ public final class DemoActivity: Sendable {
                 message: "the incomplete restore is still running, or its workers have not stopped yet; the environment stays held, try again in a moment")
         }
         return start("restore-accept", fixture: fixture, environment: environment, actor: actor)
+    }
+
+    /// Stops the environment, or with `purge` deletes it; whatever runs
+    /// there is cancelled, as the daemon does.
+    func teardown(_ fixture: DemoProjects.Fixture, environment: String, purge: Bool, actor: String) throws -> Run {
+        if environmentState(fixture, environment).releasing {
+            throw APIError.server(status: 409, code: "conflict", message: "environment is already releasing")
+        }
+        let id = "\(fixture.id)/\(environment)"
+        let now = Date.now
+        let running = state.withLock { state in
+            state.started.filter { $0.environmentID == id && current($0, now: now).isActive }.map(\.run.id)
+        }
+        running.forEach(cancel)
+        return start(purge ? "purge" : "teardown", fixture: fixture, environment: environment, actor: actor)
     }
 
     private static let noActiveRevision = APIError.server(
@@ -514,6 +540,19 @@ public final class DemoActivity: Sendable {
             builder.step("resume", "Resume revision", seconds: 15)
         case "restore-accept":
             builder.step("accept", "Accept the incomplete restore's data", seconds: 0.5)
+        case "teardown":
+            builder.step("stop", "Scale workloads to zero", seconds: 100)
+            builder.step("routes", "Release routes", seconds: 25)
+        case "purge":
+            builder.step("stop", "Scale workloads to zero", seconds: 30)
+            for database in fixture.databases {
+                builder.step("drop:\(database.key)", "Drop databases.\(database.key)", service: "databases.\(database.key)", seconds: 15)
+            }
+            for bucket in fixture.buckets {
+                builder.step("empty:\(bucket.key)", "Delete buckets.\(bucket.key)", service: "buckets.\(bucket.key)", seconds: 15)
+            }
+            builder.step("namespace", "Delete the namespace and its volumes", seconds: 40)
+            builder.step("environment", "Delete the environment", seconds: 10)
         default:
             let restarts = run.deployment?.restarts
             for application in fixture.applications

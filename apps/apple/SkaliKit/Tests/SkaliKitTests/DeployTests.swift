@@ -254,6 +254,48 @@ private func object(_ text: String) -> NSDictionary {
     (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? NSDictionary ?? [:]
 }
 
+extension DeployTests {
+    // MARK: Stopping and deleting
+
+    @Test func onlyAdminsStopAndDelete() {
+        let admin = ProjectEnvironment(id: "e", projectId: "p", name: "staging")
+        #expect(stopRefusal(admin) == nil)
+        #expect(deleteRefusal(admin) == nil)
+        let stopped = ProjectEnvironment(id: "e", projectId: "p", name: "staging", state: "down")
+        #expect(stopRefusal(stopped) == "already stopped")
+        #expect(deleteRefusal(stopped) == nil)
+        let maintainer = ProjectEnvironment(id: "e", projectId: "p", name: "staging", access: "maintain")
+        #expect(stopRefusal(maintainer) == "admin access required")
+        #expect(deleteRefusal(maintainer) == "admin access required")
+
+        let purge = Run(id: "p", kind: "purge", actor: "u", status: "running", createdAt: .now)
+        let backup = Run(id: "b", kind: "backup", actor: "u", status: "running", createdAt: .now)
+        #expect([backup, purge].deletionRun?.id == "p")
+        #expect([backup].deletionRun?.id == "b")
+    }
+
+    @Test func theDemoStopsAndDeletes() async throws {
+        let demo = DemoCluster()
+        let staging = try #require(try await demo.environments(projectID: "demo-himmelreich").first { $0.name == "staging" })
+        _ = try await demo.teardownEnvironment(environmentID: staging.id, purge: false)
+        let stopped = try #require(try await demo.environments(projectID: "demo-himmelreich").first { $0.id == staging.id })
+        #expect(stopped.state == "down")
+        #expect(try await demo.environmentStatus(environmentID: staging.id).state == "down")
+
+        let runID = try await demo.teardownEnvironment(environmentID: staging.id, purge: true)
+        let deleting = try #require(try await demo.environments(projectID: "demo-himmelreich").first { $0.id == staging.id })
+        #expect(deleting.state == "releasing")
+        #expect(try await demo.runs(environmentID: staging.id).deletionRun?.id == runID)
+        // The stop it overrides is cancelled.
+        #expect(try await demo.runs(environmentID: staging.id).first { $0.kind == "teardown" }?.status == "cancelled")
+        await #expect(throws: APIError.self) {
+            try await demo.teardownEnvironment(environmentID: staging.id, purge: false)
+        }
+        let project = try #require(try await demo.projects().first { $0.id == "demo-himmelreich" })
+        #expect(project.summary?.environments.first { $0.id == staging.id }?.state == "releasing")
+    }
+}
+
 private extension [RunStep] {
     var flattenedKeys: [String] {
         flatMap { [$0.key] + ($0.children ?? []).flattenedKeys }

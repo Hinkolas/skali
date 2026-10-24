@@ -224,11 +224,35 @@ final class ProjectModel {
 
     // MARK: Actions
 
-    /// Recreates every application's pods with what is deployed.
-    func restartApplications() async throws {
-        guard let id = environment?.id else { return }
-        _ = try await session.gated { try await self.api.restartEnvironment(environmentID: id) }
+    /// Recreates every application's pods with what is deployed; returns
+    /// the run to follow.
+    func restartApplications() async throws -> String {
+        guard let id = environment?.id else { throw CancellationError() }
+        let runID = try await session.gated { try await self.api.restartEnvironment(environmentID: id) }
         await loadEnvironment()
+        return runID
+    }
+
+    /// Takes the environment on screen down until the next deploy;
+    /// returns the run to follow.
+    func stopEnvironment() async throws -> String {
+        guard let id = environment?.id else { throw CancellationError() }
+        let runID = try await session.gated { try await self.api.teardownEnvironment(environmentID: id, purge: false) }
+        await refresh()
+        return runID
+    }
+
+    /// Deletes the environment on screen with everything it holds; its
+    /// pages show the delete until it is gone.
+    func deleteEnvironment() async throws {
+        guard let id = environment?.id else { throw CancellationError() }
+        _ = try await session.gated { try await self.api.teardownEnvironment(environmentID: id, purge: true) }
+        await refresh()
+    }
+
+    /// The run deleting an environment, while it does.
+    func deletionRun(of environment: ProjectEnvironment) async -> Run? {
+        try? await api.runs(environmentID: environment.id).deletionRun
     }
 
     /// Snapshots the environment on screen; returns the run to follow.

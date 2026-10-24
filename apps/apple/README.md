@@ -59,9 +59,9 @@ Launch arguments (Edit Scheme > Run > Arguments):
   that name once the list has loaded; `-SkaliProjectRoute deployments` (or
   `backups`, or a service as `application:<key>`, `database:<key>` or
   `bucket:<key>`) goes on to that page. `-SkaliEnvironment staging` shows
-  that environment, and `-SkaliProjectSheet promote` (or `redeploy`, or
-  `accept` where a failed restore holds the environment, as in the demo's
-  `nordlicht-api` staging) opens that sheet on the overview.
+  that environment, and `-SkaliProjectSheet promote` (or `redeploy`,
+  `delete`, or `accept` where a failed restore holds the environment, as in
+  the demo's `nordlicht-api` staging) opens that sheet on the overview.
 - `-SkaliRoute softwareUpdate` (Debug builds only) pushes a Settings screen:
   `account`, `users`, `nodes`, `databases`, `backups`, `softwareUpdate`,
   `node:<name>` for one node, `pool:<name>` for one database pool, or

@@ -31,6 +31,11 @@ public protocol ClusterAPI: Sendable {
     func restartEnvironment(environmentID: String) async throws -> String
     /// The environment's status document, once.
     func environmentStatus(environmentID: String) async throws -> EnvironmentStatus
+    /// Environment admin, sudo: stops the environment (its workloads go
+    /// down; values, revisions and volumes stay, and the next deploy
+    /// starts it again), or with `purge` deletes it with everything it
+    /// holds. Returns the run's id.
+    func teardownEnvironment(environmentID: String, purge: Bool) async throws -> String
 
     // MARK: Deploying
 
@@ -229,6 +234,12 @@ extension APIClient: ClusterAPI {
 
     public func environmentStatus(environmentID: String) async throws -> EnvironmentStatus {
         try await get("v1/environments/\(environmentID)/status")
+    }
+
+    public func teardownEnvironment(environmentID: String, purge: Bool) async throws -> String {
+        let response: RunStarted = try await post(
+            "v1/environments/\(environmentID)/teardown", body: TeardownRequest(purge: purge))
+        return response.runId
     }
 
     public func planDeployment(environmentID: String, from source: DeploySource) async throws -> DeployPlan {
@@ -512,6 +523,10 @@ private struct DevicePollRequest: Encodable {
 
 private struct RestoreRequest: Encodable {
     let snapshotId: String
+}
+
+private struct TeardownRequest: Encodable {
+    let purge: Bool
 }
 
 private struct AcceptRequest: Encodable {

@@ -117,13 +117,13 @@ enum DemoProjects {
 
     // MARK: Documents
 
-    static func project(_ fixture: Fixture) -> Project {
+    static func project(_ fixture: Fixture, environments: [ProjectEnvironment]? = nil) -> Project {
         let activity = fixture.activity
         return Project(
             id: fixture.id, name: fixture.name, createdAt: activity.addingTimeInterval(-30 * 86_400),
             updatedAt: activity, access: ProjectAccess(role: "admin", member: true),
             summary: ProjectSummary(
-                environments: environments(fixture).map { environment in
+                environments: (environments ?? Self.environments(fixture)).map { environment in
                     SummaryEnvironment(
                         id: environment.id, name: environment.name, priority: environment.settings?.priority,
                         state: environment.state, health: environment.health)
@@ -323,7 +323,15 @@ enum DemoProjects {
 extension DemoCluster {
     public func environments(projectID: String) async throws -> [ProjectEnvironment] {
         let fixture = try fixture(projectID)
-        return DemoProjects.environments(fixture).map { activity.apply($0, fixture: fixture) }
+        return environments(fixture)
+    }
+
+    /// The fixture's environments as this launch left them; deleted ones
+    /// are gone.
+    func environments(_ fixture: DemoProjects.Fixture) -> [ProjectEnvironment] {
+        DemoProjects.environments(fixture)
+            .filter { !activity.environmentState(fixture, $0.name).deleted }
+            .map { activity.apply($0, fixture: fixture) }
     }
 
     public func projectDraft(projectID: String) async throws -> ProjectDraft? {
@@ -378,6 +386,11 @@ extension DemoCluster {
             }
             continuation.onTermination = { _ in task.cancel() }
         }
+    }
+
+    public func teardownEnvironment(environmentID: String, purge: Bool) async throws -> String {
+        let (fixture, environment) = try fixture(environmentID: environmentID)
+        return try activity.teardown(fixture, environment: environment, purge: purge, actor: user.id).id
     }
 
     public func environmentStatus(environmentID: String) async throws -> EnvironmentStatus {
