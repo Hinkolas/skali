@@ -39,8 +39,16 @@ in `Config/Local.xcconfig`, which git ignores:
 DEVELOPMENT_TEAM = ABCDE12345
 ```
 
-Do not pick the team under Signing & Capabilities: Xcode writes that choice
-into `project.pbxproj`, where it would be committed.
+If your signing setup needs a different bundle identifier, add it to the same
+file:
+
+```
+PRODUCT_BUNDLE_IDENTIFIER = dev.example.skali
+```
+
+The shared default is `dev.kilohertz.skali`. Do not change the team or bundle
+identifier under Signing & Capabilities: Xcode writes those choices into
+`project.pbxproj`, which can block later pulls. Use `Local.xcconfig` instead.
 
 Launch arguments (Edit Scheme > Run > Arguments):
 

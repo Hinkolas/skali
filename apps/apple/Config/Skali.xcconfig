@@ -2,9 +2,16 @@
 // settings in the project still apply on top).
 //
 // Signing is per developer and stays out of the repository: put your team
-// in Config/Local.xcconfig, which git ignores, for example
+// and any personal bundle identifier in Config/Local.xcconfig, which git
+// ignores, for example
 //
 //     DEVELOPMENT_TEAM = ABCDE12345
+//     PRODUCT_BUNDLE_IDENTIFIER = dev.example.skali
 //
 // Simulator builds need no team.
+
+// Keep the default here so Local.xcconfig can override it. A target-level
+// value in project.pbxproj would take precedence over both files.
+PRODUCT_BUNDLE_IDENTIFIER = dev.kilohertz.skali
+
 #include? "Local.xcconfig"
