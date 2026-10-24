@@ -1,100 +1,116 @@
 <script lang="ts">
 	import { invalidateAll } from '$app/navigation';
 	import Archive from '@lucide/svelte/icons/archive';
-	import CircleCheck from '@lucide/svelte/icons/circle-check';
-	import CircleDashed from '@lucide/svelte/icons/circle-dashed';
+	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
 	import { api, ApiError } from '$lib/api/client';
-	import { formatDateTime, relativeTime } from '$lib/format';
+	import { deferred } from '$lib/deferred.svelte';
+	import { formatBytes, formatDateTime, relativeTime } from '$lib/format';
+	import type { StatCardData } from '$lib/models/view';
 	import { dialog } from '$lib/stores/dialog.svelte';
+	import { modal } from '$lib/stores/modal.svelte';
 	import { toast } from '$lib/stores/toast.svelte';
-	import type { BackupTarget, BackupTargetInput } from '$lib/types/backups';
+	import { failingNow, type BackupTarget } from '$lib/types/backups';
 	import PageHeader from '$lib/components/shell/PageHeader.svelte';
+	import BackupTargetModal, {
+		modalOptions as backupTargetModalOptions
+	} from '$lib/components/system/BackupTargetModal.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
 	import Card from '$lib/components/ui/Card.svelte';
-	import Field from '$lib/components/ui/Field.svelte';
-	import SecretInput from '$lib/components/ui/SecretInput.svelte';
-	import TextInput from '$lib/components/ui/TextInput.svelte';
+	import EmptyState from '$lib/components/ui/EmptyState.svelte';
+	import KeyValueRow from '$lib/components/ui/KeyValueRow.svelte';
+	import Pill from '$lib/components/ui/Pill.svelte';
+	import ProgressBar from '$lib/components/ui/ProgressBar.svelte';
+	import Skeleton from '$lib/components/ui/Skeleton.svelte';
+	import StatCard from '$lib/components/ui/StatCard.svelte';
 	import type { PageData } from './$types';
 
+	// Backups at a glance: whether the bucket answers, what it holds, and how
+	// backups have been running, with the target's settings below. The
+	// target is edited in a modal; without one the page offers to set it.
 	let { data }: { data: PageData } = $props();
 
-	// The form edits a copy of the stored target; the secret is write-only,
-	// so it starts empty and a save without it fails server-side rather
-	// than silently blanking the stored key.
-	const stored = $derived<BackupTarget | null>(data.target);
-	let form = $state<BackupTargetInput>(blank());
-	let busy = $state<'save' | 'remove' | null>(null);
-	let errorMessage = $state('');
-
-	function blank(): BackupTargetInput {
-		return {
-			endpoint: '',
-			region: '',
-			bucket: '',
-			prefix: '',
-			access_key_id: '',
-			secret_access_key: ''
-		};
-	}
-	function seed(target: BackupTarget | null) {
-		form = target
-			? {
-					endpoint: target.endpoint,
-					region: target.region,
-					bucket: target.bucket,
-					prefix: target.prefix,
-					access_key_id: target.access_key_id,
-					secret_access_key: ''
-				}
-			: blank();
-	}
-	$effect(() => seed(stored));
-
-	const dirty = $derived(
-		!stored ||
-			form.endpoint !== stored.endpoint ||
-			form.region !== stored.region ||
-			form.bucket !== stored.bucket ||
-			form.prefix !== stored.prefix ||
-			form.access_key_id !== stored.access_key_id ||
-			form.secret_access_key !== ''
+	const target = $derived(data.target);
+	const summaryState = deferred(() => data.summary);
+	// A summary for an older target (a reload in flight after an edit) is
+	// not shown against the new one.
+	const summary = $derived(
+		summaryState.value && target && summaryState.value.target.updated_at === target.updated_at
+			? summaryState.value
+			: null
 	);
-	const complete = $derived(
-		!!form.endpoint.trim() &&
-			!!form.bucket.trim() &&
-			!!form.access_key_id.trim() &&
-			!!form.secret_access_key
-	);
-	const saveTitle = $derived.by(() => {
-		if (!form.endpoint.trim() || !form.bucket.trim() || !form.access_key_id.trim()) {
-			return 'endpoint, bucket, and access key id are required';
-		}
-		if (!form.secret_access_key) return 'enter the secret access key to save';
-		return undefined;
+	const loadingSummary = $derived(summaryState.pending && summary === null);
+
+	let removing = $state(false);
+
+	const status = $derived.by(() => {
+		if (!target) return null;
+		if (loadingSummary) return { text: 'checking', tone: 'neutral' as const };
+		if (!summary) return { text: 'configured', tone: 'neutral' as const };
+		return summary.reachable
+			? { text: 'connected', tone: 'success' as const }
+			: { text: 'unreachable', tone: 'danger' as const };
 	});
 
-	async function save() {
-		if (!complete) return;
-		busy = 'save';
-		errorMessage = '';
+	const endpointHost = $derived.by(() => {
+		if (!target) return '';
 		try {
-			await api.put('/v1/system/backup-target', {
-				...form,
-				endpoint: form.endpoint.trim(),
-				region: form.region.trim(),
-				bucket: form.bucket.trim(),
-				prefix: form.prefix.trim(),
-				access_key_id: form.access_key_id.trim()
-			});
-			toast.success('Backup target saved', {
-				description: 'Snapshots and schedules write to it from now on.'
-			});
-			await invalidateAll();
-		} catch (err) {
-			errorMessage = err instanceof ApiError ? err.message : 'Could not save the backup target.';
-		} finally {
-			busy = null;
+			return new URL(target.endpoint).host;
+		} catch {
+			return target.endpoint;
 		}
+	});
+
+	const stats = $derived.by((): StatCardData[] => {
+		if (!summary) return [];
+		const snapshots = summary.snapshots;
+		const last = summary.runs.last_succeeded;
+		const projects = snapshots?.projects.length ?? 0;
+		return [
+			{
+				label: 'STORED',
+				value: snapshots ? formatBytes(snapshots.bytes) : 'n/a',
+				note: snapshots ? 'in snapshots' : 'bucket did not answer'
+			},
+			{
+				label: 'SNAPSHOTS',
+				value: snapshots ? `${snapshots.count}` : 'n/a',
+				note: snapshots
+					? `${projects} ${projects === 1 ? 'project' : 'projects'}`
+					: 'bucket did not answer'
+			},
+			{
+				label: 'LAST BACKUP',
+				value: last ? relativeTime(last.finished_at) : 'never',
+				note: last ? `${last.project} · ${last.environment}` : 'no backup yet'
+			}
+		];
+	});
+
+	// The last failure is worth a line while backups are failing, or while it
+	// falls in the counted window.
+	const lastFailure = $derived.by(() => {
+		const failed = summary?.runs.last_failed;
+		if (!summary || !failed) return null;
+		const recent = Date.parse(failed.finished_at) > Date.parse(summary.runs.since);
+		return failingNow(summary) || recent ? failed : null;
+	});
+
+	const running = $derived.by(() => {
+		if (!summary) return '';
+		const { backing_up: backups, restoring: restores } = summary.runs;
+		const parts: string[] = [];
+		if (backups > 0) parts.push(backups === 1 ? '1 backup' : `${backups} backups`);
+		if (restores > 0) parts.push(restores === 1 ? '1 restore' : `${restores} restores`);
+		return parts.join(', ');
+	});
+
+	async function editTarget(current: BackupTarget | null) {
+		const saved = await modal.open<boolean>(
+			BackupTargetModal,
+			{ target: current },
+			backupTargetModalOptions
+		).result;
+		if (saved) await invalidateAll();
 	}
 
 	function remove() {
@@ -106,7 +122,7 @@
 			confirmLabel: 'Remove target',
 			variant: 'danger',
 			onConfirm: async () => {
-				busy = 'remove';
+				removing = true;
 				try {
 					await api.del('/v1/system/backup-target');
 					toast.success('Backup target removed');
@@ -115,7 +131,7 @@
 					toast.error(err instanceof ApiError ? err.message : 'Could not remove the backup target');
 					throw err;
 				} finally {
-					busy = null;
+					removing = false;
 				}
 			}
 		});
@@ -123,147 +139,215 @@
 </script>
 
 <svelte:head>
-	<title>Backup target — Skali</title>
+	<title>Backups — Skali</title>
 </svelte:head>
 
-<PageHeader title="Backup target">
+<PageHeader title="Backups">
+	{#snippet titleTrailing()}
+		{#if status}
+			<Pill text={status.text} tone={status.tone} />
+		{/if}
+	{/snippet}
 	{#snippet subtitle()}
-		<span>The external S3 location every snapshot goes to</span>
+		{#if target}
+			<span class="font-mono text-text-faint text-md">{endpointHost}/{target.bucket}</span>
+		{:else}
+			<span>Snapshots go to an S3 bucket you own, off the cluster</span>
+		{/if}
 	{/snippet}
 	{#snippet actions()}
-		{#if stored}
-			<Button variant="ghost" onclick={remove} busy={busy === 'remove'} disabled={busy != null}>
-				Remove target
-			</Button>
+		{#if target}
+			<Button variant="ghost" onclick={remove} busy={removing}>Remove target</Button>
+			<Button onclick={() => editTarget(target)}>Edit target</Button>
 		{/if}
-		<Button
-			variant="primary"
-			onclick={save}
-			busy={busy === 'save'}
-			disabled={busy != null || !dirty || !complete}
-			title={saveTitle}
-		>
-			{stored ? 'Save changes' : 'Set target'}
-		</Button>
 	{/snippet}
 </PageHeader>
 
-<div class="grid grid-cols-1 gap-3.5 pb-6 @4xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
-	<Card class="p-5">
-		{#if errorMessage}
-			<div
-				class="border-status-danger/40 bg-status-danger/10 text-status-danger mb-4 rounded-[11px] border px-4 py-3 text-base"
-			>
-				{errorMessage}
-			</div>
-		{/if}
-		<form
-			class="flex flex-col gap-4"
-			onsubmit={(e) => {
-				e.preventDefault();
-				void save();
-			}}
+{#if !target}
+	<div class="pb-6">
+		<EmptyState
+			icon={Archive}
+			title="No backup target"
+			description="configure one to back up environments and restore them; until then backups and schedules idle"
 		>
-			<Field
-				label="Endpoint"
-				description="http or https URL of the S3 API, for example https://s3.eu-central-1.amazonaws.com"
-			>
-				<TextInput
-					bind:value={form.endpoint}
-					mono
-					placeholder="https://s3.example.com"
-					autocomplete="off"
-				/>
-			</Field>
-			<div class="grid grid-cols-1 gap-4 @xl:grid-cols-2">
-				<Field label="Bucket">
-					<TextInput bind:value={form.bucket} mono placeholder="skali-backups" autocomplete="off" />
-				</Field>
-				<Field label="Region" description="Leave empty when the provider does not use regions.">
-					<TextInput bind:value={form.region} mono placeholder="eu-central-1" autocomplete="off" />
-				</Field>
-			</div>
-			<Field
-				label="Prefix"
-				description="Optional key prefix inside the bucket; snapshots live under <prefix>/skali/v1/<project>/<environment>/."
-			>
-				<TextInput bind:value={form.prefix} mono placeholder="prod" autocomplete="off" />
-			</Field>
-			<div class="grid grid-cols-1 gap-4 @xl:grid-cols-2">
-				<Field label="Access key id">
-					<TextInput
-						bind:value={form.access_key_id}
-						mono
-						placeholder="AKIA..."
-						autocomplete="off"
-					/>
-				</Field>
-				<Field
-					label="Secret access key"
-					description={stored
-						? 'Stored and write-only; enter it again to save any change.'
-						: 'Stored encrypted; never shown again.'}
-				>
-					<SecretInput
-						label="Secret access key"
-						bind:value={form.secret_access_key}
-						placeholder={stored ? '•••••••••••• stored' : 'secret access key'}
-					/>
-				</Field>
-			</div>
-			<button type="submit" class="hidden" aria-hidden="true" tabindex="-1"></button>
-		</form>
-	</Card>
-
-	<Card class="p-5">
-		<div class="flex items-center gap-3">
-			<div
-				class="grid size-9 flex-none place-items-center rounded-[11px] {stored
-					? 'bg-status-success/12 text-status-success'
-					: 'bg-white/6 text-text-tertiary'}"
-			>
-				{#if stored}
-					<CircleCheck size={17} strokeWidth={1.75} />
-				{:else}
-					<CircleDashed size={17} strokeWidth={1.75} />
+			{#snippet action()}
+				<Button variant="primary" onclick={() => editTarget(null)}>Set backup target</Button>
+			{/snippet}
+		</EmptyState>
+	</div>
+{:else}
+	{#if summary && !summary.reachable}
+		<div
+			class="border-status-danger/40 bg-status-danger/10 mb-6.5 flex items-start gap-3 rounded-[15px] border px-5 py-4"
+		>
+			<TriangleAlert size={18} class="text-status-danger mt-0.5 flex-none" />
+			<div class="flex min-w-0 flex-1 flex-col gap-1">
+				<span class="text-text-primary text-lg font-medium">The bucket does not answer</span>
+				{#if summary.unreachable_reason}
+					<span class="font-mono text-status-danger text-sm break-words">
+						{summary.unreachable_reason}
+					</span>
 				{/if}
+				<span class="text-text-muted text-md">
+					Backups and restores fail until it does. Check the endpoint, the bucket and the
+					credentials.
+				</span>
 			</div>
-			<div class="min-w-0">
-				<h2 class="text-text-primary text-lg font-semibold">
-					{stored ? 'Target configured' : 'No target yet'}
-				</h2>
-				<p class="text-text-muted text-md">
-					{#if stored}
-						<span class="font-mono">{stored.endpoint}/{stored.bucket}</span>
-						· updated {relativeTime(stored.updated_at)}
-					{:else}
-						backups and schedules idle until one is set
-					{/if}
-				</p>
-			</div>
+			<Button size="sm" onclick={() => editTarget(target)}>Edit target</Button>
 		</div>
-		<div class="text-text-muted mt-4 flex flex-col gap-2.5 text-md">
-			<p>
-				Every project's snapshots, manual and scheduled, are written here under
+	{/if}
+
+	{#if loadingSummary}
+		<div class="mb-6.5 grid grid-cols-1 gap-3.5 @2xl:grid-cols-3">
+			{#each [0, 1, 2] as i (i)}
+				<Skeleton variant="card" />
+			{/each}
+		</div>
+	{:else if stats.length > 0}
+		<div class="mb-6.5 grid grid-cols-1 gap-3.5 @2xl:grid-cols-3">
+			{#each stats as stat (stat.label)}
+				<StatCard {stat} />
+			{/each}
+		</div>
+	{/if}
+
+	<div class="grid grid-cols-1 gap-3.5 pb-6 @4xl:grid-cols-2">
+		{#if summary}
+			<Card class="flex flex-col p-5">
+				<div class="mb-3.5 flex items-baseline gap-2.5">
+					<h3 class="text-text-primary text-xl font-semibold">Last 7 days</h3>
+					<span class="font-mono text-text-faint text-xs">
+						since {formatDateTime(summary.runs.since)}
+					</span>
+				</div>
+				<div class="flex flex-col">
+					<KeyValueRow k="Succeeded" v={`${summary.runs.succeeded}`} labelWidth="w-44" />
+					<div class="border-border-subtle flex items-baseline gap-3 border-b py-2">
+						<div class="text-text-faint w-44 flex-none text-md">Failed</div>
+						<div
+							class="font-mono text-md {summary.runs.failed > 0
+								? 'text-status-danger'
+								: 'text-text-secondary'}"
+						>
+							{summary.runs.failed}
+						</div>
+					</div>
+					{#if running}
+						<KeyValueRow k="Running now" v={running} labelWidth="w-44" />
+					{/if}
+					<KeyValueRow
+						k="Automatic backups"
+						v={`${summary.schedules.scheduled} of ${summary.schedules.environments} environments`}
+						labelWidth="w-44"
+					/>
+				</div>
+				{#if lastFailure}
+					<div
+						class="border-status-danger/25 bg-status-danger/5 mt-3.5 flex flex-col gap-1 rounded-[11px] border px-4 py-3"
+					>
+						<div class="flex items-baseline justify-between gap-3">
+							<span class="text-text-primary text-md font-medium">Last failure</span>
+							<span class="text-text-muted text-sm">{relativeTime(lastFailure.finished_at)}</span>
+						</div>
+						<span class="font-mono text-text-muted text-sm">
+							{lastFailure.project} · {lastFailure.environment}
+						</span>
+						{#if lastFailure.error}
+							<span class="font-mono text-status-danger text-xs break-words">
+								{lastFailure.error}
+							</span>
+						{/if}
+					</div>
+				{/if}
+				<p class="text-text-faint mt-auto pt-3.5 text-sm">
+					Automatic backups are scheduled per environment in its settings: a cron schedule (UTC) and
+					a retention window.
+				</p>
+			</Card>
+		{/if}
+
+		<Card class="flex flex-col p-5">
+			<h3 class="text-text-primary mb-3.5 text-xl font-semibold">Target</h3>
+			<div class="flex flex-col">
+				<KeyValueRow k="Endpoint" v={target.endpoint} labelWidth="w-36" />
+				<KeyValueRow k="Region" v={target.region || '—'} labelWidth="w-36" />
+				<KeyValueRow k="Bucket" v={target.bucket} labelWidth="w-36" />
+				<KeyValueRow k="Prefix" v={target.prefix || '—'} labelWidth="w-36" />
+				<KeyValueRow k="Access key id" v={target.access_key_id} labelWidth="w-36" />
+				<KeyValueRow k="Secret access key" v="stored encrypted" labelWidth="w-36" />
+				<KeyValueRow k="Last changed" v={formatDateTime(target.updated_at)} labelWidth="w-36" />
+			</div>
+			<p class="text-text-faint mt-auto pt-3.5 text-sm">
+				Every project's snapshots are written under
 				<span class="font-mono">skali/v1/&lt;project&gt;/&lt;environment&gt;/</span>. The layout is
 				self-describing: a fresh installation pointed at the same bucket lists and restores them.
 			</p>
-			<p>
-				Automatic backups are scheduled per environment in its settings: a cron schedule (UTC) and a
-				retention window. Snapshots a schedule takes expire past retention, the newest is always
-				kept; manual snapshots stay until someone deletes them.
-			</p>
-			{#if stored}
-				<p class="text-text-faint text-sm">
-					Set {formatDateTime(stored.created_at)} · credentials are stored encrypted and never returned.
+		</Card>
+
+		{#if summary?.snapshots}
+			{@const snapshots = summary.snapshots}
+			<Card class="flex flex-col p-5">
+				<h3 class="text-text-primary mb-3.5 text-xl font-semibold">By project</h3>
+				{#if snapshots.projects.length === 0}
+					<p class="text-text-muted text-md">No snapshots yet.</p>
+				{:else}
+					<div class="flex flex-col">
+						{#each snapshots.projects as project (project.project)}
+							<div class="border-border-subtle flex flex-col gap-1.5 border-b py-2.5 last:border-0">
+								<div class="flex items-baseline justify-between gap-3">
+									<span class="font-mono text-text-secondary truncate text-md">
+										{project.project}
+									</span>
+									<span class="font-mono text-text-primary flex-none text-md">
+										{formatBytes(project.bytes)}
+									</span>
+								</div>
+								<ProgressBar
+									pct={snapshots.bytes > 0 ? (project.bytes / snapshots.bytes) * 100 : 0}
+									class="bg-service-storage"
+								/>
+								<span class="text-text-faint text-sm">
+									{project.count === 1 ? '1 snapshot' : `${project.count} snapshots`} · newest
+									{relativeTime(project.newest_at)}
+								</span>
+							</div>
+						{/each}
+					</div>
+				{/if}
+				<p class="text-text-faint mt-auto pt-3.5 text-sm">
+					Snapshots are listed and restored per project on its Backups tab.
 				</p>
-			{/if}
-		</div>
-		<div class="mt-4 flex items-center gap-2">
-			<Archive size={14} class="text-text-ghost" />
-			<span class="text-text-muted text-sm"
-				>Snapshots are listed and restored per project on its Backups tab.</span
-			>
-		</div>
-	</Card>
-</div>
+			</Card>
+
+			<Card class="flex flex-col p-5">
+				<h3 class="text-text-primary mb-3.5 text-xl font-semibold">Snapshots</h3>
+				<div class="flex flex-col">
+					<KeyValueRow k="Scheduled" v={`${snapshots.scheduled}`} labelWidth="w-56" />
+					<KeyValueRow k="Manual" v={`${snapshots.manual}`} labelWidth="w-56" />
+					{#if snapshots.orphaned > 0}
+						<KeyValueRow
+							k="From deleted environments"
+							v={`${snapshots.orphaned}`}
+							labelWidth="w-56"
+						/>
+					{/if}
+					<KeyValueRow
+						k="Oldest"
+						v={snapshots.oldest_at ? formatDateTime(snapshots.oldest_at) : '—'}
+						labelWidth="w-56"
+					/>
+					<KeyValueRow
+						k="Newest"
+						v={snapshots.newest_at ? formatDateTime(snapshots.newest_at) : '—'}
+						labelWidth="w-56"
+					/>
+				</div>
+				<p class="text-text-faint mt-auto pt-3.5 text-sm">
+					Counted from the snapshots' manifests {relativeTime(summary.checked_at)}. Scheduled
+					snapshots expire under their environment's retention, the newest is always kept; manual
+					ones stay until deleted.
+				</p>
+			</Card>
+		{/if}
+	</div>
+{/if}

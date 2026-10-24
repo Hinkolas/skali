@@ -33,6 +33,55 @@ export interface BackupTarget {
 	updated_at: string;
 }
 
+/** One finished backup run; error is set on a failure. */
+export interface BackupRunInfo {
+	project: string;
+	environment: string;
+	finished_at: string;
+	error?: string;
+}
+
+/** GET /v1/system/backup-target/summary: the target at a glance. */
+export interface BackupTargetSummary {
+	target: BackupTarget;
+	reachable: boolean;
+	/** Why the bucket did not answer; absent while it does. */
+	unreachable_reason?: string;
+	checked_at: string;
+	/** What the bucket's snapshot manifests hold; null while it does not answer. */
+	snapshots: {
+		count: number;
+		bytes: number;
+		manual: number;
+		scheduled: number;
+		/** Snapshots of environments the control plane no longer has. */
+		orphaned: number;
+		oldest_at: string | null;
+		newest_at: string | null;
+		/** Largest first. */
+		projects: { project: string; count: number; bytes: number; newest_at: string }[];
+	} | null;
+	runs: {
+		/** Where the succeeded and failed counts start. */
+		since: string;
+		succeeded: number;
+		failed: number;
+		backing_up: number;
+		restoring: number;
+		last_succeeded: BackupRunInfo | null;
+		last_failed: BackupRunInfo | null;
+	};
+	schedules: { environments: number; scheduled: number };
+}
+
+/** A failure newer than the newest success: backups need a look. */
+export function failingNow(summary: BackupTargetSummary): boolean {
+	const failed = summary.runs.last_failed;
+	if (!failed) return false;
+	const succeeded = summary.runs.last_succeeded;
+	return !succeeded || Date.parse(failed.finished_at) > Date.parse(succeeded.finished_at);
+}
+
 export interface BackupTargetInput {
 	endpoint: string;
 	region: string;
