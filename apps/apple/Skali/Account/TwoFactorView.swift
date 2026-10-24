@@ -163,7 +163,7 @@ private struct TwoFactorSetupView: View {
                 if let error {
                     Text(error).foregroundStyle(.red)
                 } else {
-                    Text("Enter the code your authenticator shows for skali to finish turning on two-factor authentication.")
+                    Text("Enter the code your authenticator shows for Skali to finish turning on two-factor authentication.")
                 }
             }
         }

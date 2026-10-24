@@ -2,10 +2,10 @@ import assert from 'node:assert/strict';
 import { test } from 'vitest';
 import { describeUserAgent } from '../src/lib/useragent.ts';
 
-test('recognizes the skali CLI with its host', () => {
+test('recognizes the Skali CLI with its host', () => {
 	assert.deepEqual(describeUserAgent('skali/v0.1.3-rc.3 (KiloHertz-Mac-Mini)'), {
 		kind: 'cli',
-		label: 'skali CLI v0.1.3-rc.3',
+		label: 'Skali CLI v0.1.3-rc.3',
 		host: 'KiloHertz-Mac-Mini',
 		mobile: false,
 		tablet: false
@@ -16,12 +16,12 @@ test('recognizes the skali CLI with its host', () => {
 test('recognizes the Apple app on iPhone and iPad', () => {
 	const phone = describeUserAgent('skali-ios/0.1.0 (iPhone; iOS 27.1)');
 	assert.equal(phone?.kind, 'app');
-	assert.equal(phone?.label, 'skali for iOS');
+	assert.equal(phone?.label, 'Skali for iOS');
 	assert.equal(phone?.host, 'iPhone');
 	assert.equal(phone?.tablet, false);
 
 	const pad = describeUserAgent('skali-ios/0.1.0 (iPad; iPadOS 27.1)');
-	assert.equal(pad?.label, 'skali for iPadOS');
+	assert.equal(pad?.label, 'Skali for iPadOS');
 	assert.equal(pad?.tablet, true);
 	assert.equal(pad?.mobile, true);
 });

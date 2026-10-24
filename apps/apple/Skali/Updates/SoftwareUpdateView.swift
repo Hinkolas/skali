@@ -91,7 +91,7 @@ struct SoftwareUpdateView: View {
             }
         } footer: {
             if let url = status.installed.url.flatMap(URL.init(string:)) {
-                Text("Every skali CLI that talks to this cluster fetches \(status.installed.version) on first contact. [Release page](\(url.absoluteString))")
+                Text("Every Skali CLI that talks to this cluster fetches \(status.installed.version) on first contact. [Release page](\(url.absoluteString))")
             }
         }
     }
@@ -128,7 +128,7 @@ struct SoftwareUpdateView: View {
                 Text(actionFooter(status))
             }
             .confirmationDialog(
-                "\(summary.action == .finish ? "Finish the update to" : "Update to") skali \(displayVersion(summary.targetVersion ?? ""))?",
+                "\(summary.action == .finish ? "Finish the update to" : "Update to") Skali \(displayVersion(summary.targetVersion ?? ""))?",
                 isPresented: $confirmingUpdate, titleVisibility: .visible
             ) {
                 Button(summary.action.title) {

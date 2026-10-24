@@ -160,7 +160,7 @@ the remote platform restarts during the upgrade and come back on their own.
 proxy then refuses to start because the CA no longer matches. Run
 `skali dev status` there again and pass the new `--ca` once. The old CA stays
 in the laptop's keychain but signs nothing anymore, because its key was
-deleted with the old platform. Search Keychain Access for "skali local dev CA"
+deleted with the old platform. Search Keychain Access for "Skali local dev CA"
 to remove it.
 
 ## Limits

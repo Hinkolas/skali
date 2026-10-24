@@ -14,7 +14,7 @@
 </script>
 
 <svelte:head>
-	<title>Members · {data.project.display_name || data.project.name} — skali</title>
+	<title>Members · {data.project.display_name || data.project.name} — Skali</title>
 </svelte:head>
 
 <PageHeader title="Settings">

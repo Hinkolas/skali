@@ -5,7 +5,7 @@
 </script>
 
 <svelte:head>
-	<title>{page.status} — skali</title>
+	<title>{page.status} — Skali</title>
 </svelte:head>
 
 <!-- Boundary for everything outside the app shell (auth pages, layout load
@@ -19,11 +19,7 @@
 		<div
 			class="bg-glow-halo pointer-events-none absolute top-[23px] left-1/2 -z-10 h-[1150px] w-[1700px] -translate-x-1/2 -translate-y-1/2"
 		></div>
-		<div
-			class="from-accent-from to-accent-to text-surface-base shadow-glow-lg mb-6.5 grid h-10.5 w-10.5 place-items-center rounded-xl bg-linear-135"
-		>
-			<LogoMark class="h-6 w-6" />
-		</div>
+		<LogoMark class="shadow-glow-lg mb-6.5 size-10.5 rounded-xl" />
 		<ErrorState showIcon={false} />
 	</div>
 </div>

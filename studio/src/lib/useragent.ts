@@ -50,7 +50,7 @@ export function describeUserAgent(ua: string): DeviceInfo | null {
 	if (cli) {
 		return {
 			kind: 'cli',
-			label: `skali CLI ${cli[1]}`,
+			label: `Skali CLI ${cli[1]}`,
 			host: cli[2] ?? null,
 			mobile: false,
 			tablet: false
@@ -62,7 +62,7 @@ export function describeUserAgent(ua: string): DeviceInfo | null {
 		const tablet = model?.startsWith('iPad') ?? false;
 		return {
 			kind: 'app',
-			label: tablet ? 'skali for iPadOS' : 'skali for iOS',
+			label: tablet ? 'Skali for iPadOS' : 'Skali for iOS',
 			host: model,
 			mobile: true,
 			tablet

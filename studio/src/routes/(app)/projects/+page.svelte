@@ -86,7 +86,7 @@
 </script>
 
 <svelte:head>
-	<title>Projects — skali</title>
+	<title>Projects — Skali</title>
 </svelte:head>
 
 <PageHeader title="Projects">

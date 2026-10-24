@@ -1,8 +1,8 @@
 # Deployment timing example
 
 A small Go service with one PostgreSQL database, one private S3 bucket, and
-one application replica. Public HTTPS terminates at skali's edge; the
-container serves HTTP on port 8080. The manifest deliberately keeps skali's
+one application replica. Public HTTPS terminates at Skali's edge; the
+container serves HTTP on port 8080. The manifest deliberately keeps Skali's
 default startup/readiness intervals and blue-green rollout strategy.
 
 The release command runs a transactional, advisory-lock-protected migration
@@ -47,7 +47,7 @@ objects survived, without rewriting them.
 ## Collect an experiment
 
 `measure.py` requires Python 3, Ruby with its standard YAML library, SSH,
-Docker, and a logged-in skali remote. Run it from this directory. It uses
+Docker, and a logged-in Skali remote. Run it from this directory. It uses
 the remote's existing session in memory, verifies HTTPS normally, and
 records no credential values. The SSH account needs `k3s kubectl` access
 and Python 3. The project and environment must already exist.
@@ -64,7 +64,7 @@ python3 -B measure.py \
 The script starts Kubernetes watches and an HTTPS probe before running
 `skali deploy --yes --detach` (or the API redeploy described below). It
 builds for `linux/arm64`; change the explicit platform in the script if the
-test cluster requires another architecture. It captures skali status
+test cluster requires another architecture. It captures Skali status
 streams, journal snapshots and step logs, projected Kubernetes resource
 changes, warning/normal events, queue-depth samples, and final
 application/release/daemon logs. Kubernetes
@@ -82,7 +82,7 @@ Useful experiments:
 1. First deployment: new logical database, bucket, image, and certificate
    on the existing healthy platform. Record which infrastructure was warm.
 2. Warm restart: same hostname, adding `--redeploy` to the collector.
-   This uses skali's deployment API to force-redeploy the active revision
+   This uses Skali's deployment API to force-redeploy the active revision
    with its stored values and image. It avoids the local build context and
    does not run the unchanged revision's migration again. `--force` instead
    runs a normal CLI deployment, including local build-context evaluation.
@@ -98,7 +98,7 @@ without rebuilding the image.
 The collector does not modify platform settings, clear shared caches, or
 delete application data. Its collection deadline does not cancel a
 server-side deployment. Test resources remain for inspection; remove the
-test environment through the normal skali teardown when finished.
+test environment through the normal Skali teardown when finished.
 
 ## Sample background load
 
@@ -113,7 +113,7 @@ python3 -B sample.py \
   --output /absolute/path/to/queue-samples.jsonl
 ```
 
-It reads skali's observation endpoint every 5 seconds for 100 samples
+It reads Skali's observation endpoint every 5 seconds for 100 samples
 (`--interval`, `--samples`) and writes one JSON line per sample: the
 freshness of each observation source and, for the kernel's and the
 substrate's queues, the depth, the arrivals per reason, and histograms of
@@ -142,6 +142,6 @@ the changed image runs a normal deploy after editing `version.txt`.
 | Changed image, promotion to activation | | 9.3–10.0 s, migration included |
 
 Of the v0.1.2 warm restart, about 3.2 s is the application's own readiness
-(its probes against the database and the bucket); skali accounts for about
+(its probes against the database and the bucket); Skali accounts for about
 2.2 s. A first run after a skalid upgrade re-runs the release Job and takes
 about 12 s.

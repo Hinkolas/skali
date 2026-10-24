@@ -1,6 +1,6 @@
-# Developing skali
+# Developing Skali
 
-This page is for working on skali itself. Using skali is covered by the
+This page is for working on Skali itself. Using Skali is covered by the
 [README](../README.md).
 
 ## Components
@@ -132,7 +132,7 @@ the old history.
 
 ## Manifest tooling
 
-skali discovers `skali.yml` or `skali.yaml` in the current directory or a
+Skali discovers `skali.yml` or `skali.yaml` in the current directory or a
 parent; `--manifest` selects one explicitly.
 
 ```sh

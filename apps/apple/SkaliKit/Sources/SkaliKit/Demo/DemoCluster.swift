@@ -256,7 +256,7 @@ public struct DemoCluster: ClusterAPI {
     public func enableTwoFactor() async throws -> TwoFactorEnrollment {
         TwoFactorEnrollment(
             secret: "JBSWY3DPEHPK3PXP",
-            otpauthUri: "otpauth://totp/skali:ada@example.com?secret=JBSWY3DPEHPK3PXP&issuer=skali",
+            otpauthUri: "otpauth://totp/SKALI:ada@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Skali",
             backupCodes: ["4f2k-9xq1", "b7m3-p0zt", "q8w2-ld5c", "z1n6-r4ha", "e9u7-k3vy", "t5j8-c2gb"])
     }
 

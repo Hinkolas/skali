@@ -8,7 +8,7 @@
 
 	let { data } = $props();
 
-	const title = 'skali — a platform for your own servers';
+	const title = 'Skali — a platform for your own servers';
 	const description =
 		'Run your applications on hardware you control, without running a platform team. Apps, Postgres, S3 buckets, TLS, rollouts and backups from one manifest.';
 </script>

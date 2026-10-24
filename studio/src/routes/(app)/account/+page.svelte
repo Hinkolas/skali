@@ -9,7 +9,7 @@
 </script>
 
 <svelte:head>
-	<title>Account security — skali</title>
+	<title>Account security — Skali</title>
 </svelte:head>
 
 <PageHeader title="Account security">

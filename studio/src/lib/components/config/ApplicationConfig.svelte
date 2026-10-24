@@ -136,7 +136,7 @@
 				<ArrowRight size={14} class="text-text-ghost flex-none" />
 				<span
 					class="border-border-default flex items-center gap-2 rounded-[9px] border px-2.5 py-2"
-					title="the image skali builds and pushes to its registry"
+					title="the image Skali builds and pushes to its registry"
 				>
 					<Container size={14} class="text-service-app flex-none" />
 					<span class="text-text-muted">image</span>

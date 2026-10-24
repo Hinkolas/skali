@@ -6,7 +6,7 @@
 </script>
 
 <svelte:head>
-	<title>Imprint — skali</title>
+	<title>Imprint — Skali</title>
 	<meta name="robots" content="noindex" />
 </svelte:head>
 
@@ -30,7 +30,7 @@
 			Imprint <span lang="de" class="text-text-ghost">Impressum</span>
 		</h1>
 		<p class="m-0 max-w-140 text-[17px] leading-[1.6] text-text-muted">
-			skali is a private, non-commercial open-source project. This website is operated by the person
+			Skali is a private, non-commercial open-source project. This website is operated by the person
 			named below.
 		</p>
 	</div>

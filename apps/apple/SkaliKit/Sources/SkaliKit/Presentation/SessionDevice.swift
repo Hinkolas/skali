@@ -5,7 +5,7 @@ import Foundation
 /// and system pairs the Studio recognizes (studio/src/lib/useragent.ts).
 public struct SessionDevice: Hashable, Sendable {
     public enum Kind: Hashable, Sendable {
-        /// The skali CLI.
+        /// The Skali CLI.
         case cli
         /// This app, on an iPhone or an iPad.
         case app
@@ -14,7 +14,7 @@ public struct SessionDevice: Hashable, Sendable {
     }
 
     public let kind: Kind
-    /// "skali CLI v0.1.3", "skali for iOS", "Safari on macOS".
+    /// "Skali CLI v0.1.3", "Skali for iOS", "Safari on macOS".
     public let title: String
     /// The machine the client named, e.g. the CLI's hostname or "iPhone".
     public let host: String?
@@ -32,7 +32,7 @@ public struct SessionDevice: Hashable, Sendable {
         // skali/<version> (<host>), see cmd/skali/main.go.
         if let match = ua.wholeMatch(of: /skali\/(\S+)(?: \((.+)\))?/) {
             kind = .cli
-            title = "skali CLI \(match.1)"
+            title = "Skali CLI \(match.1)"
             host = match.2.map(String.init)
             isMobile = false
             isTablet = false
@@ -43,7 +43,7 @@ public struct SessionDevice: Hashable, Sendable {
             let model = match.2.map(String.init)
             let tablet = model?.hasPrefix("iPad") == true
             kind = .app
-            title = tablet ? "skali for iPadOS" : "skali for iOS"
+            title = tablet ? "Skali for iPadOS" : "Skali for iOS"
             host = model
             isMobile = true
             isTablet = tablet

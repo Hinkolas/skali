@@ -331,7 +331,7 @@ struct SignInDetailsView: View {
 
     private var message: String {
         """
-        Sign in to skali at \(studioURL.absoluteString)
+        Sign in to Skali at \(studioURL.absoluteString)
         Email: \(user.email)
         Password: \(password)
 

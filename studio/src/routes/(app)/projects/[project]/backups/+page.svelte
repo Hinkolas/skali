@@ -159,7 +159,7 @@
 </script>
 
 <svelte:head>
-	<title>Backups · {data.project.display_name || projectName} — skali</title>
+	<title>Backups · {data.project.display_name || projectName} — Skali</title>
 </svelte:head>
 
 <PageHeader title="Backups">

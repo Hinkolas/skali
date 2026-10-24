@@ -1,6 +1,6 @@
 ---
 name: skali.dev
-description: The public site for skali, a self-hosted application platform for your own servers.
+description: The public site for Skali, a self-hosted application platform for your own servers.
 colors:
   surface-base: '#0b0b0f'
   surface-input: '#0d0d11'
@@ -140,11 +140,11 @@ components:
 
 **Creative North Star: "The Honest Console"**
 
-The site is a quiet frame for the real product. Real Studio screens, real commands, real manifest behavior: everything that carries weight on the page is something skali actually does, rendered faithfully. The chrome around it stays low-lit and restrained so the product pictures and the commands read as the evidence they are. This is the visual form of the product's honest-alpha stance: credibility comes from showing, not from adjectives, logos or borrowed proof.
+The site is a quiet frame for the real product. Real Studio screens, real commands, real manifest behavior: everything that carries weight on the page is something Skali actually does, rendered faithfully. The chrome around it stays low-lit and restrained so the product pictures and the commands read as the evidence they are. This is the visual form of the product's honest-alpha stance: credibility comes from showing, not from adjectives, logos or borrowed proof.
 
 The mood is precise, calm and candid. A single dark theme of near-black surfaces separated by hairline white-alpha borders, a long graded text ramp that does most of the hierarchy work, and one violet accent (Studio Violet) that appears sparingly enough to act as a signal. Type is Geist throughout: large, tightly tracked medium-weight headlines against muted, comfortably leaded body copy, with Geist Mono carrying labels, commands and versions. Density is generous at the section level (140px of vertical air) and tight inside the product pictures, which reproduce Studio at its own scale.
 
-The theme mirrors `studio/src/routes/layout.css` on purpose (it also defines `surface-node` and `service-temp`, unused on the site so far), so a visitor who installs skali recognizes the Studio they then open.
+The theme mirrors `studio/src/routes/layout.css` on purpose (it also defines `surface-node` and `service-temp`, unused on the site so far), so a visitor who installs Skali recognizes the Studio they then open.
 
 **Key Characteristics:**
 
@@ -163,7 +163,7 @@ A near-black neutral world with a long text ramp, one violet accent, and a small
 - **Studio Violet** (`accent`): the brand accent. Used for the hero halo and frame glow, the install card's wash and border (at 26% alpha), and selection tint. Never a large solid fill on site chrome.
 - **Studio Violet Light** (`accent-light`): the accent at text and line weight. Section indices (`01`, `02`), the URL inside the install command, workflow timeline dots, and the focus ring.
 - **Lavender Mist** (`accent-nav`): the palest accent tint, used for the active sidebar item and avatar initials inside the Studio overview mock.
-- **Logo Gradient** (`accent-from` to `accent-to`, 135°): reserved for the logo tile and the favicon.
+- **Logo tile:** the approved v5 purple stack icon, matching the native app and Studio. Use the supplied image rather than recreating its shapes or background.
 
 ### Tertiary
 
@@ -299,7 +299,7 @@ The signature control: the install command as a real, copyable line.
 
 ### Navigation
 
-- **Bar:** 72px tall, inside the hero, over the blueprint grid. Wordmark (logo tile and "skali" at 17px semibold, −0.02em) at left, text links at 14px in `text-muted` that brighten to `text-primary` on hover.
+- **Bar:** 72px tall, inside the hero, over the blueprint grid. Wordmark (logo tile and "Skali" at 17px semibold, −0.02em) at left, text links at 14px in `text-muted` that brighten to `text-primary` on hover.
 - **Right side:** the newest release tag in Mono 12px `text-faint`, and a 44px GitHub icon target.
 - **Mobile:** the text links and version hide below 640px; the wordmark and GitHub icon remain.
 
@@ -331,6 +331,6 @@ Hand-built renderings of Studio screens (`src/lib/mock/`). They copy Studio's si
 - **Don't** add a light theme, white sections or full-bleed violet fills.
 - **Don't** use category hues (lilac, teal, amber) for anything but the service kind they stand for.
 - **Don't** put shadows on resting panels, cards or rows.
-- **Don't** replace Studio mocks with abstract illustration, stock imagery or invented dashboards showing features skali lacks.
+- **Don't** replace Studio mocks with abstract illustration, stock imagery or invented dashboards showing features Skali lacks.
 - **Don't** use bold or semibold for emphasis in running text; step up the text ramp instead.
 - **Don't** let violet light outline or fill a container; washes stay behind content at low alpha.

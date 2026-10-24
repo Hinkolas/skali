@@ -48,7 +48,7 @@
 </script>
 
 <svelte:head>
-	<title>Databases · {data.pool.name} — skali</title>
+	<title>Databases · {data.pool.name} — Skali</title>
 </svelte:head>
 
 <div class="pb-6">

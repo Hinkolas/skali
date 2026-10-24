@@ -18,7 +18,7 @@ const (
 	totpDigits = otp.DigitsSix
 )
 
-const totpIssuer = "skali"
+const totpIssuer = "Skali"
 
 // generateTOTP creates a new secret for email and returns the key, whose
 // Secret() feeds the encrypted column and URL() the client's QR code.

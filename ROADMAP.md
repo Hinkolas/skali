@@ -1,6 +1,6 @@
 # Skali roadmap
 
-A rough idea of where skali is heading. There are no dates, and things can
+A rough idea of where Skali is heading. There are no dates, and things can
 change. Concrete work is tracked in
 [issues](https://github.com/Hinkolas/skali/issues), and what already
 shipped is in the [release notes](https://github.com/Hinkolas/skali/releases).
@@ -14,7 +14,7 @@ shipped is in the [release notes](https://github.com/Hinkolas/skali/releases).
 - **Alerting:** get notified when something breaks, like a node going down
   or a backup failing
 - **Backups:** improve the backup system, for example with point-in-time
-  restores for databases, backups of skali's own state, and continuous
+  restores for databases, backups of Skali's own state, and continuous
   off-cluster protection for bucket data
 - **Local data workflows:** restore a remote backup into `skali dev` for
   debugging and realistic test data, with an explicit import and safety

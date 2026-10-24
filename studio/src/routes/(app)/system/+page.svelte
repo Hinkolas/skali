@@ -63,7 +63,7 @@
 </script>
 
 <svelte:head>
-	<title>System — skali</title>
+	<title>System — Skali</title>
 </svelte:head>
 
 <PageHeader title="System">

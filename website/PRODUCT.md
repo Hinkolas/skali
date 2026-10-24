@@ -10,7 +10,7 @@ web
 
 Primary: developers on small teams and agencies who ship several apps to their
 own VPS or servers and want PaaS-style deploys without hiring or becoming a
-platform engineer. They arrive evaluating whether skali can replace the
+platform engineer. They arrive evaluating whether Skali can replace the
 scripts, compose files and hand-run Kubernetes they would otherwise maintain.
 
 Secondary: solo developers and homelabbers running side projects on hardware
@@ -18,14 +18,14 @@ they own. Welcome, but the site leads with the team case.
 
 ## Product Purpose
 
-skali is a self-hosted application platform. One `skali.yaml` describes an
-application, its Postgres databases and its S3 buckets; skali builds it, runs
+Skali is a self-hosted application platform. One `skali.yaml` describes an
+application, its Postgres databases and its S3 buckets; Skali builds it, runs
 it with TLS routes, health checks and rollouts, and hands out the credentials.
 The site at skali.dev exists to get the right visitor to install the CLI and
 try it; later it will also host the user documentation (today the docs links
 point at the GitHub repository).
 
-Success: a qualified visitor understands what skali replaces, trusts that it
+Success: a qualified visitor understands what Skali replaces, trusts that it
 is honest about its alpha status, and runs the install command.
 
 ## Positioning
@@ -74,9 +74,9 @@ All four are confirmed and should be stressed together; no single competitor
 - Technical: SvelteKit + Tailwind v4, fully prerendered with
   `adapter-static` to GitHub Pages. No server code; anything a page needs is
   known at build time. The navigation shows the newest release tag.
-- Terminology: the product is **skali**, always lowercase, including at the
-  start of a sentence. The web UI is **Skali Studio**. The manifest is
-  `skali.yaml`.
+- Terminology: the product is **Skali**, with only its first letter uppercase. The web UI is
+  **Skali Studio**. CLI commands and technical identifiers stay lowercase:
+  `skali`, `skali deploy`, `skali.yaml`, and `skali.dev`.
 
 ## Brand Commitments
 
@@ -101,7 +101,7 @@ All four are confirmed and should be stressed together; no single competitor
    beat claims about them.
 2. **Honest alpha.** State the status and limitations plainly; credibility
    comes from candor, not borrowed proof.
-3. **Replace work, not tools.** Frame skali by the scripts, runbooks and
+3. **Replace work, not tools.** Frame Skali by the scripts, runbooks and
    platform chores it removes.
 4. **The platform disappears.** Kubernetes is the foundation, never the
    pitch or the user's burden.

@@ -164,9 +164,9 @@ final class AppModel {
         }
     }
 
-    /// What the Studio shows the approver, e.g. "skali for iOS on iPad".
+    /// What the Studio shows the approver, e.g. "Skali for iOS on iPad".
     private static var clientLabel: String {
-        "skali for \(UIDevice.current.systemName) on \(UIDevice.current.name)"
+        "Skali for \(UIDevice.current.systemName) on \(UIDevice.current.name)"
     }
 
     /// Names the app in the session list: `skali-ios/0.1.0 (iPhone; iOS 27.1)`.

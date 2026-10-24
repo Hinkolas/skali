@@ -3,7 +3,7 @@
 
 	// The statement, with the parts skali is built on between asterisks.
 	const statement =
-		"skali runs on *k3s*, routes through *Traefik* with certificates from *Let's Encrypt*, keeps databases on *CloudNativePG* and objects on *SeaweedFS*. Proven parts, installed and operated for you. You never have to touch Kubernetes.";
+		"Skali runs on *k3s*, routes through *Traefik* with certificates from *Let's Encrypt*, keeps databases on *CloudNativePG* and objects on *SeaweedFS*. Proven parts, installed and operated for you. You never have to touch Kubernetes.";
 
 	// Words, each split into its plain and named parts ("*k3s*," is a named
 	// "k3s" and a plain ","). Every word keeps its trailing space, since the

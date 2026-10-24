@@ -57,7 +57,7 @@
 </script>
 
 <svelte:head>
-	<title>Deleting {project.display_name || project.name} — skali</title>
+	<title>Deleting {project.display_name || project.name} — Skali</title>
 </svelte:head>
 
 <PageHeader title="Deleting {project.display_name || project.name}">

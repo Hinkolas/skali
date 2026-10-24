@@ -123,7 +123,7 @@
 </script>
 
 <svelte:head>
-	<title>Backup target — skali</title>
+	<title>Backup target — Skali</title>
 </svelte:head>
 
 <PageHeader title="Backup target">

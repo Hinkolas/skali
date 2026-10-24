@@ -383,7 +383,7 @@ func sanitizeDeviceLabel(label string) string {
 		}
 	}
 	if out.Len() == 0 {
-		return "skali CLI"
+		return "Skali CLI"
 	}
 	return out.String()
 }

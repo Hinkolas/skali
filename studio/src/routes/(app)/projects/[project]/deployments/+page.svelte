@@ -121,7 +121,7 @@
 </script>
 
 <svelte:head>
-	<title>Deployments · {data.project.display_name || data.project.name} — skali</title>
+	<title>Deployments · {data.project.display_name || data.project.name} — Skali</title>
 </svelte:head>
 
 <PageHeader title="Deployments">

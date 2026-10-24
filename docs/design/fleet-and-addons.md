@@ -12,7 +12,7 @@ Two needs have the same shape:
 - **Shared capabilities used by many projects.** Email, mobile push, background removal, image and video processing. Today each project reimplements them, with its own provider credentials, retries, rate limits, templates and delivery logs.
 - **Compute outside the cluster.** Idle machines such as Mac minis, a Mac Studio and desktops sit behind home or office NAT with changing IPs. They could serve latency-sensitive inference (warm models, no cold starts), managed builds (ROADMAP: "Push-to-deploy … a managed builder") and CI runners.
 
-skali already solves "host it once, give each project scoped access" for Postgres and S3. This proposal generalizes that with two pieces:
+Skali already solves "host it once, give each project scoped access" for Postgres and S3. This proposal generalizes that with two pieces:
 
 1. A **built-in fleet substrate** for queued jobs and external workers.
 2. **Cluster-wide add-ons** that projects attach to.
@@ -22,13 +22,13 @@ skali already solves "host it once, give each project scoped access" for Postgre
 - **Shared substrates.** `databases:` and `buckets:` run on shared substrates (CNPG, SeaweedFS). Each project gets its own claims, with credentials injected through `{{databases.k.output}}` and `{{buckets.k.output}}`.
 - **Identity and isolation.** Environment namespaces carry the `skali.dev/*` labels. Membership already exists. API/CI tokens are on the roadmap. Credential rotation is #78 and network isolation is #89.
 - **Rollouts and edge.** Blue-green rollouts keep the previous color for a fixed 15 s retire drain (`defaultRetireDrain` in `internal/reconcile/bluegreen.go`), behind the Traefik edge.
-- **A standalone worker platform** that I'm building separately, designed to run on skali. It has a RunPod-compatible job API, a Go agent per machine with an outbound WebSocket connection, a Postgres queue with leases, and optional spill to RunPod. It would be the basis for the substrate below.
+- **A standalone worker platform** that I'm building separately, designed to run on Skali. It has a RunPod-compatible job API, a Go agent per machine with an outbound WebSocket connection, a Postgres queue with leases, and optional spill to RunPod. It would be the basis for the substrate below.
 
 ## Proposal
 
 ### 1. Fleet substrate (built in, optional)
 
-The fleet would sit at the same layer as CNPG behind `databases:`. It ships and upgrades with skali, is off until enabled, and runs as its own component, not inside skalid.
+The fleet would sit at the same layer as CNPG behind `databases:`. It ships and upgrades with Skali, is off until enabled, and runs as its own component, not inside skalid.
 
 - **Workers.** A cluster admin enrolls each machine. The machine runs a single agent binary that connects outbound over WSS to the fleet gateway route. It needs no inbound access, static IP or VPN.
 - **Queue store.** Postgres, claiming with `FOR UPDATE SKIP LOCKED`. Leases carry fencing tokens, delivery is at-least-once, and wakeups use `LISTEN/NOTIFY`.
@@ -62,9 +62,9 @@ These follow the Heroku add-on model, installed once per cluster:
 - **Install and visibility.** Add-ons are installed from a catalog. In the web console each gets its own sidebar entry next to Projects. In the CLI they are managed with `skali addon …`.
 - **Under the hood.** An add-on is deployed like a project in its own namespace, reusing rollout, scaling, databases and buckets. It is not presented as a project.
 - **Provider contract.** An add-on declares what it provides and a bind hook.
-  1. On attach, skali calls the hook with the caller's project and environment identity.
+  1. On attach, Skali calls the hook with the caller's project and environment identity.
   2. The add-on provisions a tenant and returns outputs.
-  3. skali stores those outputs as secrets and injects them as `{{addons.<name>.<output>}}`.
+  3. Skali stores those outputs as secrets and injects them as `{{addons.<name>.<output>}}`.
 
   Detaching, or deleting the project, calls the hook again so the add-on cleans up.
 - **Identity.** A per-binding credential or a skali-signed workload identity. This builds on API tokens and #78.
@@ -77,15 +77,15 @@ These follow the Heroku add-on model, installed once per cluster:
 |---|---|
 | Cluster (admin) | Worker machines, priority-class policy, per-project capacity quotas |
 | Project or add-on | Its queues, its worker pools, its jobs |
-| skali itself | Reserved system queues such as `skali/builds` |
+| Skali itself | Reserved system queues such as `skali/builds` |
 
 A project requests a priority class, and admin policy grants a maximum. Otherwise any project could mark itself `interactive` and starve the others.
 
 ### 5. System use and the recovery rule
 
-- **Managed builds.** A managed builder becomes a skali build backend on the reserved `skali/builds` queue. Each build runs BuildKit in a fresh VM per job, and builds of the same project are routed to the same machine so its layer cache stays warm.
+- **Managed builds.** A managed builder becomes a Skali build backend on the reserved `skali/builds` queue. Each build runs BuildKit in a fresh VM per job, and builds of the same project are routed to the same machine so its layer cache stays warm.
 - **Fallback.** Local CLI builds remain a permanent fallback.
-- **Recovery rule.** skali never needs the fleet or any add-on to recover itself. Deploys keep working while the fleet is down.
+- **Recovery rule.** Skali never needs the fleet or any add-on to recover itself. Deploys keep working while the fleet is down.
 
 ## Suggested order
 
@@ -102,7 +102,7 @@ A project requests a priority class, and admin policy grants a maximum. Otherwis
 - **Worker enrollment and agent updates.** How enrollment and updates work, how the agent runs under macOS launchd, and whether Metal is available to a launchd service.
 - **Priority-class policy and quotas.** How the admin defines them and how they are enforced.
 - **Add-on packaging and versioning.** Contract versions, deprecation windows, and upgrading an add-on without breaking its consumers.
-- **Multi-tenancy inside add-ons.** Data isolation, quotas and cleanup are the add-on's job; skali only provides identity.
+- **Multi-tenancy inside add-ons.** Data isolation, quotas and cleanup are the add-on's job; Skali only provides identity.
 - **Blast radius and privilege.** Add-ons hold secrets for many projects (APNs keys, for example), which makes them the most privileged workloads on the cluster.
 - **Fleet database.** Whether the fleet gets a dedicated Postgres pool or uses the platform's own.
 - **Naming.** Add-ons or services/bindings, and fleet.

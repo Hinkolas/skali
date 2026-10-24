@@ -5,9 +5,9 @@
 
 	let { data } = $props();
 
-	const title = 'The skali.yaml manifest — skali';
+	const title = 'The skali.yaml manifest — Skali';
 	const description =
-		'Every skali.yaml field, default, unit and validation rule, for the newest skali release.';
+		'Every skali.yaml field, default, unit and validation rule, for the newest Skali release.';
 </script>
 
 <svelte:head>
@@ -36,7 +36,7 @@
 	<header class="flex flex-col gap-6">
 		<p class="m-0 flex gap-3 font-mono text-xs">
 			<span class="text-accent-light">Reference</span>
-			<span class="text-text-faint">skali {data.ref}</span>
+			<span class="text-text-faint">Skali {data.ref}</span>
 		</p>
 		<h1
 			class="m-0 text-[clamp(40px,6vw,72px)] leading-none font-medium tracking-[-0.045em] text-balance"

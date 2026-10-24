@@ -1,6 +1,6 @@
-# skali for Apple platforms
+# Skali for Apple platforms
 
-The native skali app: a SwiftUI client for a cluster's API, starting with
+The native Skali app: a SwiftUI client for a cluster's API, starting with
 iPhone and iPad.
 
 ```

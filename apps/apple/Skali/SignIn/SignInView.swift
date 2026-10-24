@@ -20,7 +20,7 @@ struct SignInView: View {
                     Image(systemName: "square.stack.3d.up.fill")
                         .font(.system(size: 48))
                         .foregroundStyle(.tint)
-                    Text("Sign in to skali")
+                    Text("Sign in to Skali")
                         .font(.title.weight(.bold))
                     Text("Enter your cluster's address. You approve the sign-in in the browser, where you may already be signed in to the Studio.")
                         .font(.subheadline)

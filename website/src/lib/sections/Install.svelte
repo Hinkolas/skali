@@ -43,7 +43,7 @@
 				<h2
 					class="m-0 text-[clamp(34px,4.8vw,56px)] leading-[1.02] font-medium tracking-[-0.05em] text-balance"
 				>
-					Install skali in one line.
+					Install Skali in one line.
 				</h2>
 				<p class="m-0 max-w-105 text-[17px] leading-[1.6] text-text-tertiary">
 					On your laptop to develop and deploy, and on every server that should become a node.

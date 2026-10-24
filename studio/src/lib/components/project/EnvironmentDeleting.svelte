@@ -60,7 +60,7 @@
 </script>
 
 <svelte:head>
-	<title>Deleting {environment.name} · {project.display_name || project.name} — skali</title>
+	<title>Deleting {environment.name} · {project.display_name || project.name} — Skali</title>
 </svelte:head>
 
 <PageHeader title="Deleting {environment.name}" mono>

@@ -5,7 +5,7 @@ struct SessionDeviceTests {
     @Test func recognizesTheCLI() {
         let device = SessionDevice(userAgent: "skali/v0.1.3-rc.3 (KiloHertz-Mac-Mini)")
         #expect(device.kind == .cli)
-        #expect(device.title == "skali CLI v0.1.3-rc.3")
+        #expect(device.title == "Skali CLI v0.1.3-rc.3")
         #expect(device.host == "KiloHertz-Mac-Mini")
     }
 
@@ -13,7 +13,7 @@ struct SessionDeviceTests {
         let ua = SessionDevice.appUserAgent(version: "0.1.0", model: "iPad", system: "iPadOS", systemVersion: "27.1")
         let device = SessionDevice(userAgent: ua)
         #expect(device.kind == .app)
-        #expect(device.title == "skali for iPadOS")
+        #expect(device.title == "Skali for iPadOS")
         #expect(device.host == "iPad")
         #expect(device.isTablet)
     }

@@ -1,4 +1,4 @@
-# Working with the skali CLI
+# Working with the Skali CLI
 
 The CLI is self describing: run `skali --help` and `skali <command> --help`
 for the available surface. Help is always local and prefers the target's recorded

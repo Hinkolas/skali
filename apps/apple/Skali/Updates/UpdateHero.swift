@@ -57,11 +57,11 @@ struct UpdateHero: View {
         let summary = status.summary
         switch summary.state {
         case .available, .updating:
-            return "skali \(displayVersion(summary.targetVersion ?? status.latest?.version ?? ""))"
+            return "Skali \(displayVersion(summary.targetVersion ?? status.latest?.version ?? ""))"
         case .failed:
             return "Update Needs Attention"
         default:
-            return "skali \(displayVersion(status.clusterVersion))"
+            return "Skali \(displayVersion(status.clusterVersion))"
         }
     }
 

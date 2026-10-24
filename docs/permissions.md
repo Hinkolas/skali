@@ -12,10 +12,10 @@ as open is settled in the text.
 
 ## Why
 
-People with access to one skali installation have very different trust
+People with access to one Skali installation have very different trust
 levels. The motivating team:
 
-- The sysadmin sets up skali and the hosts and may do everything.
+- The sysadmin sets up Skali and the hosts and may do everything.
 - A programmer works on customer projects but must not reach every project,
   and on the projects they work on they maintain staging while production
   is read-only or promote-only for them.
@@ -227,7 +227,7 @@ environment only changes through:
 
 A direct deploy, and a promotion from a source outside the list, are
 refused with `403 environment_protected` and a message that names the way
-in ("environment production is promote-only: promote with skali deploy
+in ("environment production is promote-only: promote with Skali deploy
 --from staging --environment production; environment admins may pass
 --bypass-protection"). The check runs in plan as well as in open, so the
 CLI refuses before anything is built (and, knowing the environment's
@@ -265,7 +265,7 @@ global default, all with the default preemption policy:
 
 | class | value | who carries it |
 |---|---|---|
-| `skali-critical` | 100000000 | skali itself: skalid, the registry, the Studio, seaweed, the bootstrap database, and every managed CNPG cluster; preempts application pods |
+| `skali-critical` | 100000000 | Skali itself: skalid, the registry, the Studio, seaweed, the bootstrap database, and every managed CNPG cluster; preempts application pods |
 | `skali-high` | 1000000 | application pods (Deployments and release Jobs) of `priority: high` environments |
 | `skali-normal` | 0 | application pods of `priority: normal` environments; the rank of an unclassed pod, so introducing it changed nothing for existing workloads |
 
@@ -661,7 +661,7 @@ mapping.
 
 ## Workload trust boundary
 
-These roles govern skali API operations. Network isolation between environments
+These roles govern Skali API operations. Network isolation between environments
 is automatic and not role-based (see [security boundaries](security.md)); the
 roles do not sandbox hostile containers. Deploy access lets someone run code on
 the shared cluster; grant it only to trusted people.

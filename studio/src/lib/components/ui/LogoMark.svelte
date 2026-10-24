@@ -1,13 +1,8 @@
 <script lang="ts">
-	/**
-	 * The mark shown inside the gradient logo tiles (sidebar, login, error
-	 * pages). A plain lucide icon for now: it inherits the tile's
-	 * text-surface-base colour through currentColor, so size it from the
-	 * parent with a width/height class and nothing else.
-	 */
-	import Server from '@lucide/svelte/icons/server';
+	// The approved v5 app icon, resized for web use. Callers size the full tile.
+	import logo from '$lib/assets/logo.png';
 
 	let { class: cls = '' }: { class?: string } = $props();
 </script>
 
-<Server class={cls} strokeWidth={2.25} aria-hidden="true" />
+<img src={logo} alt="" class={`block shrink-0 ${cls}`} aria-hidden="true" />

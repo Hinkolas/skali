@@ -55,14 +55,10 @@
 		<a
 			href={resolve('/(app)/projects')}
 			class="flex items-center gap-2.5 rounded-lg transition-opacity hover:opacity-85 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent/70"
-			aria-label="skali home"
+			aria-label="Skali home"
 		>
-			<div
-				class="from-accent-from to-accent-to text-surface-base grid size-6.5 place-items-center rounded-lg bg-linear-135"
-			>
-				<LogoMark class="size-4" />
-			</div>
-			<div class="text-text-primary text-xl font-semibold tracking-[-0.01em]">skali</div>
+			<LogoMark class="size-6.5 rounded-lg" />
+			<div class="text-text-primary text-xl font-semibold tracking-[-0.01em]">Skali</div>
 		</a>
 	</div>
 

@@ -65,7 +65,7 @@
 </script>
 
 <svelte:head>
-	<title>Nodes — skali</title>
+	<title>Nodes — Skali</title>
 </svelte:head>
 
 <PageHeader title="Nodes">
