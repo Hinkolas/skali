@@ -221,7 +221,7 @@ func newDevCommand() *cobra.Command {
 	}
 	command := &cobra.Command{
 		Use:   "dev",
-		Short: "Run the project on the local skali platform",
+		Short: "Run the project on the local Skali platform",
 		Long: "Bare skali dev (shorthand for skali dev up) is the complete paved\n" +
 			"path: it ensures the disposable local platform (k3d cluster with\n" +
 			"in-cluster skalid, Postgres, and registry), builds and deploys the\n" +
@@ -235,7 +235,7 @@ func newDevCommand() *cobra.Command {
 			"redeploys. Use -d for a background project that keeps running,\n" +
 			"skali dev down to pause it explicitly, and skali dev list to see\n" +
 			"everything on the local platform. The platform runs the same\n" +
-			"skali release as the project's target cluster (the checkout\n" +
+			"Skali release as the project's target cluster (the checkout\n" +
 			"binding, else the current remote, else this skali), using that release\n" +
 			"in one local cluster; skali dev upgrade moves it to a newer release in\n" +
 			"place. The platform lifecycle lives under skali dev start, stop,\n" +

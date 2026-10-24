@@ -26,7 +26,7 @@
 </script>
 
 <svelte:head>
-	<title>Databases — skali</title>
+	<title>Databases — Skali</title>
 </svelte:head>
 
 <PageHeader title="Databases">

@@ -41,7 +41,7 @@
 			<div class="flex flex-col gap-3">
 				<div class="flex items-center gap-2.5">
 					<LogoMark size={24} />
-					<span class="text-base font-semibold tracking-[-0.02em]">skali</span>
+					<span class="text-base font-semibold tracking-[-0.02em]">Skali</span>
 				</div>
 				<p class="m-0 max-w-55 text-[13px] leading-[1.6] text-text-faint">
 					A self-hosted application platform for your own servers.
@@ -76,7 +76,7 @@
 		<div
 			class="flex flex-wrap justify-between gap-3 border-t border-border-subtle pt-6 text-[13px] text-text-faint"
 		>
-			<span>© {new Date().getFullYear()} skali. Apache License 2.0.</span>
+			<span>© {new Date().getFullYear()} Skali. Apache License 2.0.</span>
 			<div class="flex flex-wrap gap-6">
 				<a href={resolve('/imprint')} class="transition-colors hover:text-text-primary">Imprint</a>
 				<a href={links.repo} rel="external" class="transition-colors hover:text-text-primary"

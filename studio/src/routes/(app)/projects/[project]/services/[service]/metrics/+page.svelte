@@ -83,7 +83,7 @@
 </script>
 
 <svelte:head>
-	<title>Metrics · {data.service.name} — skali</title>
+	<title>Metrics · {data.service.name} — Skali</title>
 </svelte:head>
 
 <div class="mb-3.5 flex flex-wrap items-center gap-x-3 gap-y-2">

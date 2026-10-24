@@ -11,7 +11,7 @@
 </script>
 
 <svelte:head>
-	<title>{project.display_name || project.name} — skali</title>
+	<title>{project.display_name || project.name} — Skali</title>
 </svelte:head>
 
 <PageHeader title={project.display_name || project.name}>

@@ -63,7 +63,7 @@
 </script>
 
 <svelte:head>
-	<title>System — skali</title>
+	<title>System — Skali</title>
 </svelte:head>
 
 <PageHeader title="System">
@@ -142,9 +142,9 @@
 				<Archive size={17} strokeWidth={1.75} />
 			</div>
 			<div class="flex min-w-0 flex-1 flex-col">
-				<span class="text-text-primary text-lg font-medium">Backup target</span>
+				<span class="text-text-primary text-lg font-medium">Backups</span>
 				<span class="text-text-muted text-md"
-					>The S3 location every snapshot and schedule writes to</span
+					>The S3 target every snapshot goes to, what it holds and how backups run</span
 				>
 			</div>
 			<Pill text={backupSummary.text} tone={backupSummary.tone} />

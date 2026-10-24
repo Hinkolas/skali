@@ -1,10 +1,10 @@
 import { expect, test } from 'vitest';
 import { buildOrg } from '../src/lib/models/org';
 
-test('the org name prefers the instance name, then the host, then skali', () => {
+test('the org name prefers the instance name, then the host, then Skali', () => {
 	expect(buildOrg({ version: '1.2.3', name: 'Acme' }, 'skali.acme.test', 3, 2).name).toBe('Acme');
 	expect(buildOrg({ version: '1.2.3' }, 'skali.acme.test', 3, 2).name).toBe('skali.acme.test');
-	expect(buildOrg(null, '', 0, null).name).toBe('skali');
+	expect(buildOrg(null, '', 0, null).name).toBe('Skali');
 });
 
 test('the org line carries the update and the counts it was given', () => {

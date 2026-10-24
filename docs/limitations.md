@@ -1,6 +1,6 @@
 # Known limitations
 
-Things skali does not do yet, stated so nobody finds out the hard way.
+Things Skali does not do yet, stated so nobody finds out the hard way.
 Each one is deliberate for now; the larger directions are in
 [`ROADMAP.md`](../ROADMAP.md) and the concrete work in
 [issues](https://github.com/Hinkolas/skali/issues).
@@ -106,7 +106,7 @@ backup, and re-pushing images with `skali deploy`. Preserve the original
 system-database backup: a restored database cannot decrypt its environment
 values, TOTP secrets, or backup credentials without the original key. See
 [security and key recovery](security.md). Environment data (databases, buckets, volumes) is covered
-by `skali backup`, but skali's own state is not backed up automatically.
+by `skali backup`, but Skali's own state is not backed up automatically.
 
 ## Routes whose domain does not point here yet
 

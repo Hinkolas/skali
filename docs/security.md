@@ -32,7 +32,7 @@ Do not offer arbitrary untrusted tenants access to this alpha.
 credentials stored in the system database. Generate it once per installation
 and keep a secure recovery copy alongside the system database and installation
 record. A database backup alone is insufficient to recover these encrypted
-records. Environment backups do not include skali's system database or its key.
+records. Environment backups do not include Skali's system database or its key.
 
 Managed installations store the key in the `skali-auth` Secret in
 `skali-system`. Export it only to a protected backup destination, alongside
@@ -43,7 +43,7 @@ same original key.
 Changing `AUTH_SECRET` does not rotate existing ciphertext. There is no supported
 key-rotation command yet. If it is accidentally replaced, restore the original
 key before resuming writes. If the old key is lost, the encrypted records cannot
-be recovered by resetting a password or reinstalling skali. If a key was
+be recovered by resetting a password or reinstalling Skali. If a key was
 compromised, recovery also requires replacing the affected external credentials;
 do not mistake a new encryption key for credential revocation.
 

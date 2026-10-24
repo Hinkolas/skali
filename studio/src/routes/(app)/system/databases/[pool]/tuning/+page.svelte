@@ -10,7 +10,7 @@
 </script>
 
 <svelte:head>
-	<title>Tuning · {data.pool.name} — skali</title>
+	<title>Tuning · {data.pool.name} — Skali</title>
 </svelte:head>
 
 <div class="pb-6">

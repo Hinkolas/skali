@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="website/static/favicon.svg" alt="" width="72" height="72">
+<img src="website/static/favicon.png" alt="" width="72" height="72">
 
-# skali
+# Skali
 
 **Run your applications on your own servers, without running a platform team.**
 
@@ -17,11 +17,11 @@
 
 </div>
 
-skali is a self-hosted application platform. You describe an application, its
-Postgres databases, and its S3 buckets in one `skali.yaml`. skali builds it,
+Skali is a self-hosted application platform. You describe an application, its
+Postgres databases, and its S3 buckets in one `skali.yaml`. Skali builds it,
 runs it behind TLS routes with health checks and safe rollouts, and hands it
 its credentials. The same manifest runs in a disposable local cluster on your
-laptop (`skali dev`) and on the servers you install skali on (`skali deploy`).
+laptop (`skali dev`) and on the servers you install Skali on (`skali deploy`).
 Underneath it is Kubernetes (k3s), but you never have to touch it.
 
 ```sh
@@ -29,7 +29,7 @@ curl -fsSL https://skali.dev/install.sh | sh
 ```
 
 > [!WARNING]
-> **skali is in initial development.** Until v1.0.0 the manifest schema, CLI,
+> **Skali is in initial development.** Until v1.0.0 the manifest schema, CLI,
 > API, and on-disk formats may change in breaking ways, and upgrades may need
 > manual steps. Do not use it for workloads you cannot afford to lose. Read the
 > [known limitations](docs/limitations.md) and the
@@ -68,7 +68,7 @@ The installer picks the binary for your OS and architecture (macOS and Linux,
 amd64 and arm64), verifies its checksum, and installs it to `/usr/local/bin`
 on Linux (asking for sudo) or `~/.local/bin` on macOS. It also installs shell
 completions for your login shell. Run it on your laptop to develop and
-deploy, and on every server that should become a skali node.
+deploy, and on every server that should become a Skali node.
 
 The default channel installs the newest stable release. Set
 `SKALI_CHANNEL=beta` to include alpha, beta, and RC releases, or
@@ -118,7 +118,7 @@ source instead, see [contributor setup](docs/development.md).
 
 ### 2. Run a project locally
 
-All you need is Docker. skali installs a pinned copy of
+All you need is Docker. Skali installs a pinned copy of
 [k3d](https://k3d.io) for the local cluster if none is on your PATH.
 
 ```sh
@@ -136,7 +136,7 @@ generated for your machine. The first run offers to trust that CA
 
 Ctrl-C pauses the project and keeps its data, `skali dev` brings it back, and
 `skali dev -d` runs it in the background. `skali dev status`, `exec`, `list`,
-and `reset` do what they say. After updating skali, `skali dev upgrade` moves
+and `reset` do what they say. After updating Skali, `skali dev upgrade` moves
 the local platform to the new release and keeps its data and development CA. Add a `dev:` block to an application and
 `skali dev` runs that app as a process on your machine with hot reload,
 behind the cluster's routes and with its real database and bucket
@@ -150,7 +150,7 @@ a cluster or Docker on the laptop. See
 ### 3. Set up a server
 
 You need a Debian or Ubuntu server (amd64 or arm64) with ports 80 and 443
-reachable. A Mac runs skali inside a managed Lima VM. Point DNS at the server
+reachable. A Mac runs Skali inside a managed Lima VM. Point DNS at the server
 first: an A record for the platform domain (for example `skali.example.com`),
 one for the registry (`cr.skali.example.com`), and one per application
 domain.
@@ -160,7 +160,7 @@ curl -fsSL https://skali.dev/install.sh | sh
 sudo skali cluster
 ```
 
-`skali cluster` walks you through creating the cluster and initializing skali
+`skali cluster` walks you through creating the cluster and initializing Skali
 on it with your domains, a Let's Encrypt account email, and the first admin
 account. It takes a few minutes and prints the Studio URL at the end. Run
 `sudo skali cluster` again at any time for status and the maintenance menu.
@@ -185,7 +185,7 @@ sudo skali cluster plan
 sudo skali cluster apply --wait
 ```
 
-Nodes declare capabilities (`application`, `database`, `edge`, ...) and skali
+Nodes declare capabilities (`application`, `database`, `edge`, ...) and Skali
 places workloads accordingly. Join servers the same way for a highly
 available control plane. See [enrollment and recovery](docs/enrollment.md).
 
@@ -281,7 +281,7 @@ buckets:
 ```
 
 `${NAME}` references are per-environment values you provide. `{{ ... }}`
-references are outputs of the databases and buckets skali provisions.
+references are outputs of the databases and buckets Skali provisions.
 `skali validate` checks a manifest, and the schema line at the top gives you
 completion and inline errors in any editor with YAML language support.
 
@@ -323,7 +323,7 @@ the release your project's cluster runs.
 | [Cluster updates](docs/updates.md) | Software updates, exact versions, recovery |
 | [Versioning](docs/versioning.md) | How the CLI matches the release of each cluster |
 | [Security](docs/security.md) | Trust boundaries and key recovery |
-| [Limitations](docs/limitations.md) | What skali does not do yet, and workarounds |
+| [Limitations](docs/limitations.md) | What Skali does not do yet, and workarounds |
 | [Roadmap](ROADMAP.md) | What comes next |
 
 ## How it fits together
@@ -333,7 +333,7 @@ and installs and maintains the servers. `skalid` is the control plane on the
 cluster: it stores what you declared, compiles it into Kubernetes objects, and
 reports status back. Skali Studio is a web app served on the platform domain.
 k3s and a small set of operators (CloudNativePG, Traefik, cert-manager,
-SeaweedFS, optionally Longhorn) do the generic orchestration. skali owns the
+SeaweedFS, optionally Longhorn) do the generic orchestration. Skali owns the
 hosts it runs on and never adopts a cluster it did not install.
 
 ## Contributing
@@ -344,5 +344,5 @@ security issues privately as described in [SECURITY.md](SECURITY.md).
 
 ## License
 
-skali is released under the [Apache License 2.0](LICENSE). You can run it for
+Skali is released under the [Apache License 2.0](LICENSE). You can run it for
 yourself, your company, or your customers, modify it, and redistribute it.

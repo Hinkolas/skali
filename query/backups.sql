@@ -53,3 +53,21 @@ WHERE runs.kind IN ('backup', 'restore', 'restore-accept') AND runs.status = 'ru
   AND runs.created_at < sqlc.arg(cutoff)::timestamptz
   AND (backups.id IS NULL OR backups.status IN ('succeeded', 'failed', 'cancelled'))
 ORDER BY runs.created_at;
+
+-- name: CountBackupRuns :one
+-- The Backups overview's activity: backups that finished since a point in
+-- time, by outcome, and the backups and restores queued or under way.
+SELECT count(*) FILTER (WHERE kind = 'backup' AND status = 'succeeded'
+                          AND finished_at >= sqlc.arg(since)::timestamptz)::bigint AS succeeded,
+       count(*) FILTER (WHERE kind = 'backup' AND status = 'failed'
+                          AND finished_at >= sqlc.arg(since)::timestamptz)::bigint AS failed,
+       count(*) FILTER (WHERE kind = 'backup' AND status IN ('pending', 'running'))::bigint AS backing_up,
+       count(*) FILTER (WHERE kind = 'restore' AND status IN ('pending', 'running'))::bigint AS restoring
+FROM backups;
+
+-- name: LatestFinishedBackup :one
+-- The newest backup run that ended with the given status.
+SELECT * FROM backups
+WHERE kind = 'backup' AND status = $1 AND finished_at IS NOT NULL
+ORDER BY finished_at DESC
+LIMIT 1;

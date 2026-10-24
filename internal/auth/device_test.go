@@ -25,8 +25,8 @@ func TestUserCodeFormat(t *testing.T) {
 	_, ok = NormalizeUserCode("BCDF-234")
 	require.False(t, ok)
 
-	require.Equal(t, "skali CLI", sanitizeDeviceLabel("  \x00 "))
-	require.Equal(t, "skali CLI on box", sanitizeDeviceLabel("skali CLI on box\n"))
+	require.Equal(t, "Skali CLI", sanitizeDeviceLabel("  \x00 "))
+	require.Equal(t, "Skali CLI on box", sanitizeDeviceLabel("Skali CLI on box\n"))
 }
 
 func TestDeviceLoginFlow(t *testing.T) {
@@ -36,7 +36,7 @@ func TestDeviceLoginFlow(t *testing.T) {
 	require.NoError(t, err)
 
 	cliMeta := SessionMeta{IPAddress: "198.51.100.9", UserAgent: "skali-cli"}
-	req, err := svc.StartDeviceLogin(ctx, "skali CLI on box", cliMeta)
+	req, err := svc.StartDeviceLogin(ctx, "Skali CLI on box", cliMeta)
 	require.NoError(t, err)
 	require.Len(t, req.DeviceCode, 43)
 	require.Len(t, req.UserCode, 9)
@@ -56,7 +56,7 @@ func TestDeviceLoginFlow(t *testing.T) {
 	info, err := svc.LookupDevice(ctx, user, req.UserCode)
 	require.NoError(t, err)
 	require.Equal(t, DeviceLogin, info.Intent)
-	require.Equal(t, "skali CLI on box", info.ClientLabel)
+	require.Equal(t, "Skali CLI on box", info.ClientLabel)
 	require.False(t, info.Mine)
 
 	require.NoError(t, svc.ApproveDevice(ctx, user, req.UserCode))
@@ -142,7 +142,7 @@ func TestDeviceReauthFlow(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, svc.IsSessionFresh(sess))
 
-	req, err := svc.StartDeviceReauth(ctx, owner, cliSession.ID, "skali CLI on box", meta)
+	req, err := svc.StartDeviceReauth(ctx, owner, cliSession.ID, "Skali CLI on box", meta)
 	require.NoError(t, err)
 
 	// Another user sees it is not theirs and cannot approve it.

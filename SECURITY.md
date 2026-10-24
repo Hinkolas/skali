@@ -1,6 +1,6 @@
 # Security policy
 
-skali runs your applications, holds database and bucket credentials, and
+Skali runs your applications, holds database and bucket credentials, and
 manages the hosts it is installed on, so security reports are taken
 seriously and handled privately.
 
@@ -28,9 +28,9 @@ allows, exposes secrets or values, escapes an application container onto
 a host, or tampers with builds, images, or the installer's trust
 (checksums, join tokens, mTLS between nodes).
 
-Out of scope: vulnerabilities in the operators skali deploys (k3s,
+Out of scope: vulnerabilities in the operators Skali deploys (k3s,
 CloudNativePG, Traefik, cert-manager, SeaweedFS, Longhorn), which belong
-to their upstream projects, unless skali's configuration of them is the
+to their upstream projects, unless Skali's configuration of them is the
 cause.
 
 ## Deployment trust boundary

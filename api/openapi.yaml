@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
-  title: skali API
+  title: Skali API
   description: |
-    Client-facing API of skali. Authentication is email+password with
+    Client-facing API of Skali. Authentication is email+password with
     optional TOTP two-factor; sessions are opaque bearer tokens. The same
     API serves every client: the Studio, the `skali` CLI, and future
     native apps.
@@ -56,7 +56,7 @@ info:
 
     Every response also carries the `Skali-Version` header: the daemon
     build version, available pre-auth and on errors. The API is a private
-    wire between one skali release and its skalid: the CLI sends its own
+    wire between one Skali release and its skalid: the CLI sends its own
     build version in the `Skali-Client-Version` request header, and a
     released daemon refuses a released CLI of any other version on every
     `/v1` route, login and device authorization included, with
@@ -88,7 +88,7 @@ paths:
       operationId: health
       summary: Liveness and the cluster's version
       description: |
-        The one route every skali release can read from every skalid
+        The one route every Skali release can read from every skalid
         release: the body reports liveness and the `Skali-Version` and
         `Skali-Instance` response headers name the release and the
         installation. A CLI of another version reads the version here,
@@ -440,7 +440,7 @@ paths:
               properties:
                 client_label:
                   type: string
-                  description: Shown to the approver, e.g. "skali CLI on laptop".
+                  description: Shown to the approver, e.g. "Skali CLI on laptop".
       responses:
         "201":
           description: Request opened.
@@ -2638,6 +2638,43 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /v1/system/backup-target/summary:
+    get:
+      operationId: getBackupTargetSummary
+      summary: Summarize the backup target
+      description: |
+        Admin only. The configured target with what its bucket holds and
+        how backups have been running, for an overview page.
+
+        `reachable` says whether the bucket answered; while it does not,
+        `unreachable_reason` says why and `snapshots` is null. The snapshot
+        totals add up the snapshot manifests: the summary lists the
+        snapshot directories, never the backed-up data, and reads each
+        manifest once (manifests never change). `bytes` is what the
+        snapshots' components hold; objects no manifest references (an
+        interrupted backup's leftovers) are not counted, and neither is
+        anything else the bucket holds. `orphaned` counts snapshots of
+        environments the control plane no longer has.
+
+        `runs` and `schedules` come from the database: backups that
+        finished in the 7 days since `runs.since`, the backups and restores
+        queued or under way, the newest success and failure, and how many
+        environments back up on a schedule. Absent in API-only mode.
+      tags: [backups]
+      responses:
+        "200":
+          description: The target and its summary.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BackupTargetSummary" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: No backup target is configured.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /v1/system/database-pools:
     get:
       operationId: listDatabasePools
@@ -4696,7 +4733,7 @@ components:
           enum: [login, reauth]
         client_label:
           type: string
-          description: The requesting client's self-description, e.g. "skali CLI on laptop".
+          description: The requesting client's self-description, e.g. "Skali CLI on laptop".
         created_at:
           type: string
           format: date-time
@@ -5706,7 +5743,7 @@ components:
 
     Release:
       type: object
-      description: One published skali release as the release feed reports it.
+      description: One published Skali release as the release feed reports it.
       required: [version, prerelease, published_at]
       properties:
         version:
@@ -5917,6 +5954,104 @@ components:
         bytes:
           type: integer
           format: int64
+
+    BackupTargetSummary:
+      type: object
+      description: The backup target at a glance (getBackupTargetSummary).
+      required: [target, reachable, checked_at, snapshots, runs, schedules]
+      properties:
+        target: { $ref: "#/components/schemas/BackupTarget" }
+        reachable:
+          type: boolean
+        unreachable_reason:
+          type: string
+          description: Why the bucket did not answer; absent while it does.
+        checked_at:
+          type: string
+          format: date-time
+        snapshots:
+          description: What the bucket's snapshot manifests hold; null while the bucket does not answer.
+          oneOf:
+            - type: "null"
+            - type: object
+              required: [count, bytes, manual, scheduled, orphaned, oldest_at, newest_at, projects]
+              properties:
+                count: { type: integer }
+                bytes:
+                  type: integer
+                  format: int64
+                manual: { type: integer }
+                scheduled: { type: integer }
+                orphaned:
+                  type: integer
+                  description: Snapshots of environments the control plane no longer has.
+                oldest_at:
+                  type: [string, "null"]
+                  format: date-time
+                newest_at:
+                  type: [string, "null"]
+                  format: date-time
+                projects:
+                  type: array
+                  description: The split by project, largest first.
+                  items:
+                    type: object
+                    required: [project, count, bytes, newest_at]
+                    properties:
+                      project: { type: string }
+                      count: { type: integer }
+                      bytes:
+                        type: integer
+                        format: int64
+                      newest_at:
+                        type: string
+                        format: date-time
+        runs:
+          type: object
+          required: [since, succeeded, failed, backing_up, restoring, last_succeeded, last_failed]
+          properties:
+            since:
+              type: string
+              format: date-time
+              description: The start of the window succeeded and failed count.
+            succeeded: { type: integer }
+            failed: { type: integer }
+            backing_up:
+              type: integer
+              description: Backups queued or under way.
+            restoring:
+              type: integer
+              description: Restores queued or under way.
+            last_succeeded:
+              oneOf:
+                - $ref: "#/components/schemas/BackupRunInfo"
+                - type: "null"
+            last_failed:
+              oneOf:
+                - $ref: "#/components/schemas/BackupRunInfo"
+                - type: "null"
+        schedules:
+          type: object
+          required: [environments, scheduled]
+          properties:
+            environments: { type: integer }
+            scheduled:
+              type: integer
+              description: Environments with automatic backups on.
+
+    BackupRunInfo:
+      type: object
+      description: One finished backup run.
+      required: [project, environment, finished_at]
+      properties:
+        project: { type: string }
+        environment: { type: string }
+        finished_at:
+          type: string
+          format: date-time
+        error:
+          type: string
+          description: Why the run failed; absent for a success.
 
     BackupTarget:
       type: object

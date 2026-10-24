@@ -1,13 +1,13 @@
 ---
 name: skali
-description: Author and edit skali.yaml manifests and design applications for the skali platform. Use when writing or reviewing a skali.yaml or skali.yml file, building or porting an app to run on skali (stateless containers, managed Postgres, S3 buckets), choosing databases, buckets, values, secrets, or a rollout strategy, or fixing skali validate, compile, plan, or deploy errors.
+description: Author and edit skali.yaml manifests and design applications for the Skali platform. Use when writing or reviewing a skali.yaml or skali.yml file, building or porting an app to run on Skali (stateless containers, managed Postgres, S3 buckets), choosing databases, buckets, values, secrets, or a rollout strategy, or fixing skali validate, compile, plan, or deploy errors.
 ---
 
 <!-- Managed by "skali skill install"; local edits are overwritten on reinstall. -->
 
-# skali
+# Skali
 
-skali runs container applications with managed PostgreSQL and S3 storage,
+Skali runs container applications with managed PostgreSQL and S3 storage,
 configured in a project manifest. Use the CLI to establish the release and
 read its exact grammar and platform behavior before designing or editing.
 

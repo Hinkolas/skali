@@ -27,7 +27,7 @@ export function buildOrg(
 	nodeCount: number | null
 ): OrgView {
 	return {
-		name: meta?.name || hostname || 'skali',
+		name: meta?.name || hostname || 'Skali',
 		version: meta?.version ?? '',
 		update_available: meta?.update_available?.version ?? null,
 		project_count: projectCount,

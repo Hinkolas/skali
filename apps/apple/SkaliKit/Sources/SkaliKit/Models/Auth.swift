@@ -1,0 +1,154 @@
+import Foundation
+
+/// An account on a cluster (`User` in api/openapi.yaml).
+public struct User: Codable, Hashable, Sendable, Identifiable {
+    public let id: String
+    public let email: String
+    public let name: String
+    /// The instance-wide role: `admin` or `member`.
+    public let role: String
+    public let createProjects: Bool
+    public let twoFactorEnabled: Bool
+    public let createdAt: Date
+
+    public init(
+        id: String, email: String, name: String, role: String,
+        createProjects: Bool, twoFactorEnabled: Bool, createdAt: Date
+    ) {
+        self.id = id
+        self.email = email
+        self.name = name
+        self.role = role
+        self.createProjects = createProjects
+        self.twoFactorEnabled = twoFactorEnabled
+        self.createdAt = createdAt
+    }
+
+    public var isAdmin: Bool { role == "admin" }
+
+    /// Up to two initials for the avatar, as the Studio makes them: the
+    /// first and last word of the name ("Ada Lovelace" is "AL"), else its
+    /// first two letters, else the email's ("ci-bot@…" is "CI").
+    public var initials: String {
+        let words = name.split(separator: " ")
+        if words.count > 1, let first = words.first?.first, let last = words.last?.first {
+            return String([first, last]).uppercased()
+        }
+        let base = words.first.map(String.init) ?? email
+        return String(base.filter { $0.isLetter || $0.isNumber }.prefix(2)).uppercased()
+    }
+}
+
+/// One signed-in session (`Session`).
+public struct Session: Codable, Hashable, Sendable, Identifiable {
+    public let id: String
+    public let expiresAt: Date
+    public let ipAddress: String?
+    public let userAgent: String?
+    public let createdAt: Date
+    public let current: Bool?
+
+    public init(
+        id: String, expiresAt: Date, ipAddress: String?, userAgent: String?,
+        createdAt: Date, current: Bool?
+    ) {
+        self.id = id
+        self.expiresAt = expiresAt
+        self.ipAddress = ipAddress
+        self.userAgent = userAgent
+        self.createdAt = createdAt
+        self.current = current
+    }
+
+    public var isCurrent: Bool { current == true }
+}
+
+/// `POST /v1/users`: an account with its initial password; there is no
+/// invitation email by design.
+public struct NewUser: Encodable, Hashable, Sendable {
+    public var email: String
+    public var name: String
+    public var password: String
+    public var role: String
+    /// Whether a member may create projects; admins always may.
+    public var createProjects: Bool
+
+    public init(email: String, name: String, password: String, role: String, createProjects: Bool) {
+        self.email = email
+        self.name = name
+        self.password = password
+        self.role = role
+        self.createProjects = createProjects
+    }
+}
+
+/// `PATCH /v1/users/{id}`: only the fields that change.
+public struct UserPatch: Encodable, Hashable, Sendable {
+    public var name: String?
+    public var role: String?
+    public var createProjects: Bool?
+
+    public init(name: String? = nil, role: String? = nil, createProjects: Bool? = nil) {
+        self.name = name
+        self.role = role
+        self.createProjects = createProjects
+    }
+
+    public var isEmpty: Bool { name == nil && role == nil && createProjects == nil }
+
+    /// What changes from `user` to the edited values.
+    public init(from user: User, name: String, role: String, createProjects: Bool, mayChangeRole: Bool) {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        self.name = trimmed == user.name ? nil : trimmed
+        self.role = mayChangeRole && role != user.role ? role : nil
+        let projects = role == "admin" ? user.createProjects : createProjects
+        self.createProjects = projects == user.createProjects ? nil : projects
+    }
+}
+
+struct SessionsResponse: Decodable {
+    let sessions: [Session]
+}
+
+/// `POST /v1/auth/2fa/enable`: the secret to add to an authenticator, and
+/// backup codes that only become valid once the enrollment is confirmed.
+public struct TwoFactorEnrollment: Codable, Hashable, Sendable {
+    public let secret: String
+    public let otpauthUri: String
+    public let backupCodes: [String]
+
+    public init(secret: String, otpauthUri: String, backupCodes: [String]) {
+        self.secret = secret
+        self.otpauthUri = otpauthUri
+        self.backupCodes = backupCodes
+    }
+}
+
+/// `GET /v1/auth/session`.
+public struct CurrentSession: Codable, Sendable {
+    public let user: User
+    public let session: Session
+}
+
+/// A freshly minted bearer session (`SessionCreated`).
+public struct SessionCreated: Codable, Sendable {
+    public let token: String
+    public let expiresAt: Date
+    public let user: User
+}
+
+/// `POST /v1/auth/device/requests` (`DeviceRequest`).
+public struct DeviceRequest: Codable, Sendable {
+    public let deviceCode: String
+    public let userCode: String
+    public let expiresAt: Date
+    /// The minimum seconds between polls.
+    public let interval: Int
+}
+
+/// `POST /v1/auth/device/token` (`DevicePoll`).
+public struct DevicePoll: Codable, Sendable {
+    /// `pending`, `approved`, `denied` or `expired`.
+    public let status: String
+    public let session: SessionCreated?
+}

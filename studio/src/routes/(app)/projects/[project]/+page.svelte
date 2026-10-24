@@ -88,7 +88,7 @@
 </script>
 
 <svelte:head>
-	<title>{title} — skali</title>
+	<title>{title} — Skali</title>
 </svelte:head>
 
 <!-- Promote and Redeploy are environment-wide and live in the topbar next

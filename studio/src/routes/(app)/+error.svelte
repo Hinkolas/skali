@@ -4,7 +4,7 @@
 </script>
 
 <svelte:head>
-	<title>{page.status} — skali</title>
+	<title>{page.status} — Skali</title>
 </svelte:head>
 
 <!-- pb-16 lifts the block slightly above true center, which reads better

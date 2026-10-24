@@ -6,7 +6,7 @@
 	<head>
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
-		<title>%sveltekit.status% — skali</title>
+		<title>%sveltekit.status% — Skali</title>
 		<style>
 			body {
 				margin: 0;
@@ -46,12 +46,10 @@
 				);
 			}
 			.logo {
-				display: grid;
-				place-items: center;
+				display: block;
 				width: 42px;
 				height: 42px;
 				border-radius: 12px;
-				background: linear-gradient(135deg, #9076ff, #5b33ff);
 				box-shadow: 0 0 26px rgb(124 92 255 / 0.4);
 				color: #0b0b0f;
 				font-size: 22px;
@@ -97,25 +95,7 @@
 	<body>
 		<main>
 			<div class="halo"></div>
-			<div class="logo">
-				<svg
-					xmlns="http://www.w3.org/2000/svg"
-					width="24"
-					height="24"
-					viewBox="0 0 24 24"
-					fill="none"
-					stroke="currentColor"
-					stroke-width="2.25"
-					stroke-linecap="round"
-					stroke-linejoin="round"
-					aria-hidden="true"
-				>
-					<rect width="20" height="8" x="2" y="2" rx="2" ry="2" />
-					<rect width="20" height="8" x="2" y="14" rx="2" ry="2" />
-					<line x1="6" x2="6.01" y1="6" y2="6" />
-					<line x1="6" x2="6.01" y1="18" y2="18" />
-				</svg>
-			</div>
+			<img class="logo" src="/favicon.png" alt="" width="42" height="42" />
 			<div class="code">%sveltekit.status%</div>
 			<h1>%sveltekit.error.message%</h1>
 			<p>The page failed to render. Reload, or head back home.</p>

@@ -147,7 +147,7 @@
 				return {
 					icon: CircleCheck,
 					tone: 'success',
-					sub: `skali ${summary.converged_version ?? ''} · ${checked}`
+					sub: `Skali ${summary.converged_version ?? ''} · ${checked}`
 				};
 			case 'available':
 				return {
@@ -340,7 +340,7 @@
 </script>
 
 <svelte:head>
-	<title>Updates — skali</title>
+	<title>Updates — Skali</title>
 </svelte:head>
 
 <PageHeader title="Software update">
@@ -698,7 +698,7 @@
 		</div>
 		{#if status.installed.url}
 			<p class="text-text-muted mt-3 text-sm">
-				Every skali CLI that talks to this cluster fetches release
+				Every Skali CLI that talks to this cluster fetches release
 				<span class="font-mono">{status.installed.version}</span>
 				on first contact. To install it by hand, run
 				<span class="font-mono">skali upgrade --version {status.installed.version}</span>

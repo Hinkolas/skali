@@ -11,7 +11,7 @@
 </script>
 
 <svelte:head>
-	<title>{service.name} · {data.project.display_name || data.project.name} — skali</title>
+	<title>{service.name} · {data.project.display_name || data.project.name} — Skali</title>
 </svelte:head>
 
 {#if service.type === 'application'}

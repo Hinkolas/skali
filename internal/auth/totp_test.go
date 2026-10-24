@@ -39,7 +39,7 @@ func TestGenerateTOTPURI(t *testing.T) {
 	key, err := generateTOTP("nick@example.com")
 	require.NoError(t, err)
 	require.Contains(t, key.URL(), "otpauth://totp/")
-	require.Contains(t, key.URL(), "issuer=skali")
+	require.Contains(t, key.URL(), "issuer=Skali")
 	require.NotEmpty(t, key.Secret())
 }
 

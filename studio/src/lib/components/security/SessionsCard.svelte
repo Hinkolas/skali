@@ -2,6 +2,8 @@
 	import { invalidateAll } from '$app/navigation';
 	import Monitor from '@lucide/svelte/icons/monitor';
 	import Smartphone from '@lucide/svelte/icons/smartphone';
+	import SquareTerminal from '@lucide/svelte/icons/square-terminal';
+	import Tablet from '@lucide/svelte/icons/tablet';
 	import X from '@lucide/svelte/icons/x';
 	import { api, ApiError } from '$lib/api/client';
 	import { dialog } from '$lib/stores/dialog.svelte';
@@ -55,7 +57,11 @@
 					<div
 						class="bg-surface-input text-text-tertiary grid size-7 flex-none place-items-center rounded-lg"
 					>
-						{#if device?.mobile}
+						{#if device?.kind === 'cli'}
+							<SquareTerminal size={14} strokeWidth={1.75} />
+						{:else if device?.tablet}
+							<Tablet size={14} strokeWidth={1.75} />
+						{:else if device?.mobile}
 							<Smartphone size={14} strokeWidth={1.75} />
 						{:else}
 							<Monitor size={14} strokeWidth={1.75} />
@@ -64,6 +70,9 @@
 					<span class="text-text-secondary truncate text-base" title={session.user_agent}>
 						{device?.label ?? (session.user_agent || 'Unknown device')}
 					</span>
+					{#if device?.host}
+						<span class="font-mono text-text-faint truncate text-xs">{device.host}</span>
+					{/if}
 					{#if session.current}
 						<span
 							class="font-mono bg-accent/15 text-accent-light flex-none rounded-full px-2 py-0.5 text-2xs"

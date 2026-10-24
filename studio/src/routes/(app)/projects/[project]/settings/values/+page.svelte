@@ -136,7 +136,7 @@
 </script>
 
 <svelte:head>
-	<title>Values · {data.project.display_name || data.project.name} — skali</title>
+	<title>Values · {data.project.display_name || data.project.name} — Skali</title>
 </svelte:head>
 
 <PageHeader title="Settings">

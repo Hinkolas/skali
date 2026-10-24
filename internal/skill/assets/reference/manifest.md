@@ -1,10 +1,10 @@
 # The skali.yaml manifest
 
-This reference describes exactly one skali release, named above it.
+This reference describes exactly one Skali release, named above it.
 `skali skill read manifest`, run from a project directory, prints the
 reference for the release of the project's target cluster.
 
-skali compiles one manifest at the project root into everything an
+Skali compiles one manifest at the project root into everything an
 environment runs: applications, databases, buckets, and the values they
 require. The same definition deploys unchanged to a local
 `skali dev` cluster and to production.

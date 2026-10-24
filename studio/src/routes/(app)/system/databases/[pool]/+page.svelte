@@ -41,7 +41,7 @@
 </script>
 
 <svelte:head>
-	<title>{data.pool.name} · Databases — skali</title>
+	<title>{data.pool.name} · Databases — Skali</title>
 </svelte:head>
 
 <PoolConnectionsCard pool={data.pool} />

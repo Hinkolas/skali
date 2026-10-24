@@ -36,7 +36,7 @@ var verboseTranscript bool
 func newRootCommand() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "skali",
-		Short:         "Deploy apps and manage skali clusters",
+		Short:         "Deploy apps and manage Skali clusters",
 		Version:       versionpkg.Version,
 		SilenceUsage:  true,
 		SilenceErrors: true,

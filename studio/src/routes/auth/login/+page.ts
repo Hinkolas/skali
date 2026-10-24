@@ -6,5 +6,5 @@ import type { PageLoad } from './$types';
 export const load: PageLoad = async ({ fetch, url }) => {
 	const next = safeNext(url.searchParams.get('next'));
 	if (await readUser(fetch)) redirect(307, next);
-	return { next, title: 'Sign in to skali' };
+	return { next, title: 'Sign in to Skali' };
 };

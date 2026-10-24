@@ -314,7 +314,7 @@
 </script>
 
 <svelte:head>
-	<title>Settings · {data.project.display_name || data.project.name} — skali</title>
+	<title>Settings · {data.project.display_name || data.project.name} — Skali</title>
 </svelte:head>
 
 <PageHeader title="Settings">

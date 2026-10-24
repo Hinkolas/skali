@@ -12,7 +12,7 @@
 </script>
 
 <svelte:head>
-	<title>Config · {service.name} — skali</title>
+	<title>Config · {service.name} — Skali</title>
 </svelte:head>
 
 <div class="mb-3.5 flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5">

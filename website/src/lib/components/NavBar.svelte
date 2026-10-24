@@ -11,7 +11,7 @@
 	<nav aria-label="Main" class="mx-auto flex h-18 max-w-300 items-center gap-10 px-6 text-sm">
 		<a href={resolve('/')} class="flex items-center gap-2.5 text-text-primary">
 			<LogoMark />
-			<span class="text-[17px] font-semibold tracking-[-0.02em]">skali</span>
+			<span class="text-[17px] font-semibold tracking-[-0.02em]">Skali</span>
 		</a>
 		<div class="hidden gap-7 sm:flex">
 			<a
@@ -38,7 +38,7 @@
 			<a
 				href={links.repo}
 				rel="external"
-				aria-label="skali on GitHub"
+				aria-label="Skali on GitHub"
 				class="flex size-11 items-center justify-center text-text-muted transition-colors hover:text-text-primary"
 			>
 				<GitHubIcon />

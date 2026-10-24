@@ -1,6 +1,6 @@
-# Building applications for skali
+# Building applications for Skali
 
-skali runs container applications as replicated, disposable processes
+Skali runs container applications as replicated, disposable processes
 behind a managed edge, with PostgreSQL databases and S3 buckets
 provisioned from the same manifest. Architecture that embraces this runs
 well; architecture that assumes a single long-lived machine fights it.
@@ -61,7 +61,7 @@ or logs.
 
 ## The lifecycle contract
 
-skali drives deployments through signals the application must provide:
+Skali drives deployments through signals the application must provide:
 
 - Health endpoints. Declare `startup`, `readiness`, and `liveness` HTTP
   probes. Readiness gates traffic and rollout progress; a deployment is

@@ -33,9 +33,9 @@ func browserAuthAvailable(noBrowser bool) bool {
 func deviceLabel() string {
 	host, err := os.Hostname()
 	if err != nil || host == "" {
-		return "skali CLI"
+		return "Skali CLI"
 	}
-	return "skali CLI on " + host
+	return "Skali CLI on " + host
 }
 
 // verificationURL is the Studio page for a code. The Studio is served

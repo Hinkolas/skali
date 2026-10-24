@@ -51,7 +51,7 @@
 </script>
 
 <svelte:head>
-	<title>Authorize the CLI - skali</title>
+	<title>Authorize the CLI - Skali</title>
 </svelte:head>
 
 <div class="bg-surface-raised border-border-raised flex flex-col gap-3.5 rounded-2xl border p-6.5">

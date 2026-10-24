@@ -106,6 +106,7 @@ func TestBackupTargetRequireAdmin(t *testing.T) {
 		{"GET", "/v1/system/backup-target"},
 		{"PUT", "/v1/system/backup-target"},
 		{"DELETE", "/v1/system/backup-target"},
+		{"GET", "/v1/system/backup-target/summary"},
 	} {
 		status, body := a.do(tc.method, tc.path, member, nil)
 		require.Equal(t, http.StatusForbidden, status, "%s %s", tc.method, tc.path)
@@ -390,4 +391,58 @@ func TestCancelBackupRunCancelsItsRow(t *testing.T) {
 	require.Equal(t, backup.StatusCancelled, row.Status)
 	status, body = a.do("POST", "/v1/environments/"+envID+"/backups", token, nil)
 	require.Equal(t, http.StatusAccepted, status, "%v", body)
+}
+
+// The summary reads the bucket's snapshot manifests; an empty target that
+// answers sums to zero, and one that does not answer still returns the
+// target with the reason instead of failing.
+func TestBackupTargetSummary(t *testing.T) {
+	a := newTestAPI(t)
+	a.createAdmin("admin@example.com", "hunter2hunter2")
+	admin := a.login("admin@example.com", "hunter2hunter2")
+
+	status, body := a.do("GET", "/v1/system/backup-target/summary", admin, nil)
+	require.Equal(t, http.StatusNotFound, status, "%v", body)
+
+	var reachable atomic.Bool
+	reachable.Store(true)
+	s3 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodHead && r.URL.Path == "/backups/":
+			if reachable.Load() {
+				w.WriteHeader(http.StatusOK)
+			} else {
+				w.WriteHeader(http.StatusNotFound)
+			}
+		case r.URL.Query().Has("list-type"):
+			w.Header().Set("Content-Type", "application/xml")
+			fmt.Fprint(w, `<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><IsTruncated>false</IsTruncated></ListBucketResult>`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(s3.Close)
+	target := validBackupTarget()
+	target["endpoint"], target["bucket"] = s3.URL, "backups"
+	status, body = a.do("PUT", "/v1/system/backup-target", admin, target)
+	require.Equal(t, http.StatusOK, status, "%v", body)
+
+	status, body = a.do("GET", "/v1/system/backup-target/summary", admin, nil)
+	require.Equal(t, http.StatusOK, status, "%v", body)
+	require.Equal(t, true, body["reachable"])
+	require.Equal(t, "backups", body["target"].(map[string]any)["bucket"])
+	require.NotContains(t, body["target"], "secret_access_key")
+	snapshots := body["snapshots"].(map[string]any)
+	require.EqualValues(t, 0, snapshots["count"])
+	require.Equal(t, []any{}, snapshots["projects"])
+	runs := body["runs"].(map[string]any)
+	require.Nil(t, runs["last_succeeded"])
+	require.Contains(t, body, "schedules")
+
+	reachable.Store(false)
+	status, body = a.do("GET", "/v1/system/backup-target/summary", admin, nil)
+	require.Equal(t, http.StatusOK, status, "%v", body)
+	require.Equal(t, false, body["reachable"])
+	require.NotEmpty(t, body["unreachable_reason"])
+	require.Nil(t, body["snapshots"])
 }

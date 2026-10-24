@@ -149,10 +149,10 @@ extension versions; do not interpret every package match as a reachable
 64-bit PostgreSQL exploit.
 
 D3's Traefik critical match is CVE-2026-88007, with a reported fix in 3.7.13.
-Its stated HTTP/3-backend/NTLM conditions are not configured by skali's rendered
+Its stated HTTP/3-backend/NTLM conditions are not configured by Skali's rendered
 routes. Confirm that condition against the upstream advisory and installation
 before assigning a final exception; this one match does not establish that
-skali exposes the exploit, or resolve its other Traefik/runtime findings.
+Skali exposes the exploit, or resolve its other Traefik/runtime findings.
 
 SeaweedFS's binary was built with Go 1.25.12; its findings include Go TLS/x509,
 HTTP/2, gRPC, compression and optional library APIs. The current root module's
@@ -166,7 +166,7 @@ database of 2026-10-22 13:15 UTC, plus govulncheck 1.7.0 in binary mode.
 
 | Input | Change | Evidence and decision |
 | --- | --- | --- |
-| skalid runtime base | `alpine:3.24.2` → `3.24.3` (`sha256:b3413572…c9e6`), mirrored; release and dev Dockerfiles | 3.24.3 scans 0/0/0/0/0 on both architectures (3.24.2: 0/0/1/0/2). The release image assembled from it under BuildKit v0.34.1 on both architectures carries zlib 1.3.2-r1, musl 1.2.6-r3 and ca-certificates 20261020-r0, and scans 0/0/0/0/1. The remaining entry is GO-2026-5932, the deprecation notice for `golang.org/x/crypto/openpgp`, which skali does not import; govulncheck reports no called vulnerable symbols. |
+| skalid runtime base | `alpine:3.24.2` → `3.24.3` (`sha256:b3413572…c9e6`), mirrored; release and dev Dockerfiles | 3.24.3 scans 0/0/0/0/0 on both architectures (3.24.2: 0/0/1/0/2). The release image assembled from it under BuildKit v0.34.1 on both architectures carries zlib 1.3.2-r1, musl 1.2.6-r3 and ca-certificates 20261020-r0, and scans 0/0/0/0/1. The remaining entry is GO-2026-5932, the deprecation notice for `golang.org/x/crypto/openpgp`, which Skali does not import; govulncheck reports no called vulnerable symbols. |
 | BuildKit | v0.33.1 → v0.34.1 (`sha256:99368f3e…da5c`), mirrored; release workflow | 0/115/119/12/9 → 0/97/86/9/8 (amd64; arm64 0/93/82/5/8). Every remaining high/critical is in the bundled CNI plugins (Go 1.25.7 standard library), runc's or buildctl's x/net, or go-archive. The release builder runs on an ephemeral runner and builds only `build/skalid.release.Dockerfile` from pinned inputs, so no untrusted build context or network-namespaced build reaches them. |
 | binfmt/QEMU | unchanged `qemu-v10.2.3` (`sha256:400a4873…f0`) | No newer QEMU build is published; the `-68` build tag has the same digest. It runs once, privileged, on the ephemeral runner to register handlers. |
 | GoReleaser | `~> v2` → exact `v2.18.3` in release and CI | The newest release. Its Linux binary (Go 1.27.1, checksum verified) has 15 symbol-level IDs, mainly standard-library TLS/x509/HTTP including GO-2026-6809. It reads the repository and talks to GitHub and GHCR with the job's token; no newer build exists. Pinning records the exact version for the release. |
@@ -187,7 +187,7 @@ are identical on amd64 and arm64.
 
 | Input | Change | Evidence and decision |
 | --- | --- | --- |
-| SeaweedFS | `chrislusf/seaweedfs:4.39` → `4.48` (`sha256:4e61d15f…872d`, Alpine 3.24.2) | 0/23/28/28/5 → 0/5/15/1/3. 4.48 is the newest release; its four standard-library highs and one x/net high are fixed in Go 1.26.9/1.26.10 and x/net 0.60.0, newer than its build. From 4.41 the master reports anonymous cluster statistics to telemetry.seaweedfs.com once a day unless disabled, so both rendered shapes now pass `-telemetry=false` / `-master.telemetry=false`. 4.47's `createTable` change only normalises `true`/`false`; skali's custom `postgres2` template is used as before. 4.46 binds the admin UI to loopback by default; skali does not run it. |
+| SeaweedFS | `chrislusf/seaweedfs:4.39` → `4.48` (`sha256:4e61d15f…872d`, Alpine 3.24.2) | 0/23/28/28/5 → 0/5/15/1/3. 4.48 is the newest release; its four standard-library highs and one x/net high are fixed in Go 1.26.9/1.26.10 and x/net 0.60.0, newer than its build. From 4.41 the master reports anonymous cluster statistics to telemetry.seaweedfs.com once a day unless disabled, so both rendered shapes now pass `-telemetry=false` / `-master.telemetry=false`. 4.47's `createTable` change only normalises `true`/`false`; Skali's custom `postgres2` template is used as before. 4.46 binds the admin UI to loopback by default; Skali does not run it. |
 | CNPG | `1.29.2` → `1.30.1` (`sha256:923c267e…c07`, Debian 13.7) | 0/38/30/2/1 → 0/10/26/2/1. 1.29.3 is the final 1.29 release and 1.29 is no longer supported, so the update moves to the supported 1.30 line. 1.30 adds authenticated operator calls to the instance manager (GHSA-7qwx-x8ff-3px9, not backported); pool policies admit tenants only on 5432, so tenants could not reach that endpoint before either. The manifest is vendored verbatim; besides the image it adds the `DatabaseRole` CRD and its RBAC. The remaining highs are the same Go/x/net set as SeaweedFS. |
 | cert-manager | `v1.21.1` → `v1.21.2` (controller `sha256:70f532fd…12b8`, webhook `sha256:a60e2dac…57ae`, cainjector `sha256:c85268c6…7562`, acmesolver `sha256:699b40d6…2503`) | Controller/webhook 0/17/16/4/1 → 0/5/13/4/2; cainjector 0/15/15/1/1 → 0/5/13/1/2; acmesolver 0/14/13/1/0 → 0/5/13/1/1. A patch release; the vendored manifest differs from 1.21.1 only in versions. It also stops ACME response bodies reaching Issuer conditions and Events. The remaining highs are the same Go/x/net set. |
 
@@ -222,7 +222,7 @@ and arm64.
 | Component | Change | Evidence and decision |
 | --- | --- | --- |
 | k3s | `v1.36.3+k3s1` → `v1.36.5+k3s1` (`rancher/k3s` `sha256:057cfd5a…29bb`); installer pin, k3d image, vendored `get.k3s.io` | 0/87/76/10/3 → 0/46/73/10/3. Kubernetes 1.36.5, containerd 2.3.4-k3s1.36, runc 1.4.2. The remaining highs are Go standard-library and x/net advisories in k3s, runc, containerd's shim and the CNI plugins, x/crypto/ssh in k3s, and two `docker/docker` matches without a fix. govulncheck finds x/crypto/ssh client, server and agent symbols in the k3s binary (`ssh.Dial`, `ssh.NewServerConn`, `agent.ServeAgent`), but k3s opens no SSH listener: on the Lima server its sockets are the API server (6443), kubelet (10250), etcd, the embedded registry mirror (5001) and loopback-only ports. The refreshed install script differs from the previous copy only in Flatcar/CoreOS detection. |
-| Traefik | `3.7.8` → `3.7.13` (`sha256:f86a2cab…1259`) | 1/30/28/18/3 → 0/7/22/17/3; removes critical CVE-2026-88007. The remaining highs are Go 1.26.8 standard library, x/net and Alpine's OpenSSL. Both k3s releases ship the same upstream chart (40.1.0), and skali's `HelmChartConfig` overlay still renders: on k3d with 1.36.5 the Deployment runs with `readTimeout=30m`, cross-namespace CRD backends, router labels and the exposed metrics port. |
+| Traefik | `3.7.8` → `3.7.13` (`sha256:f86a2cab…1259`) | 1/30/28/18/3 → 0/7/22/17/3; removes critical CVE-2026-88007. The remaining highs are Go 1.26.8 standard library, x/net and Alpine's OpenSSL. Both k3s releases ship the same upstream chart (40.1.0), and Skali's `HelmChartConfig` overlay still renders: on k3d with 1.36.5 the Deployment runs with `readTimeout=30m`, cross-namespace CRD backends, router labels and the exposed metrics port. |
 | CoreDNS | `1.14.6` → `1.14.7` (`sha256:7efd3c63…a286`) | 0/33/22/1/2 → 0/22/22/1/2. |
 | local-path-provisioner | `v0.0.36` → `v0.0.37` (`sha256:e757967a…a86f`) | 0/178/145/43/3 → 0/15/13/1/0. |
 | klipper-helm | unchanged `v0.13.3-build20260727` | 0/91/80/6/5, in Helm and its helpers (Go 1.26.5, x/crypto, oras-go). k3s 1.36.5 still pins this build; newer builds exist upstream but are not part of a k3s release. It runs only as the short-lived Job that installs k3s's own Traefik chart from tarballs k3s serves itself, and exposes no listener. Kept with k3s's pin. |

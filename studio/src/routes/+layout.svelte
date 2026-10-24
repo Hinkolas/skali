@@ -1,6 +1,6 @@
 <script lang="ts">
 	import './layout.css';
-	import favicon from '$lib/assets/favicon.svg';
+	import favicon from '$lib/assets/logo.png';
 	import Modal from '$lib/components/ui/Modal.svelte';
 	import Toaster from '$lib/components/ui/Toaster.svelte';
 
@@ -8,7 +8,7 @@
 </script>
 
 <svelte:head>
-	<title>skali</title>
+	<title>Skali</title>
 	<link rel="icon" href={favicon} />
 </svelte:head>
 

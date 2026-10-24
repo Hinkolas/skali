@@ -258,7 +258,7 @@
 	<div class="flex h-[62px] shrink-0 gap-[11px] px-[11px]">
 		<div class="flex w-[275px] shrink-0 items-center gap-[11px] px-[4.4px]">
 			<LogoMark size={28.6} />
-			<span class="text-[17px] font-semibold tracking-[-0.01em]">skali</span>
+			<span class="text-[17px] font-semibold tracking-[-0.01em]">Skali</span>
 		</div>
 		<div class="flex grow items-center gap-[13.2px]">
 			<div class="-ml-[8.8px] flex items-center gap-[4.4px] text-[14px] font-medium">

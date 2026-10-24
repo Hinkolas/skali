@@ -46,7 +46,7 @@ until reconciliation confirms that the old routers are absent. Failed removal
 retains ownership and retries. Rollback and automatic recovery must reclaim
 released hosts and can fail if another environment has acquired them. Conflicts
 leave the existing target unchanged. Raw Kubernetes changes are operator actions;
-the claim system governs routes managed through skali.
+the claim system governs routes managed through Skali.
 
 Automatic backups are a per-environment setting, not part of the manifest:
 an environment admin sets a cron schedule (UTC) and a retention window with

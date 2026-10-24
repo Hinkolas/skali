@@ -97,7 +97,7 @@
 </script>
 
 <svelte:head>
-	<title>Users — skali</title>
+	<title>Users — Skali</title>
 </svelte:head>
 
 <PageHeader title="Users">
