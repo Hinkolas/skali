@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import Server from '@lucide/svelte/icons/server';
 	import PageHeader from '$lib/components/shell/PageHeader.svelte';
 	import EmptyState from '$lib/components/ui/EmptyState.svelte';
@@ -10,7 +11,7 @@
 	import type { PageData } from './$types';
 
 	// Node rows come from the (app) shell layout load; this page adds usage and
-	// storage from its own load and presents them.
+	// storage from its own load and presents them. Each row opens the node.
 	let { data }: { data: PageData } = $props();
 
 	// Admin only, so the shell always asked for nodes; the fallback merely
@@ -84,10 +85,13 @@
 				{@const state = NODE_STATE_META[node.ready ? 'online' : 'offline']}
 				{@const use = usage[node.name]}
 				{@const disk = storage[node.name]}
-				<div
-					class="border-border-subtle border-b px-4.5 py-3 transition-colors last:border-0 hover:bg-white/2 @max-2xl:flex @max-2xl:flex-wrap @max-2xl:items-center @max-2xl:gap-x-3 @max-2xl:gap-y-2 @2xl:grid @2xl:items-center {grid}"
+				<a
+					href={resolve('/(app)/system/nodes/[node]', { node: node.name })}
+					class="group border-border-subtle border-b px-4.5 py-3 transition-colors last:border-0 hover:bg-white/2 @max-2xl:flex @max-2xl:flex-wrap @max-2xl:items-center @max-2xl:gap-x-3 @max-2xl:gap-y-2 @2xl:grid @2xl:items-center {grid}"
 				>
-					<div class="font-mono text-text-primary text-md @max-2xl:flex-1">{node.name}</div>
+					<div class="font-mono text-text-primary text-md group-hover:underline @max-2xl:flex-1">
+						{node.name}
+					</div>
 					<!-- Everything between name and state: grid cells on a wide pane, a
 					     wrapping meta block under the name on a narrow one. -->
 					<div
@@ -145,7 +149,7 @@
 						<span class="size-[8px] rounded-full {state.dot}"></span>
 						{state.label}
 					</div>
-				</div>
+				</a>
 			{/each}
 		</Table>
 		{#if data.nodeStorage?.nodes.length}
