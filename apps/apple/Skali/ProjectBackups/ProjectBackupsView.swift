@@ -27,9 +27,7 @@ struct ProjectBackupsView: View {
         EnvironmentGate(model: model) { environment in
             content(environment)
         }
-        .projectPage(
-            model, title: "Backups", subtitle: "snapshots on the backup target", monospaced: true,
-            also: { await model.loadSnapshots() })
+        .projectSubpage(model, title: "Backups", also: { await model.loadSnapshots() })
         .toolbar { toolbar }
         .navigationDestination(item: $startedRun) { RunDetailView(runID: $0, model: model) }
         .sheet(item: $shownSnapshot) { SnapshotSheet(snapshot: $0, model: model) }
@@ -63,6 +61,8 @@ struct ProjectBackupsView: View {
 
     private func content(_ environment: ProjectEnvironment) -> some View {
         List {
+            ProjectPageHeader(
+                title: "Backups", systemImage: "archivebox", tint: .orange, detail: "snapshots on the backup target")
             Section("Schedule") {
                 Button {
                     showingSchedule = true

@@ -2,19 +2,30 @@ import SkaliKit
 import SwiftUI
 
 extension View {
-    /// What every page of a project shares: its title with a line under
-    /// it, plus everything `projectChrome` adds.
+    /// The overview's bar: its large title with a line under it, plus
+    /// everything `projectChrome` adds.
     func projectPage(
-        _ model: ProjectModel, title: String, subtitle: String, dot: Color? = nil, monospaced: Bool = false,
-        followsStatus: Bool = false, also: (() async -> Void)? = nil
+        _ model: ProjectModel, title: String, subtitle: String, dot: Color? = nil, followsStatus: Bool = false
     ) -> some View {
         navigationTitle(title)
             // Explicit: an automatic mode inherits the page it was pushed
             // from, and the service pages are inline.
             .navigationBarTitleDisplayMode(.large)
             // The bar's middle holds the environment, not the title.
-            .largeSubtitle(subtitle, dot: dot, inline: false, monospaced: monospaced)
-            .projectChrome(model, followsStatus: followsStatus, also: also)
+            .largeSubtitle(subtitle, dot: dot, inline: false)
+            .projectChrome(model, followsStatus: followsStatus)
+    }
+
+    /// The bar of a page the overview leads to (deployments, backups): an
+    /// inline bar holding only the environment, plus everything
+    /// `projectChrome` adds. The page puts its `ProjectPageHeader` at the
+    /// top of its list instead of a large title. On iOS 27.1 (iPhone Duo),
+    /// pushing a large title with a principal item from a scrolled overview
+    /// never finishes laying out: the push spins the main thread for good.
+    func projectSubpage(_ model: ProjectModel, title: String, also: (() async -> Void)? = nil) -> some View {
+        navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .projectChrome(model, also: also)
     }
 
     /// The environment picker in the middle of the bar, and the project's
@@ -56,6 +67,41 @@ private struct ProjectChromeModifier: ViewModifier {
                 await model.refresh()
                 await also?()
             }
+    }
+}
+
+/// The top of a `projectSubpage`'s list, in place of the large title its
+/// bar cannot show: the page's tile as the overview links to it, its name,
+/// and a line under it, as a service page starts.
+struct ProjectPageHeader: View {
+    let title: String
+    let systemImage: String
+    let tint: Color
+    let detail: String
+
+    @ScaledMetric(relativeTo: .largeTitle) private var tile: CGFloat = 58
+
+    var body: some View {
+        Section {
+            HStack(spacing: 16) {
+                ResourceTile(systemImage: systemImage, tint: tint, size: tile)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(title)
+                        .font(.largeTitle.bold())
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                    Text(detail)
+                        .font(.subheadline.monospaced())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isHeader)
+        }
+        .listRowBackground(Color.clear)
+        .listRowInsets(EdgeInsets(top: 0, leading: 4, bottom: 8, trailing: 4))
     }
 }
 

@@ -14,7 +14,7 @@ struct DeploymentsView: View {
         EnvironmentGate(model: model) { environment in
             history(environment)
         }
-        .projectPage(model, title: "Deployments", subtitle: subtitle, monospaced: true)
+        .projectSubpage(model, title: "Deployments")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Menu {
@@ -48,18 +48,21 @@ struct DeploymentsView: View {
         return "\(shown) · not deployed yet"
     }
 
-    @ViewBuilder private func history(_ environment: ProjectEnvironment) -> some View {
-        if model.runs == nil {
-            ProgressView()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if runs.isEmpty {
-            ContentUnavailableView(
-                filter == .rollouts ? "No Deploys Yet" : "No Runs Yet", systemImage: "paperplane",
-                description: Text(filter == .rollouts
-                                  ? "Deploys, rollbacks, restarts and stops of \(environment.name) appear here."
-                                  : "Every run of \(environment.name) appears here."))
-        } else {
-            List {
+    private func history(_ environment: ProjectEnvironment) -> some View {
+        List {
+            ProjectPageHeader(title: "Deployments", systemImage: "paperplane", tint: .serviceApplication, detail: subtitle)
+            if model.runs == nil {
+                ProgressView()
+                    .frame(maxWidth: .infinity)
+                    .listRowBackground(Color.clear)
+            } else if runs.isEmpty {
+                ContentUnavailableView(
+                    filter == .rollouts ? "No Deploys Yet" : "No Runs Yet", systemImage: "paperplane",
+                    description: Text(filter == .rollouts
+                                      ? "Deploys, rollbacks, restarts and stops of \(environment.name) appear here."
+                                      : "Every run of \(environment.name) appears here."))
+                    .listRowBackground(Color.clear)
+            } else {
                 ForEach(runs.groupedByDay(), id: \.day) { group in
                     Section {
                         ForEach(group.runs) { run in
