@@ -18,6 +18,9 @@ struct RunDetailView: View {
     @AppStorage("run.layout") private var layout: Layout = .services
     @State private var tree: RunTree?
     @State private var missing = false
+    /// Read once, gone since: pruned, or a delete that took its
+    /// environment's runs with it.
+    @State private var gone = false
     @State private var confirmingCancel = false
     @State private var error: String?
 
@@ -25,7 +28,7 @@ struct RunDetailView: View {
         content
             .navigationTitle(tree.map { $0.run.kindLabel.prefix(1).uppercased() + $0.run.kindLabel.dropFirst() } ?? "Run")
             .navigationBarTitleDisplayMode(.large)
-            .largeSubtitle(subtitle, dot: tree.map { RunStatusStyle.tint($0.run.status) }, monospaced: true)
+            .largeSubtitle(subtitle, dot: tree.map { RunStatusStyle.tint(status($0.run)) }, monospaced: true)
             .toolbar { menu }
             .navigationDestination(for: RunStep.self) { StepLogView(step: $0, api: model.api) }
             .navigationDestination(for: ServiceProgressLink.self) { link in
@@ -43,11 +46,12 @@ struct RunDetailView: View {
     /// read (an empty subtitle would leave the title collapsed).
     private var subtitle: String {
         guard let run = tree?.run else { return String(runID.prefix(8)) }
+        if gone, run.kind == "purge" { return "succeeded · environment deleted" }
         // The progress card counts the time; the subtitle stays still.
-        if run.isActive {
+        if isActive(run) {
             return "\(run.status) · since \(run.createdAt.formatted(date: .omitted, time: .shortened))"
         }
-        return "\(run.status) · \(compactAge(since: run.finishedAt ?? run.createdAt)) ago"
+        return "\(status(run)) · \(compactAge(since: run.finishedAt ?? run.createdAt)) ago"
     }
 
     /// Always a list, so the large title has its scroll view from the
@@ -76,11 +80,40 @@ struct RunDetailView: View {
         }
     }
 
+    /// The status as shown: a delete that vanished succeeded, since the
+    /// server concludes it before deleting the environment and its runs.
+    private func status(_ run: Run) -> String {
+        guard gone, run.isActive else { return run.status }
+        return run.kind == "purge" ? "succeeded" : "removed"
+    }
+
+    private func isActive(_ run: Run) -> Bool {
+        run.isActive && !gone
+    }
+
     // MARK: Where it stands
 
     @ViewBuilder private func stateSection(_ tree: RunTree) -> some View {
         let run = tree.run
-        if run.isActive {
+        if gone, run.isActive {
+            Section {
+                if run.kind == "purge" {
+                    Label {
+                        Text("The environment was deleted.")
+                    } icon: {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                    }
+                } else {
+                    Label("The run is no longer in the history.", systemImage: "questionmark.circle")
+                        .foregroundStyle(.secondary)
+                }
+            } footer: {
+                Text(run.kind == "purge"
+                     ? "Its history went with it, so the steps below are as last read."
+                     : "The steps below are as last read.")
+            }
+        } else if run.isActive {
             Section {
                 RunProgressCard(tree: tree)
                 if run.isCancellable {
@@ -142,9 +175,9 @@ struct RunDetailView: View {
             LabeledContent("Started") {
                 Text(run.createdAt, format: .dateTime.month(.abbreviated).day().year().hour().minute())
             }
-            if let started = run.startedAt {
+            if let started = run.startedAt, run.finishedAt != nil || !gone {
                 LabeledContent("Duration") {
-                    TimelineView(.periodic(from: .now, by: run.isActive ? 1 : 3600)) { context in
+                    TimelineView(.periodic(from: .now, by: isActive(run) ? 1 : 3600)) { context in
                         Text(formatDuration(from: started, to: run.finishedAt ?? context.date))
                             .monospacedDigit()
                     }
@@ -173,8 +206,8 @@ struct RunDetailView: View {
         let services = tree.serviceProgress
         Section {
             if tree.steps.isEmpty {
-                Label(tree.run.isActive ? "Waiting for the reconciler to pick this up" : "No steps were recorded.",
-                      systemImage: tree.run.isActive ? "hourglass" : "list.bullet")
+                Label(isActive(tree.run) ? "Waiting for the reconciler to pick this up" : "No steps were recorded.",
+                      systemImage: isActive(tree.run) ? "hourglass" : "list.bullet")
                     .foregroundStyle(.secondary)
             } else if let services, layout == .services {
                 ForEach(services) { progress in
@@ -215,7 +248,7 @@ struct RunDetailView: View {
                     url.append(queryItems: [URLQueryItem(name: "run", value: runID)])
                     openURL(url)
                 }
-                if let run = tree?.run, run.isCancellable {
+                if let run = tree?.run, run.isCancellable, !gone {
                     Section {
                         Button("Cancel \(run.kindLabel.capitalized)", systemImage: "xmark.circle", role: .destructive) {
                             confirmingCancel = true
@@ -239,12 +272,14 @@ struct RunDetailView: View {
     // MARK: Following
 
     /// Reads the run, then follows its stream while it is unsettled; the
-    /// stream ends once the run has, and a dropped one reconnects.
+    /// stream ends once the run has, and a dropped one reconnects. Runs
+    /// again whenever the page comes back from a step.
     private func follow() async {
+        guard !gone else { return }
         do {
             tree = try await model.api.run(id: runID)
         } catch let error as APIError where error.status == 404 {
-            missing = true
+            vanished()
             return
         } catch {}
         var delay = Duration.seconds(1)
@@ -255,12 +290,23 @@ struct RunDetailView: View {
                     delay = .seconds(1)
                 }
             } catch let error as APIError where error.status == 404 {
-                missing = tree == nil
+                vanished()
                 return
             } catch {}
             guard tree?.run.isActive ?? true else { return }
             try? await Task.sleep(for: delay)
             delay = min(delay * 2, .seconds(15))
+        }
+    }
+
+    /// Never there, or gone since it was read: a delete removes its own
+    /// run once it concludes, and a page following it, or back from one of
+    /// its steps, then reads 404 where it had the run.
+    private func vanished() {
+        if tree == nil {
+            missing = true
+        } else {
+            gone = true
         }
     }
 
