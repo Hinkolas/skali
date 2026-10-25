@@ -119,7 +119,7 @@ func TestCandidateWithoutK3sIsAwaitingEnrollmentNotBrokenAPI(t *testing.T) {
 	output, err := os.CreateTemp(t.TempDir(), "status")
 	require.NoError(t, err)
 	status := &installer.Status{Host: &installer.Host{State: installer.StateEnrolled, Hostname: "db-01", Record: &installer.Record{
-		Management: installer.ManagementReconciled, Version: installer.RecordVersionReconciled, Cluster: "kilohertz",
+		Management: installer.ManagementReconciled, Version: installer.RecordVersionReconciled, Cluster: "acme",
 		Coordinator: &installer.CoordinatorRecord{}, Lifecycle: &installer.InstallLifecycle{Status: installer.InstallStatusFailed, Phase: installer.InstallPhaseEnrolled},
 	}}}
 	printStatus(output, status)

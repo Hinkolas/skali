@@ -16,7 +16,7 @@ public final class DemoBackups: Sendable {
 
     private static let sample = BackupTarget(
         endpoint: "https://s3.eu-central-1.amazonaws.com", region: "eu-central-1", bucket: "skali-backup",
-        prefix: "kilohertz", accessKeyId: "AKIAIOSFODNN7EXAMPLE",
+        prefix: "acme", accessKeyId: "AKIAIOSFODNN7EXAMPLE",
         createdAt: .now.addingTimeInterval(-90 * 86_400), updatedAt: .now.addingTimeInterval(-30 * 86_400))
 
     func current() -> BackupTarget? {

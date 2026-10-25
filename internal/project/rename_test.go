@@ -27,7 +27,7 @@ func TestRenameEnvironmentPreservesIdentityAndPromotionRules(t *testing.T) {
 	_, err = s.UpdateEnvironmentSettings(ctx, target.ID, settings)
 	require.NoError(t, err)
 
-	renamed, err := s.RenameEnvironment(ctx, source.ID, "kilohertz")
+	renamed, err := s.RenameEnvironment(ctx, source.ID, "acme")
 	require.NoError(t, err)
 	require.Equal(t, source.ID, renamed.ID)
 	require.Equal(t, source.BackupNamespace, renamed.BackupNamespace)
@@ -35,11 +35,11 @@ func TestRenameEnvironmentPreservesIdentityAndPromotionRules(t *testing.T) {
 	require.Equal(t, []string{"staging"}, renamed.PreviousNames)
 	target, err = s.GetEnvironment(ctx, target.ID)
 	require.NoError(t, err)
-	require.Equal(t, []string{"kilohertz"}, target.PromoteFrom)
+	require.Equal(t, []string{"acme"}, target.PromoteFrom)
 	// A delayed settings save may still name the alias; canonicalize it.
 	updated, err := s.UpdateEnvironmentSettings(ctx, target.ID, settings)
 	require.NoError(t, err)
-	require.Equal(t, []string{"kilohertz"}, updated.PromoteFrom)
+	require.Equal(t, []string{"acme"}, updated.PromoteFrom)
 	_, err = s.CreateEnvironment(ctx, p.ID, "staging", EnvironmentOptions{})
 	require.ErrorIs(t, err, ErrEnvironmentNameTaken)
 	_, err = s.RenameEnvironment(ctx, target.ID, "staging")
@@ -51,7 +51,7 @@ func TestRenameEnvironmentPreservesIdentityAndPromotionRules(t *testing.T) {
 	// Renaming back is allowed and must not accumulate duplicate aliases.
 	renamed, err = s.RenameEnvironment(ctx, source.ID, "staging")
 	require.NoError(t, err)
-	require.Equal(t, []string{"kilohertz"}, renamed.PreviousNames)
+	require.Equal(t, []string{"acme"}, renamed.PreviousNames)
 
 	// Independent names competing for one new name serialize on the project.
 	var wg sync.WaitGroup

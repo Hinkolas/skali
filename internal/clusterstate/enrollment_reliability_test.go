@@ -34,7 +34,7 @@ import (
 
 func enrollmentFixture(t *testing.T) (*Store, string, HostFacts, []byte) {
 	t.Helper()
-	state, err := NewSeedState("kilohertz", Node{ID: uuid.NewString(), InstallationID: "seed-install", Name: "ctrl-01", Role: layout.RoleServer, Capabilities: slicesAllCaps()}, time.Now())
+	state, err := NewSeedState("acme", Node{ID: uuid.NewString(), InstallationID: "seed-install", Name: "ctrl-01", Role: layout.RoleServer, Capabilities: slicesAllCaps()}, time.Now())
 	require.NoError(t, err)
 	store := &Store{Client: fake.NewSimpleClientset()}
 	_, err = store.Bootstrap(context.Background(), state)
@@ -331,7 +331,7 @@ func TestEnrollmentFallsBackToAnotherPinnedCoordinator(t *testing.T) {
 	})
 	result, err := (EnrollmentClient{Endpoint: down.URL, Endpoints: []string{healthy.URL}, Token: token, RetryBudget: 5 * time.Second}).Preflight(context.Background(), host)
 	require.NoError(t, err)
-	require.Equal(t, "kilohertz", result.Cluster)
+	require.Equal(t, "acme", result.Cluster)
 }
 
 // fake clients do not enforce Kubernetes resourceVersion conflicts themselves.

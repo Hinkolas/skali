@@ -137,13 +137,13 @@ func TestApplyRetentionSweepsOnlyExpiredScheduledSnapshots(t *testing.T) {
 	// the old directory. Retention must delete the key it actually listed.
 	_, err := f.st.Pool.Exec(ctx, "UPDATE environments SET backup_namespace = 'production' WHERE id = $1", f.environmentID)
 	require.NoError(t, err)
-	_, err = project.New(f.st).RenameEnvironment(ctx, f.environmentID, "kilohertz")
+	_, err = project.New(f.st).RenameEnvironment(ctx, f.environmentID, "acme")
 	require.NoError(t, err)
 	for _, m := range manifests {
 		if m.Environment != "production" {
 			continue
 		}
-		m.Environment = "kilohertz"
+		m.Environment = "acme"
 		data, err := encodeManifest(m)
 		require.NoError(t, err)
 		require.NoError(t, target.Put(ctx, manifestKey("", "demo", "production", m.SnapshotID), bytes.NewReader(data), int64(len(data))))
@@ -157,7 +157,7 @@ func TestApplyRetentionSweepsOnlyExpiredScheduledSnapshots(t *testing.T) {
 	redactor, err := f.controller.deps.Values.Redactor(ctx, f.environmentID, uuid.Nil)
 	require.NoError(t, err)
 	scope := journal.NewScope(f.journal, redactor, run.ID)
-	row := &store.Backup{ProjectName: "demo", EnvironmentName: "kilohertz", EnvironmentNamespace: "production", Trigger: TriggerScheduled, RetentionSeconds: 7 * 86400}
+	row := &store.Backup{ProjectName: "demo", EnvironmentName: "acme", EnvironmentNamespace: "production", Trigger: TriggerScheduled, RetentionSeconds: 7 * 86400}
 	bctx := &backupContext{row: row, credentials: &Credentials{}, target: target}
 
 	require.NoError(t, scope.Step(ctx, "retention", "Apply retention", func(ctx context.Context, log *journal.StepLog) error {

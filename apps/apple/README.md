@@ -46,7 +46,7 @@ file:
 PRODUCT_BUNDLE_IDENTIFIER = dev.example.skali
 ```
 
-The shared default is `dev.kilohertz.skali`. Do not change the team or bundle
+The shared default is `dev.hinke.skali`. Do not change the team or bundle
 identifier under Signing & Capabilities: Xcode writes those choices into
 `project.pbxproj`, which can block later pulls. Use `Local.xcconfig` instead.
 
