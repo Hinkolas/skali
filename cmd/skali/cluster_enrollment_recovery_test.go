@@ -63,7 +63,7 @@ func enrollmentHost() *enrollmentFaultHost {
 func cliEnrollmentServer(t *testing.T) (*clusterstate.Store, *httptest.Server, string) {
 	t.Helper()
 	store := &clusterstate.Store{Client: fake.NewSimpleClientset()}
-	state, err := clusterstate.NewSeedState("kilohertz", clusterstate.Node{ID: uuid.NewString(), InstallationID: uuid.NewString(), Name: "ctrl-01", Role: layout.RoleServer, Capabilities: append([]string(nil), layout.Capabilities...)}, time.Now())
+	state, err := clusterstate.NewSeedState("acme", clusterstate.Node{ID: uuid.NewString(), InstallationID: uuid.NewString(), Name: "ctrl-01", Role: layout.RoleServer, Capabilities: append([]string(nil), layout.Capabilities...)}, time.Now())
 	require.NoError(t, err)
 	_, err = store.Bootstrap(context.Background(), state)
 	require.NoError(t, err)

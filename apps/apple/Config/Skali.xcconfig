@@ -12,6 +12,6 @@
 
 // Keep the default here so Local.xcconfig can override it. A target-level
 // value in project.pbxproj would take precedence over both files.
-PRODUCT_BUNDLE_IDENTIFIER = dev.kilohertz.skali
+PRODUCT_BUNDLE_IDENTIFIER = dev.hinke.skali
 
 #include? "Local.xcconfig"

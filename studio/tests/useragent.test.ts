@@ -3,10 +3,10 @@ import { test } from 'vitest';
 import { describeUserAgent } from '../src/lib/useragent.ts';
 
 test('recognizes the Skali CLI with its host', () => {
-	assert.deepEqual(describeUserAgent('skali/v0.1.3-rc.3 (KiloHertz-Mac-Mini)'), {
+	assert.deepEqual(describeUserAgent('skali/v0.1.3-rc.3 (Acme-Mac-Mini)'), {
 		kind: 'cli',
 		label: 'Skali CLI v0.1.3-rc.3',
-		host: 'KiloHertz-Mac-Mini',
+		host: 'Acme-Mac-Mini',
 		mobile: false,
 		tablet: false
 	});
