@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -80,12 +81,12 @@ func TestSkillReadListsTopics(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, out, "references of skali "+versionpkg.Version)
 	require.Contains(t, out, "manifest  every skali.yaml field")
-	require.Contains(t, out, "cli       the skali commands")
+	require.Contains(t, out, "cli       command overview")
 	require.Contains(t, out, "run skali skill read <topic> from the project directory")
 }
 
 func TestSkillReadPrintsReferenceVerbatim(t *testing.T) {
-	for _, topic := range skill.TopicNames() {
+	for _, topic := range skill.ReferenceNames() {
 		out, err := runCapturingStdout(t, func() error { return execute(newRootCommand(), "skill", "read", topic) })
 		require.NoError(t, err, topic)
 		want, ok := skill.Reference(topic)
@@ -96,6 +97,46 @@ func TestSkillReadPrintsReferenceVerbatim(t *testing.T) {
 	require.ErrorContains(t, err, `unknown topic "unknown" (valid: manifest, cli, architecture)`)
 }
 
+func TestSkillReadFocusedCLIReference(t *testing.T) {
+	for _, words := range [][]string{{"cli", "deploy"}, {"cli", "cluster", "node", "remove"}, {"cli", "workflows", "deployments"}} {
+		args := append([]string{"skill", "read"}, words...)
+		out, err := runCapturingStdout(t, func() error { return execute(newRootCommand(), args...) })
+		require.NoError(t, err)
+		want, ok := skill.Reference(strings.Join(words, "/"))
+		require.True(t, ok)
+		require.Equal(t, versionDescription()+"\n\n"+string(want), out)
+		require.NotContains(t, out, "# skali database set", "a focused read must not print unrelated commands")
+	}
+	group, ok := skill.Reference("cli/cluster/node")
+	require.True(t, ok)
+	require.Contains(t, string(group), "skali cluster node remove")
+	require.NotContains(t, string(group), "--allow-outage", "group pages link children instead of inlining their flags")
+	for _, words := range [][]string{{"cli", "nonexistent"}, {"cli", "cluster", "restore"}, {"cli", "..", "manifest"}} {
+		args := append([]string{"skill", "read"}, words...)
+		out, err := runCapturingStdout(t, func() error { return execute(newRootCommand(), args...) })
+		require.ErrorContains(t, err, "unknown CLI reference")
+		require.NotContains(t, out, "# Working with", "unknown references never fall back to broader content")
+	}
+}
+
+func TestSkillReferenceCompletion(t *testing.T) {
+	for _, tc := range []struct {
+		args   []string
+		prefix string
+		want   []string
+	}{
+		{[]string{"cli"}, "de", []string{"deploy", "dev"}},
+		{[]string{"cli", "cluster", "node"}, "re", []string{"remove", "restore"}},
+		{nil, "cli/cluster/node/re", []string{"cli/cluster/node/remove", "cli/cluster/node/restore"}},
+		{[]string{"cli", "workflows"}, "de", []string{"deployments", "development"}},
+		{[]string{"cli", "deploy"}, "", nil},
+		{[]string{"manifest"}, "", nil},
+	} {
+		got, _ := completeTopics(nil, tc.args, tc.prefix)
+		require.Equal(t, tc.want, got, "%v %s", tc.args, tc.prefix)
+	}
+}
+
 func TestSkillReadSince(t *testing.T) {
 	out, err := runCapturingStdout(t, func() error { return execute(newRootCommand(), "skill", "read", "manifest", "--since", "0") })
 	require.NoError(t, err)
@@ -103,14 +144,16 @@ func TestSkillReadSince(t *testing.T) {
 	require.Contains(t, out, "  1  removed  version")
 	require.Contains(t, out, "  5  removed  skali")
 	require.Contains(t, out, "  6  added  buckets.*.route")
-	for _, value := range []string{"-1", "7", "v0.1.0-rc.3", "latest", ""} {
+	require.Contains(t, out, "  7  added  applications.*.routes.*.aliases")
+	for _, value := range []string{"-1", strconv.Itoa(manifest.CurrentRevision() + 1), "v0.1.0-rc.3", "latest", ""} {
 		_, err = runCapturingStdout(t, func() error { return execute(newRootCommand(), "skill", "read", "manifest", "--since", value) })
 		require.ErrorContains(t, err, "must be a revision")
 	}
-	out, err = runCapturingStdout(t, func() error { return execute(newRootCommand(), "skill", "read", "manifest", "--since", "6") })
+	current := strconv.Itoa(manifest.CurrentRevision())
+	out, err = runCapturingStdout(t, func() error { return execute(newRootCommand(), "skill", "read", "manifest", "--since", current) })
 	require.NoError(t, err)
-	require.Contains(t, out, "no manifest changes since revision 6")
-	for _, args := range [][]string{{"skill", "read", "cli", "--since", "0"}, {"skill", "read", "--since", "0"}} {
+	require.Contains(t, out, "no manifest changes since revision "+current)
+	for _, args := range [][]string{{"skill", "read", "cli", "--since", "0"}, {"skill", "read", "cli", "deploy", "--since", "0"}, {"skill", "read", "--since", "0"}} {
 		_, err = runCapturingStdout(t, func() error { return execute(newRootCommand(), args...) })
 		require.ErrorContains(t, err, "--since applies to the manifest topic")
 	}

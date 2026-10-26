@@ -73,11 +73,16 @@ applications:
 }
 
 func TestEmbeddedChanges(t *testing.T) {
-	require.Equal(t, 6, CurrentRevision())
-	require.Len(t, ChangesSince(0), 6)
-	require.Empty(t, ChangesSince(6))
+	require.Equal(t, 10, CurrentRevision())
+	require.Len(t, ChangesSince(0), 10)
+	require.Empty(t, ChangesSince(CurrentRevision()))
 	require.Equal(t, "skali", ChangesSince(4)[0].Path)
 	require.Equal(t, "buckets.*.route", ChangesSince(5)[0].Path)
+	require.Equal(t, "applications.*.routes.*.aliases", ChangesSince(6)[0].Path)
+	// Backfilled additions explain already-shipped features, without making
+	// existing checkouts acknowledge a semantic change that did not happen.
+	document := parseValid(t, "name: demo\nbuckets:\n  files: {}\n")
+	require.Empty(t, ReviewChanges(document, 6))
 }
 
 func TestLoadChangesValidatesFiles(t *testing.T) {

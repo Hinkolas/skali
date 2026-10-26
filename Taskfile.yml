@@ -129,9 +129,10 @@ tasks:
   # --- Code generation ---
 
   generate:
-    desc: Regenerate the JSON schemas and sqlc store
+    desc: Regenerate the JSON schemas, embedded references, and sqlc store
     cmds:
       - go generate ./internal/manifest ./internal/layout ./internal/installer
+      - go generate ./cmd/skali ./internal/skill
       - sqlc generate
 
   # --- Tests ---

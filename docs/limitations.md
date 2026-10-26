@@ -70,6 +70,9 @@ is ready. Consequences:
   new-deployment detection (a version check and reload) closes it.
 - Metrics count the pending version's pods for the duration of the deploy,
   so per-service CPU and memory read roughly double while it runs.
+- Background jobs can run in both versions during the overlap. Blue-green
+  switches routed traffic, not queue consumers or scheduled work; coordinate
+  those in the application or choose a rollout that suits the worker.
 
 ## Deleting a project waits for its environments
 
@@ -172,8 +175,8 @@ presigned URL for another bucket through that hostname fails. Several
 buckets of one environment may share a hostname, but a bucket cannot share
 a hostname with an application route (`example.com` for the app,
 `example.com/storage` for the bucket), and the bucket's path under the
-hostname is its store name, not a path of your choosing. Both the shared
-hostname and a configurable path are planned; until then give the bucket
+hostname is its store name, not a path of your choosing. Sharing a hostname
+with an application and configuring that path are planned; until then give the bucket
 a hostname of its own. The deferral, probing and `skali route probe`
 behaviour above applies to bucket routes unchanged.
 

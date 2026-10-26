@@ -1,233 +1,201 @@
 # Working with the Skali CLI
 
-The CLI is self describing: run `skali --help` and `skali <command> --help`
-for the available surface. Help is always local and prefers the target's recorded
-release when its CLI is available. Its header identifies the answering release
-and any fallback to home help; it does not verify target compatibility.
-`--offline` is accepted with help but unnecessary. Use `skill read` for
-authoritative target references; those never fall back.
+Start with this overview and command index, then read the command and workflow
+needed for the task:
 
-References, validation, compilation and manifest upgrades select `--remote`,
-then the checkout binding, then the current remote. `--manifest PATH` selects
-another checkout. Online commands verify the target release; `--offline`
-uses its recorded release and an available matching CLI without remote discovery
-or CLI downloads. With no target, the invoked CLI answers. Read the provenance
-header and reread references when the target or release changes.
+```sh
+skali skill read cli deploy
+skali skill read cli cluster node remove
+skali skill read cli workflows deployments
+```
 
-- `skali validate` parses and validates with file, line, column and path errors.
-  Local review history gates relevant semantic changes. Missing history trusts
-  current semantics and starts tracking after successful manifest compilation.
-- `skali manifest upgrade` validates safe removals before editing the manifest
-  and updates local `.skali/` review history. Semantic changes leave both untouched
-  unless explicitly reviewed and confirmed with `--acknowledge`. Development
-  builds use their embedded revision too; there is no `--to` option.
-- `skali compile` prints the compiled definition, including defaults and
-  normalized units. Version-selection context goes to stderr.
-- `skali skill read manifest`, `skali skill read cli` and `skali skill read
-  architecture` serve references embedded in the matching CLI. Bare `skali skill
-  read` lists topics; `skali skill read manifest --since <revision>` lists changes.
-  Every response identifies the answering release, target, source and mode.
+A command page includes its synopsis, aliases, every public local/inherited flag,
+defaults, flag combinations, immediate subcommands, and links to workflow advice.
+`cli/deploy` is an equivalent single-argument topic. Use canonical command names
+from the index; a command alias is listed on its page. Group pages list their
+children without printing every descendant's flags.
 
-Offline validation does not verify the cluster's currently running release.
-Failed reference dispatch never permits substituting another release's documentation.
+Run reference commands from the project directory with the same `--remote` and
+`--manifest` selectors as the task. The header identifies the answering release,
+target, selection source, and online/offline status. The checkout binding takes
+precedence over the current remote; no target means the invoked CLI answers.
+`--offline` requires the recorded release's CLI locally and does not verify the
+cluster's current release. References never fall back to another release.
+Reread the overview and relevant pages when the target or release changes.
 
-`skali completion install` puts shell completions in place for the login
-shell (`install.sh` already does this); values such as environments, remotes,
-run ids, and manifest commands then complete on tab.
+For a target whose overview has no command-page links, read its combined CLI
+reference instead. Older binaries keep their embedded documentation; an
+unavailable page is not permission to use another release's reference.
 
-`skali remote list` displays incomplete entries and `skali remote remove NAME`
-can remove them. Invalid YAML diagnostics identify the configuration file to edit.
+`skali --help` and `skali <command> --help` are always local and prefer cached
+target help. Their header identifies any fallback to home help; help does not
+verify compatibility. `skali skill read` lists the top-level reference topics.
 
-## Local development
+## Reading flags
 
-- `skali dev` is the paved path: it ensures the disposable local platform
-  and deploys the project. Applications with a `dev:` block are not built;
-  their dev command runs on this machine with the real resolved
-  environment, and the cluster's routes reach the host process on
-  auto-allocated ports (injected as `SKALI_PORT_<NAME>` and `PORT`,
-  usable as `${PORT}` in the dev command). Ctrl-C pauses the project;
-  `d` detaches (host dev processes still stop).
-- `skali dev --preview` deploys everything in the cluster, exactly like a
-  remote deploy would, ignoring dev blocks.
-- One fixed `skali-dev` platform uses the selected target's release. An absent
-  platform is created; a matching platform is reused. An older release or k3s
-  pin fails before changing it and names `skali dev upgrade`, which moves the
-  platform forward in place after showing its plan and asking for confirmation
-  (`--yes` skips it). Projects, data, credentials, and the development CA are
-  kept. An interrupted upgrade blocks the platform until `skali dev upgrade`
-  runs again and finishes it. A newer release, a k3s jump of more than one
-  minor version, and working-tree/release transitions require `skali dev
-  reset`, which discards the data. `skali dev --remote <name>` selects another
-  target.
-- `skali dev stop` retains data; `skali dev start` restarts it. Stop, reset and
-  platform status work without the remote or a CLI download. Status identifies
-  the installed release and an unfinished upgrade. Stop distinguishes stopped,
-  already stopped, and absent clusters. Confirmed reset can delete the fixed
-  cluster even if its installation record is missing, and also removes a
-  partial cluster (a leftover helper container, volume or network) that k3d
-  cluster list no longer shows. There is no `dev prune`.
-- `skali dev run <name>` runs a named command from the manifest
-  (`applications.<app>.commands`) on this machine with the application's
-  resolved environment; `skali dev run <app> -- <command>...` runs a raw
-  command; bare `skali dev run` lists the declared commands. Database and
-  bucket addresses are rewritten to the local platform's loopback ports,
-  so seeds and migrations just work.
-- `skali dev exec [app]` opens a shell inside the running container
-  instead; `skali run` manages journal runs, not project commands.
-- `skali dev sql [database]` runs SQL against a database of the local
-  platform, exactly like `skali sql` (see Databases) without the target
-  flags. It needs no running application and no local psql, so it keeps
-  working after `skali dev down`.
-- When `skali dev` runs on a remote machine and the browser on a laptop,
-  `skali dev proxy <host> --ca sha256:…` on the laptop opens the remote
-  platform at the same `https://*.localhost` origins. `skali dev expose
-  <address>` on the remote machine opens its edge to the proxy, and `skali dev
-  status` there prints the exact proxy command with the CA fingerprint.
+Only flags listed on a command's own page apply to it. `--remote`, `--environment`,
+`--manifest`, `--offline`, and `--yes` are not universal. `--` ends flag parsing
+before an exec or host command's arguments. Empty string defaults mean no
+explicit value; help explains runtime defaults. `stringSlice` accepts commas
+or repeated flags, while `stringArray` takes one value per occurrence. Boolean
+flags support `--flag=false`. `duration` uses Go syntax such as `1h30m`; string
+flags such as `--keep` and `--retire-after` use their documented Skali units.
 
-## Backups
+<!-- BEGIN GENERATED COMMAND CATALOG -->
+## Workflow guides
 
-- `skali backup target set --endpoint <url> --bucket <name> --access-key <id>`
-  (admin) configures the external S3 location every snapshot goes to;
-  `show` and `unset` read and remove it. Nothing is backed up without it.
-- `skali backup create [--environment <name>]` takes a manual snapshot of
-  every database, bucket, and volume of the environment; the run streams
-  like a deploy. Manual snapshots are kept until removed. An environment
-  whose manifest declares no database, bucket, or volume has nothing to
-  snapshot and is refused (`nothing_to_back_up`); the Studio disables
-  the button there.
-- `skali backup schedule set --environment <name> --every "<cron>" --keep
-  <duration>` turns automatic backups on for one environment (environment
-  admin, recent login): skalid snapshots every database, bucket, and volume
-  on the five-field cron schedule (UTC) and deletes the snapshots the
-  schedule took once they pass the retention, always keeping the newest.
-  `skali backup schedule show` prints the setting, `skali backup schedule
-  remove` turns it off (existing snapshots stay and stop expiring). The
-  runs carry actor `schedule`. Nothing is on until someone sets it.
-- `skali backup list` shows every snapshot of the project with its
-  environment and origin (`manual` or `scheduled`); `--environment`
-  filters. `skali backup restore [<snapshot-id>]` restores into the
-  environment the snapshot came from (or `--environment <other>`) after a
-  typed confirmation; the snapshot is verified first, and the environment
-  stops while data is written. A restore that fails after the stop keeps
-  the environment down and refuses deploys (`restore_incomplete`) until a
-  restore completes; `skali backup accept [--environment <name>]` accepts
-  the data as it is instead, and the next deploy brings the environment
-  back. `skali backup remove <snapshot-id>` deletes a snapshot for good.
-  Restore, accept, and remove need `maintain` on the environment and a
-  recent login. Snapshots whose original environment was purged need
-  project admin; restore requires an explicit `--environment` target. Renamed
-  environments keep their snapshots and list them under their current name.
+Read the relevant guide for behavior spanning multiple commands. Each command
+page links to its guide. `skali skill read cli workflows` lists these guides.
 
-## Buckets
+- [Deployments, values, and stored revisions](cli/workflows/deployments.md): `skali skill read cli workflows deployments`
+- [Logs and runs](cli/workflows/runs.md): `skali skill read cli workflows runs`
+- [Remotes, CLI installation, and completions](cli/workflows/setup.md): `skali skill read cli workflows setup`
+- [Cluster installation and maintenance](cli/workflows/cluster.md): `skali skill read cli workflows cluster`
+- [Local development](cli/workflows/development.md): `skali skill read cli workflows development`
+- [Backups](cli/workflows/backups.md): `skali skill read cli workflows backups`
+- [Buckets](cli/workflows/buckets.md): `skali skill read cli workflows buckets`
+- [Databases, SQL, and container exec](cli/workflows/databases.md): `skali skill read cli workflows databases`
+- [Routes](cli/workflows/routes.md): `skali skill read cli workflows routes`
+- [Access and environments](cli/workflows/access.md): `skali skill read cli workflows access`
 
-- `skali bucket rotate <key> [--environment <name>] [--retire-after 1h]`
-  issues a new S3 keypair for the bucket declared as `buckets.<key>`
-  (environment maintain, recent login). The store accepts both keypairs,
-  the applications referencing the bucket restart with the new one (the
-  run streams like a deploy and succeeds once they all run with it), and
-  after the window the previous keypair is retired: requests and presigned
-  URLs signed with it fail from then on, so the window must cover the
-  longest URL the application issues (`1m` at least for a leaked key, `7d`
-  at most). Processes holding the old keypair outside the cluster (`skali
-  dev` host runs, a revealed copy) must fetch it again. Rotating again
-  inside the window retires the older keypair at once; a bucket a restore
-  is rewriting cannot be rotated until the restore finishes.
+## Global invocation and flags
 
-## Databases
+```text
+skali [flags]
+```
 
-- `skali database rotate <key> [--environment <name>] [--retire-after 1h]`
-  issues a new login role for the database declared as `databases.<key>`
-  (environment maintain, recent login). The pool accepts both roles, the
-  applications referencing the database restart with the new username and
-  password (the run streams like a deploy and succeeds once they all run
-  with them), and after the window the previous login role is retired: its
-  open sessions are terminated and the role is dropped (`1m` at least for
-  a leaked password, `7d` at most). The database and everything in it stay
-  owned by the owner role the login roles act as, so migrations and
-  restores are unaffected; the username changes with every rotation.
-  Processes holding the old credentials outside the cluster (`skali dev`
-  host runs, a revealed copy) must fetch them again. Rotating again inside
-  the window retires the older login role at once.
-- `skali database list`, `show <pool>` and `set <pool>` inspect and tune
-  the database pools (admin only). The connections column is the pool's
-  connection check: `refusing` means new application logins fail for lack
-  of connection slots, and `show` names the open incident and which
-  databases hold the connections.
-- `skali sql [database] [--environment <name>]` runs SQL against
-  `databases.<database>` (the manifest's sole database when omitted) with
-  that database's own credentials, in a short-lived client the platform
-  starts for the session (a few seconds); no application has to run and
-  nothing is installed locally. In a terminal without `-c` or `-f` it is
-  an interactive psql. `-c '<sql>'`, `-f <file>` (`-` for stdin) or piped
-  stdin run a script: results on stdout, errors and notices on stderr,
-  and psql's exit statuses in every format (0 success, 1 client failure,
-  2 database unreachable, 3 the script failed; it stops at the first
-  error). `--format psql` (default) understands meta-commands such as
-  `\d <table>`; `--format csv` drops command tags; `--format json` prints
-  one document `{"results": [{"columns": [{"name", "type", "type_oid"}],
-  "rows": [[...]], "command", "rows_affected"}], "error": {"code",
-  "message", ...}}` with rows as arrays aligned with the columns (COPY TO
-  STDOUT output as base64 `copy_data`) and runs the script as one query (one
-  implicit transaction, no meta-commands, no COPY FROM STDIN).
-  `--read-only` guards against accidental writes (not a permission),
-  `--statement-timeout 30s` cancels slow statements on the server, and
-  `--timeout 5m` ends the whole session with status 124. Needs `maintain`
-  on the environment, plus a recent login on a promote-only one.
-- `skali exec [app] -- <command>...` runs a command in a running
-  application container (an interactive shell without one). Without a
-  terminal it pipes stdin, stdout and stderr and exits with the remote
-  status; `--no-stdin` sends no input, `--timeout` ends the session with
-  status 124, and an interrupted session exits 130. Neither exec nor sql
-  ever reads a piped stdin to confirm a login: when a promote-only
-  environment needs a recent login, confirm in a terminal first
-  (`skali remote login`).
+Deploy apps and manage Skali clusters
 
-## Routes
+| Flag | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `--help`, `-h` | `bool` | `false` | help for skali |
+| `--verbose` | `bool` | `false` | show every recorded detail under live steps (TLS issuance fields, health snapshots) and dev proxy relay diagnostics |
+| `--version`, `-v` | `bool` | `false` | version for skali |
 
-- `skali route list` shows each route of the environment, and each of its
-  aliases on a line of its own, with its URL,
-  certificate state, and the reconciler's last verdict on whether the
-  domain reaches this installation (`cert deferred · domain not pointing
-  here yet` while DNS is elsewhere). `skali route probe` checks the domains
-  right now and prints one line per resolved address (answered by this
-  installation, by another server, or not at all); a domain that answers
-  here counts as arrived and the reconciler requests a fresh certificate
-  issuance without waiting for its cadence or cert-manager's backoff. Both
-  take `--environment <name>` and `--remote <name>`; probe needs `deploy`
-  on the environment.
+## Command index
 
-## Access
+For `skali A B`, read `skali skill read cli A B`. All public commands are listed;
+each link opens only that command's reference. Global flags are above.
 
-- `skali access list` shows who holds which role on the project: the project
-  role per member and the effective role per environment (`*` marks an
-  explicit per-environment role). `skali access set <email> <role>` grants
-  or changes a project role (read, deploy, maintain, admin); with
-  `--environment <name>` it sets an explicit role on that environment only
-  (`none` locks it). `skali access remove <email>` removes a member.
-- `skali env list` lists environments with their state (active, stopped,
-  removing), your access, priority, deploy policy, ceiling, and backup
-  schedule; `skali env create <name>`, `skali env set --environment <name>
-  --max-role read --deploy-policy promote-only`, `skali env stop <name>` (takes
-  the workloads down, keeps the data; the next deploy starts it again), and
-  `skali env remove <name>` (purge: deletes the environment with all its data,
-  typed confirmation) configure them. Stop and remove follow their run until
-  done; `--detach` returns right away. Writes need a recent login; the CLI asks
-  for the password when it has aged.
-- `skali project remove [project]` removes a project with every environment
-  and all their data (project admin, typed confirmation, recent login): each
-  environment is purged and the project goes with the last of them. It
-  reports each environment as it goes; `--detach` returns right away, and
-  repeating the command resumes an interrupted removal.
-- `skali env rename <environment> <new-name>` renames without redeploying or
-  moving data (environment admin, recent login). Promotion rules follow the new
-  name; old checkout bindings remain valid through reserved name aliases until
-  the environment is purged. `--project` and `--remote` select another project
-  or installation. Studio exposes Rename in environment settings.
-- A deploy needs `deploy` on the environment for an unchanged definition and
-  `maintain` to change the definition or stage values; refusals name the
-  required role. A promote-only environment refuses direct deploys and
-  names the way in: `skali deploy --from <source> --environment <name>`
-  promotes a source's active revision (sources limited by `--promote-from`).
-  Environment admins may force a direct deploy with
-  `skali deploy --bypass-protection`; it asks for the password when the
-  login has aged and the run records the bypass.
+- [`skali access`](cli/access.md): Manage who may do what on a project
+- [`skali access list`](cli/access/list.md): Show members and their effective role on every environment
+- [`skali access remove`](cli/access/remove.md): Remove a member, or drop their explicit role on one environment
+- [`skali access set`](cli/access/set.md): Set a member's project role, or their explicit role on one environment
+- [`skali backup`](cli/backup.md): Back up and restore environment data
+- [`skali backup accept`](cli/backup/accept.md): Accept the data an incomplete restore left, so the environment can deploy again
+- [`skali backup create`](cli/backup/create.md): Snapshot the environment's data to the backup target
+- [`skali backup list`](cli/backup/list.md): List the project's snapshots on the backup target
+- [`skali backup remove`](cli/backup/remove.md): Delete a snapshot from the backup target
+- [`skali backup restore`](cli/backup/restore.md): Restore a snapshot's data into an environment
+- [`skali backup schedule`](cli/backup/schedule.md): Configure automatic backups of an environment
+- [`skali backup schedule remove`](cli/backup/schedule/remove.md): Turn automatic backups of an environment off
+- [`skali backup schedule set`](cli/backup/schedule/set.md): Turn automatic backups on or change their schedule
+- [`skali backup schedule show`](cli/backup/schedule/show.md): Show the automatic backup schedule of an environment
+- [`skali backup target`](cli/backup/target.md): Manage the external S3 backup target
+- [`skali backup target set`](cli/backup/target/set.md): Configure where backups are written
+- [`skali backup target show`](cli/backup/target/show.md): Show the configured backup target
+- [`skali backup target unset`](cli/backup/target/unset.md): Remove the configured backup target
+- [`skali bucket`](cli/bucket.md): Operate the environment's managed buckets
+- [`skali bucket rotate`](cli/bucket/rotate.md): Issue a new S3 keypair for a bucket and retire the current one
+- [`skali cluster`](cli/cluster.md): Install, maintain, and recover a Skali cluster
+- [`skali cluster addresses`](cli/cluster/addresses.md): Declare how this host is addressed inside and outside the cluster
+- [`skali cluster apply`](cli/cluster/apply.md): Apply every pending cluster topology change
+- [`skali cluster changes`](cli/cluster/changes.md): Manage the candidate cluster revision
+- [`skali cluster changes discard`](cli/cluster/changes/discard.md): Discard every unapplied candidate change
+- [`skali cluster changes import`](cli/cluster/changes/import.md): Replace the candidate using already-enrolled nodes from a layout
+- [`skali cluster create`](cli/cluster/create.md): Create a reconciled cluster seed and coordinator
+- [`skali cluster diagnose`](cli/cluster/diagnose.md): Diagnose this installation from host state and the Kubernetes API
+- [`skali cluster init`](cli/cluster/init.md): Initialize Skali on the joined cluster (run once on a server)
+- [`skali cluster install`](cli/cluster/install.md): Install k3s and prepare this host as a Skali node
+- [`skali cluster join`](cli/cluster/join.md): Join this host to an existing cluster
+- [`skali cluster node`](cli/cluster/node.md): Stage reconciled-cluster node changes
+- [`skali cluster node capabilities`](cli/cluster/node/capabilities.md): Stage a node capability set
+- [`skali cluster node forget`](cli/cluster/node/forget.md): Finalize an unreachable removed host without local cleanup
+- [`skali cluster node remove`](cli/cluster/node/remove.md): Stage a managed node for drain and removal
+- [`skali cluster node restore`](cli/cluster/node/restore.md): Cancel a staged node removal
+- [`skali cluster plan`](cli/cluster/plan.md): Preview the candidate cluster transition
+- [`skali cluster rebalance`](cli/cluster/rebalance.md): Reconcile the current topology and optionally redistribute workloads
+- [`skali cluster repair`](cli/cluster/repair.md): Diagnose and repair this installation with scoped, confirmed actions
+- [`skali cluster reset-password`](cli/cluster/reset-password.md): Reset a user's password from a server node
+- [`skali cluster status`](cli/cluster/status.md): Show the installation state and health of this host
+- [`skali cluster storage-migrate`](cli/cluster/storage-migrate.md): Move the registry volume onto the replicated storage class
+- [`skali cluster tier`](cli/cluster/tier.md): Apply the available database availability tier
+- [`skali cluster token`](cli/cluster/token.md): Print the join command for this cluster
+- [`skali cluster token list`](cli/cluster/token/list.md): List reconciled-cluster invitations
+- [`skali cluster token revoke`](cli/cluster/token/revoke.md): Revoke an unused reconciled-cluster invitation
+- [`skali cluster uninstall`](cli/cluster/uninstall.md): Remove the Skali bundle or this node, with scoped confirmation
+- [`skali cluster upgrade`](cli/cluster/upgrade.md): Update the whole managed cluster to one Skali release
+- [`skali compile`](cli/compile.md): Compile a Skali manifest into canonical IR, a revision, or Kubernetes objects
+- [`skali completion`](cli/completion.md): Print or install shell completions
+- [`skali completion bash`](cli/completion/bash.md): Print the bash completion script
+- [`skali completion fish`](cli/completion/fish.md): Print the fish completion script
+- [`skali completion install`](cli/completion/install.md): Install the completion script where your shell loads it
+- [`skali completion powershell`](cli/completion/powershell.md): Print the powershell completion script
+- [`skali completion zsh`](cli/completion/zsh.md): Print the zsh completion script
+- [`skali database`](cli/database.md): Operate the managed databases and their pools
+- [`skali database list`](cli/database/list.md): List the database pools with their budgets
+- [`skali database rotate`](cli/database/rotate.md): Issue new credentials for a database and retire the current ones
+- [`skali database set`](cli/database/set.md): Change a database pool's memory budget or parameter overrides
+- [`skali database show`](cli/database/show.md): Show a database pool's budget and effective parameters
+- [`skali deploy`](cli/deploy.md): Deploy the project to an environment
+- [`skali dev`](cli/dev.md): Run the project on the local Skali platform
+- [`skali dev down`](cli/dev/down.md): Remove the project from the local platform; data is retained
+- [`skali dev exec`](cli/dev/exec.md): Run a command in a running app container
+- [`skali dev expose`](cli/dev/expose.md): Let skali dev proxy on another machine reach this machine's local platform
+- [`skali dev expose stop`](cli/dev/expose/stop.md): Stop exposing the local platform
+- [`skali dev list`](cli/dev/list.md): List projects on the local platform
+- [`skali dev logs`](cli/dev/logs.md): Stream the local project's runtime logs
+- [`skali dev proxy`](cli/dev/proxy.md): Open a skali dev platform on another machine at its *.localhost origins
+- [`skali dev proxy stop`](cli/dev/proxy/stop.md): Stop the proxy running in the background
+- [`skali dev reset`](cli/dev/reset.md): Destroy the local dev platform completely
+- [`skali dev run`](cli/dev/run.md): Run a command on the host with an application's resolved environment
+- [`skali dev sql`](cli/dev/sql.md): Run SQL against a database of the local platform
+- [`skali dev start`](cli/dev/start.md): Start the local platform, creating it when absent
+- [`skali dev status`](cli/dev/status.md): Show platform and current-project state
+- [`skali dev stop`](cli/dev/stop.md): Stop the running local platform; state is retained
+- [`skali dev trust`](cli/dev/trust.md): Trust a skali dev platform's development CA in this machine's browsers
+- [`skali dev up`](cli/dev/up.md): Build, deploy, and attach to the current project (same as bare skali dev)
+- [`skali dev upgrade`](cli/dev/upgrade.md): Upgrade the local platform in place, keeping its data and development CA
+- [`skali dev values`](cli/dev/values.md): List the local project's stored values by name and version
+- [`skali env`](cli/env.md): List and configure environments
+- [`skali env create`](cli/env/create.md): Create an environment
+- [`skali env list`](cli/env/list.md): List the project's environments with your access and their settings
+- [`skali env remove`](cli/env/remove.md): Remove an environment with its workloads, volumes, values, revisions, and history
+- [`skali env rename`](cli/env/rename.md): Rename an environment without changing its data or identity
+- [`skali env set`](cli/env/set.md): Change an environment's ceiling, deploy policy, or priority
+- [`skali env stop`](cli/env/stop.md): Stop an environment's workloads but keep its data
+- [`skali exec`](cli/exec.md): Run a command in a running app container
+- [`skali help`](cli/help.md): Help about any command
+- [`skali logs`](cli/logs.md): Stream live application logs
+- [`skali manifest`](cli/manifest.md): Work on the project manifest
+- [`skali manifest upgrade`](cli/manifest/upgrade.md): Clean up obsolete fields and update local manifest review history
+- [`skali plan`](cli/plan.md): Preview the deployment plan without building or rolling out workloads
+- [`skali project`](cli/project.md): Manage projects
+- [`skali project remove`](cli/project/remove.md): Remove a project with every environment and all its data
+- [`skali remote`](cli/remote.md): Manage the skali masters this machine talks to
+- [`skali remote add`](cli/remote/add.md): Add a remote and log in to it
+- [`skali remote list`](cli/remote/list.md): List remotes
+- [`skali remote login`](cli/remote/login.md): Log in again (browser, or email and password with --no-browser)
+- [`skali remote logout`](cli/remote/logout.md): Revoke a remote's session and forget its token
+- [`skali remote remove`](cli/remote/remove.md): Remove a remote and revoke its session
+- [`skali remote status`](cli/remote/status.md): Show the current remote, master reachability, session, and user
+- [`skali remote token`](cli/remote/token.md): Print the stored session token (for scripting API requests)
+- [`skali remote use`](cli/remote/use.md): Switch the current remote
+- [`skali rollback`](cli/rollback.md): Roll the environment back to a previous revision
+- [`skali route`](cli/route.md): List the environment's routes and probe their domains
+- [`skali route list`](cli/route/list.md): List the environment's routes with their certificate and edge verdict
+- [`skali route probe`](cli/route/probe.md): Check right now whether the route domains reach this installation
+- [`skali run`](cli/run.md): List, inspect, attach to, or cancel runs
+- [`skali run attach`](cli/run/attach.md): Attach the terminal to a run until it settles
+- [`skali run cancel`](cli/run/cancel.md): Cancel a run
+- [`skali run list`](cli/run/list.md): List the environment's runs
+- [`skali run logs`](cli/run/logs.md): Print the logs of one step
+- [`skali run show`](cli/run/show.md): Print a run's step tree
+- [`skali skill`](cli/skill.md): Manage the skali skill for coding agents
+- [`skali skill install`](cli/skill/install.md): Install the skali skill for coding agents
+- [`skali skill read`](cli/skill/read.md): Print a skali reference at the target's release
+- [`skali sql`](cli/sql.md): Run SQL against a database
+- [`skali upgrade`](cli/upgrade.md): Update this skali CLI to a published release
+- [`skali validate`](cli/validate.md): Validate a Skali project manifest and optionally an environment file
+- [`skali values`](cli/values.md): List the environment's stored values by name and version
+- [`skali version`](cli/version.md): Print the CLI version

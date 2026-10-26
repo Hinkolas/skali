@@ -6,7 +6,8 @@ name: ci
 #
 # On pull requests the `changes` job classifies the diff and the go, studio,
 # website, and release-config jobs only run for the areas that changed; a
-# docs-only PR runs the secret scan and nothing else. A job skipped by its
+# prose-only PR runs the secret scan; README examples and embedded references
+# also run Go checks. A job skipped by its
 # `if` reports as passing for branch protection, so the required-check names
 # stay stable.
 # Release tags run everything.
@@ -55,13 +56,14 @@ jobs:
           else
             # First match wins. Anything not listed is treated as source and
             # runs the Go checks plus the release rehearsal, so a new
-            # directory defaults to being checked. Only top-level markdown is
-            # documentation: markdown under internal/ is embedded in binaries.
+            # directory defaults to being checked. README examples are tested;
+            # markdown under internal/ is embedded in binaries.
             while IFS= read -r f; do
               [ -n "$f" ] || continue
               case "$f" in
                 .github/workflows/ci.yml) go=true; studio=true; website=true; release=true ;;
-                README.md|ROADMAP.md|SECURITY.md|LICENSE|docs/*|.github/*|.claude/*|.gitignore|.gitleaks.toml|.env.example|Taskfile.yml|compose.yaml) ;;
+                README.md) go=true ;;
+                ROADMAP.md|SECURITY.md|LICENSE|docs/*|.github/*|.claude/*|.gitignore|.gitleaks.toml|.env.example|Taskfile.yml|compose.yaml) ;;
                 studio/*) studio=true; release=true ;;
                 website/*) website=true ;;
                 install.sh) website=true; release=true ;;
@@ -143,9 +145,10 @@ jobs:
           fi
       - name: go mod tidy is clean
         run: go mod tidy && git diff --exit-code go.mod go.sum
-      - name: Generated schemas and sqlc store are current
+      - name: Generated schemas, references, and sqlc store are current
         run: |
           go generate ./internal/manifest ./internal/layout ./internal/installer
+          go generate ./cmd/skali ./internal/skill
           sqlc generate
           git diff --exit-code
 
@@ -195,6 +198,7 @@ jobs:
           cache: npm
           cache-dependency-path: website/package-lock.json
       - run: npm ci
+      - run: npm test
       - run: npm run check
       - run: npm run lint
       - run: npm run build

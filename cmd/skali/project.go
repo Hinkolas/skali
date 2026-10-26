@@ -161,7 +161,7 @@ func newCompileCommand() *cobra.Command {
 	command.Flags().StringVar(&manifestPath, "manifest", "", "manifest path; defaults to skali.yml or skali.yaml")
 	command.Flags().StringVar(&target, "target", "definition", "compile target: definition, revision, or kubernetes")
 	command.Flags().StringVar(&environment, "environment", "local", "environment name recorded in revision output")
-	command.Flags().StringVar(&envFile, "env-file", "", "dotenv file used to resolve project variables for Kubernetes rendering")
+	command.Flags().StringVar(&envFile, "env-file", "", "dotenv file used to resolve project variables for revision or kubernetes output")
 	command.Flags().StringVar(&namespace, "namespace", "", "Kubernetes namespace used for rendering")
 	command.Flags().StringArrayVar(&images, "image", nil, "prepared image for a build application, as service=reference")
 	return command

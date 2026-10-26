@@ -2,6 +2,8 @@ package skill_test
 
 import (
 	"io/fs"
+	"os"
+	"path"
 	"regexp"
 	"sort"
 	"strings"
@@ -30,7 +32,10 @@ var releaseTag = regexp.MustCompile(`v\d+\.\d+\.\d+`)
 func documents(t *testing.T) map[string]string {
 	t.Helper()
 	found := map[string]string{}
-	err := fs.WalkDir(skill.FS(), ".", func(path string, entry fs.DirEntry, err error) error {
+	readme, err := fs.ReadFile(os.DirFS("../.."), "README.md")
+	require.NoError(t, err)
+	found["README.md"] = string(readme)
+	err = fs.WalkDir(skill.FS(), ".", func(path string, entry fs.DirEntry, err error) error {
 		require.NoError(t, err)
 		if entry.IsDir() || !strings.HasSuffix(path, ".md") {
 			return nil
@@ -41,10 +46,10 @@ func documents(t *testing.T) map[string]string {
 		return nil
 	})
 	require.NoError(t, err)
-	for _, topic := range skill.Topics() {
-		data, ok := skill.Reference(topic.Name)
-		require.True(t, ok, topic.Name)
-		found["reference/"+topic.Name] = string(data)
+	for _, name := range skill.ReferenceNames() {
+		data, ok := skill.Reference(name)
+		require.True(t, ok, name)
+		found["reference/"+name] = string(data)
 	}
 	return found
 }
@@ -118,6 +123,33 @@ func TestManifestReferenceCoversEveryField(t *testing.T) {
 	require.Empty(t, missing, "fields in no ```yaml manifest block of the manifest reference")
 	for field := range uncompiledFields {
 		require.True(t, fields[field], "uncompiledFields lists %s, which is not a manifest field", field)
+	}
+}
+
+// Examples exercise syntax, but they cannot explain an option. Require a
+// dedicated prose row for every key (including containers), and reject stale
+// rows naming fields that no longer exist.
+func TestManifestReferenceExplainsEveryField(t *testing.T) {
+	t.Parallel()
+	schema, err := manifest.Schema()
+	require.NoError(t, err)
+	fields := map[string]bool{}
+	schemaFields(schema, "", fields)
+	reference, ok := skill.Reference("manifest")
+	require.True(t, ok)
+	_, referenceText, found := strings.Cut(string(reference), "## Field reference\n")
+	require.True(t, found)
+	referenceText, _, _ = strings.Cut(referenceText, "## Examples\n")
+	rows := regexp.MustCompile("(?m)^\\| `([^`]+)` \\| (.+) \\|$")
+	explained := map[string]bool{}
+	for _, row := range rows.FindAllStringSubmatch(referenceText, -1) {
+		require.True(t, fields[row[1]], "field reference describes unknown key %s", row[1])
+		require.False(t, explained[row[1]], "duplicate field explanation: %s", row[1])
+		require.NotEmpty(t, strings.TrimSpace(row[2]), "%s needs an explanation", row[1])
+		explained[row[1]] = true
+	}
+	for field := range fields {
+		require.True(t, explained[field], "%s needs a prose row in the field reference", field)
 	}
 }
 
@@ -208,13 +240,37 @@ func TestTopicsMatchReferenceFiles(t *testing.T) {
 
 	names := skill.TopicNames()
 	require.Equal(t, []string{"manifest", "cli", "architecture"}, names)
-	for _, name := range names {
+	for _, name := range skill.ReferenceNames() {
 		content, ok := skill.Reference(name)
 		require.True(t, ok, name)
 		require.True(t, strings.HasPrefix(string(content), "# "), "%s must start with a title", name)
 	}
 	_, ok := skill.Reference("architecture")
 	require.True(t, ok, "architecture is served by the selected release")
-	_, ok = skill.Reference("../skill/SKILL")
-	require.False(t, ok)
+	for _, name := range []string{"../skill/SKILL", "cli/../../skill/SKILL", "/cli/deploy", "cli//deploy", "cli/unknown", "cli/cluster/restore"} {
+		_, ok = skill.Reference(name)
+		require.False(t, ok, name)
+	}
+}
+
+// Focused references need usable navigation in both CLI output and repository
+// browsing. A renamed command/guide must not leave dangling Markdown links.
+func TestCLIReferenceLinksResolve(t *testing.T) {
+	links := regexp.MustCompile(`\[[^\]]+\]\(([^)]+)\)`)
+	for _, name := range skill.ReferenceNames() {
+		if name != "cli" && !strings.HasPrefix(name, "cli/") {
+			continue
+		}
+		data, ok := skill.Reference(name)
+		require.True(t, ok)
+		for _, match := range links.FindAllStringSubmatch(string(data), -1) {
+			link, _, _ := strings.Cut(match[1], "#")
+			if !strings.HasSuffix(link, ".md") || strings.Contains(link, "://") {
+				continue
+			}
+			target := strings.TrimSuffix(path.Join(path.Dir(name), link), ".md")
+			_, ok := skill.Reference(target)
+			require.True(t, ok, "%s has a broken reference link: %s", name, link)
+		}
+	}
 }

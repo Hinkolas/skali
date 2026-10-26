@@ -20,7 +20,7 @@ On a managed installation, select and authenticate the intended remote with
 ```sh
 skali cluster upgrade
 skali cluster upgrade --wait
-skali cluster upgrade --version v0.1.0-alpha.5 --yes --wait
+skali cluster upgrade --version v0.1.3-rc.10 --yes --wait
 ```
 
 The exact version above is an example; it must be a published release with
@@ -79,7 +79,7 @@ When the API is unavailable, a managed controller can submit the operation
 using its local cluster authority:
 
 ```sh
-sudo skali cluster upgrade --recover --version v0.1.0-alpha.5 --wait
+sudo skali cluster upgrade --recover --version v0.1.3-rc.10 --wait
 ```
 
 This path requires both `--recover` and an exact published `--version`. It
@@ -111,8 +111,9 @@ old host agent's version alone cannot prove its coordinator restarted.
 
 ## Updating the CLI
 
-`skali upgrade` updates the `skali` binary on the machine it runs on and
-nothing else; a cluster moves with `skali cluster upgrade`. It follows the same
+`skali upgrade` updates the `skali` binary and refreshes managed installed
+skills and completions; a managed cluster moves with `skali cluster upgrade`
+and the local platform with `skali dev upgrade`. It follows the same
 channels as `install.sh`: stable excludes prereleases, beta includes them. The
 default is stable, or beta when the installed CLI is itself a prerelease, so an
 alpha install keeps following alphas without a flag.
@@ -120,11 +121,11 @@ alpha install keeps following alphas without a flag.
 ```sh
 skali upgrade
 skali upgrade --channel stable
-skali upgrade --version v0.1.0-alpha.5
+skali upgrade --version v0.1.3-rc.10
 ```
 
-`--version` names an exact published release and overrides the channel; it is
-the way to move back to an earlier release. Every download is verified against
+`--version` names an exact published release and cannot be combined with
+`--channel`; it is also the way to move back to an earlier CLI release. Every download is verified against
 the release's `checksums.txt` before the binary is replaced, and the new binary
 must report the target version or the previous one is restored. Shell
 completion scripts that `install.sh` or `skali completion install` put in place

@@ -288,7 +288,7 @@ func TestAllReferencesCarryRuntimeContext(t *testing.T) {
 			withCLIVersion(t, "v0.0.0-dev")
 		}
 		invocationContext = &versionContext{Remote: "target", Source: "--remote", Mode: mode}
-		for _, topic := range []string{"manifest", "cli", "architecture", ""} {
+		for _, topic := range []string{"manifest", "cli", "architecture", "cli/deploy", "cli/cluster/node/remove", "cli/workflows/backups", ""} {
 			args := []string{"skill", "read"}
 			if topic != "" {
 				args = append(args, topic)

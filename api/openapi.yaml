@@ -3142,11 +3142,12 @@ paths:
         data into a redeployed environment. The environment must be active,
         and the run claims the environment's single running-run slot.
 
-        Manual snapshots are kept until deleted. Snapshots the manifest's
-        `backups` policies produce are created by the daemon on their cron
-        schedule (UTC) with actor `schedule:<policy>`, carry the policy
-        name, and are the only ones the policy's retention removes; such a
-        run ends with a `retention` step.
+        Manual snapshots are kept until deleted. Automatic snapshots are
+        configured per environment through its backup schedule, outside the
+        project manifest. The daemon evaluates the five-field cron in UTC,
+        records actor `schedule` and trigger `scheduled`, and expires only
+        scheduled snapshots under that environment's retention, always keeping
+        the newest. Removing the schedule stops expiry of existing snapshots.
       tags: [backups]
       responses:
         "202":

@@ -23,14 +23,27 @@ func runCapturingStdout(t *testing.T, fn func() error) (string, error) {
 	t.Helper()
 	read, write, err := os.Pipe()
 	require.NoError(t, err)
+	defer read.Close()
+	defer write.Close()
+	// Drain concurrently: a full reference can exceed the OS pipe buffer,
+	// and waiting until fn returns would deadlock the writer.
+	type capture struct {
+		data []byte
+		err  error
+	}
+	done := make(chan capture, 1)
+	go func() {
+		data, err := io.ReadAll(read)
+		done <- capture{data, err}
+	}()
 	previous := os.Stdout
 	os.Stdout = write
 	defer func() { os.Stdout = previous }()
 	runErr := fn()
 	require.NoError(t, write.Close())
-	output, err := io.ReadAll(read)
-	require.NoError(t, err)
-	return string(output), runErr
+	output := <-done
+	require.NoError(t, output.err)
+	return string(output.data), runErr
 }
 
 // withStdin replaces os.Stdin with a pipe preloaded with input; a pipe is

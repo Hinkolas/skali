@@ -45,7 +45,8 @@ curl -fsSL https://skali.dev/install.sh | sh
   (SeaweedFS), provisioned from the manifest, with their credentials injected
   as environment variables.
 - **Routes with automatic TLS** (Traefik, Let's Encrypt), custom domains, and
-  load-balancing strategies. Buckets get their own hostnames.
+  load-balancing strategies, response compression, and hostname aliases that
+  redirect at the edge. Buckets get their own hostnames and CORS policies.
 - **Environments** per project (staging, production, ...), with promotion
   between them, rollbacks, and encrypted per-environment values.
 - **Local development on the real platform**: the app you are working on
@@ -134,9 +135,12 @@ deploys it, and follows its logs. The example is served at
 generated for your machine. The first run offers to trust that CA
 (`skali dev trust` repeats the step).
 
-Ctrl-C pauses the project and keeps its data, `skali dev` brings it back, and
-`skali dev -d` runs it in the background. `skali dev status`, `exec`, `list`,
-and `reset` do what they say. After updating Skali, `skali dev upgrade` moves
+Ctrl-C pauses the project and keeps its data, and `skali dev` brings it back.
+`skali dev -d` leaves container workloads running after rollout; use
+`--preview -d` when the manifest has host dev commands. `skali dev status`
+inspects the platform/project, `dev exec` opens a container shell, `dev list`
+lists local projects, and `dev reset` deletes the entire local platform and
+its data. After updating Skali, `skali dev upgrade` moves
 the local platform to the new release and keeps its data and development CA. Add a `dev:` block to an application and
 `skali dev` runs that app as a process on your machine with hot reload,
 behind the cluster's routes and with its real database and bucket
@@ -198,12 +202,14 @@ available control plane. See [enrollment and recovery](docs/enrollment.md).
 sudo skali cluster status          # health of this node and the platform
 sudo skali cluster diagnose        # find problems, with suggested fixes
 sudo skali cluster repair          # apply them, each one confirmed
-sudo skali cluster upgrade --wait  # whole cluster, latest release on its channel
+skali cluster upgrade --wait       # authenticated API: whole managed cluster
 sudo skali cluster reset-password  # recover a locked-out admin account
 ```
 
 Cluster updates also run from the Studio (System → Software update) and
-continue after the CLI disconnects. See [cluster updates](docs/updates.md).
+continue after the CLI disconnects. Run the normal upgrade as the user with
+the authenticated remote; sudo can select root's separate CLI configuration.
+See [cluster updates](docs/updates.md).
 
 </details>
 
@@ -237,7 +243,7 @@ skali access set alice@example.com deploy   # roles: read, deploy, maintain, adm
 
 ## The manifest
 
-```yaml
+```yaml manifest
 # yaml-language-server: $schema=https://skali.dev/schemas/v1/skali.schema.json
 name: guestbook
 
@@ -285,10 +291,21 @@ references are outputs of the databases and buckets Skali provisions.
 `skali validate` checks a manifest, and the schema line at the top gives you
 completion and inline errors in any editor with YAML language support.
 
-The [manifest reference](https://skali.dev/docs/manifest) lists every field,
-default, unit, and validation rule for the newest release. For the release
-your cluster runs, `skali skill read manifest` in the project directory prints
-the same reference from that release.
+The [manifest reference](https://skali.dev/docs/manifest) describes every key,
+default, unit, and validation rule. The website and floating `/schemas/v1/`
+URLs follow the newest stable release, falling back to a prerelease only when
+no stable exists. A newer RC may support fields absent there. Pin your editor
+to `https://skali.dev/schemas/<release>/skali.schema.json` with the full tag
+(including `v`); [available schema releases](https://skali.dev/schemas/releases.json)
+lists them. Run `skali skill read manifest` in the project directory for the
+reference embedded in your target cluster's release, including its provenance.
+
+Manifests have no top-level `version`, `skali`, `revision`, or `backups` key.
+`skali skill read manifest --since 0` prints the manifest change ledger;
+`skali manifest upgrade` cleans up supported obsolete fields and records
+local review in `.skali/`. Release tags, manifest review numbers, and stored
+deployment revisions are independent. Automatic backups are configured with
+`skali backup schedule set`, outside the manifest.
 
 [`examples/`](examples/) has complete projects:
 
@@ -303,16 +320,23 @@ the same reference from that release.
 
 ### With a coding agent
 
-`skali skill install` gives your coding agent the platform's rules for writing
-manifests and porting apps. The skill reads the manifest, CLI, and
-architecture references through `skali skill read`, which always answers for
-the release your project's cluster runs.
+`skali skill install` installs the guide for authoring manifests, developing
+and deploying apps, and operating the platform. For unattended installation,
+use `skali skill install --agent codex`, `--agent claude`, or `--all`.
+The guide loads the manifest, CLI overview, and architecture references through
+`skali skill read`. Command pages load separately, for example `skali skill read
+cli deploy` or `skali skill read cli cluster node remove`; each links its workflow
+guide. A selected cluster determines the release;
+without a target, the invoked CLI supplies its own references. Read the header
+and reread references after changing the target or release.
 
 ## Documentation
 
 | Topic | |
 | --- | --- |
 | [Manifest reference](https://skali.dev/docs/manifest) | Every `skali.yaml` field, default, and validation rule |
+| [CLI reference](internal/skill/assets/reference/cli.md) | Overview linking every command and workflow; `skali skill read cli <command...>` reads one command's complete flag reference |
+| [Manifest source reference](internal/skill/assets/reference/manifest.md) | This checkout's field reference, examples, and manifest change history |
 | [Databases](docs/databases.md) | Managed PostgreSQL: versions, extensions, isolation, availability |
 | [Buckets](docs/buckets.md) | S3 buckets: quotas, hostnames, browser uploads, topology |
 | [Storage](docs/storage.md) | Persistent volumes and storage drivers |

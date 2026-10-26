@@ -1,0 +1,4 @@
+kind: added
+path: "databases.*.extensions"
+message: "history backfill: supported extensions include vector (pgvector); the compiler checks extension names, duplicates, and PostgreSQL majors against the bundled catalog (currently majors 17 and 18)"
+hint: "declare extensions in the manifest before migrations need them; removing a name does not drop the installed extension; this records already shipped catalog support and validation"

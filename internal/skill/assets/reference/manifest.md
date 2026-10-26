@@ -33,6 +33,14 @@ require. The same definition deploys unchanged to a local
 - Editors get completion and inline validation from the published schema
   by putting this on the first line:
   `# yaml-language-server: $schema=https://skali.dev/schemas/v1/skali.schema.json`
+  This floating URL follows the newest **stable** release (the newest
+  prerelease only when no stable release exists). It can therefore lack fields
+  supported by a newer RC. Pin the editor to
+  `https://skali.dev/schemas/<release>/skali.schema.json`, replacing `<release>`
+  with the full tag, including `v`, from the reference header. The `v1` in the
+  floating URL is neither a Skali release nor a manifest review revision.
+  Editor validation supplements `skali validate`; it cannot check resolved
+  hostnames, cluster capacity, live immutable settings, or deployment policy.
 
 Top level:
 
@@ -45,9 +53,16 @@ buckets: {}
 ```
 
 At least one application, database, or bucket must be declared. Keys in
-every collection are stable identifiers matching `^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$`
-and are part of resource identity: renaming a key means destroying and
-recreating what it names.
+service, port, route, volume, and named-command collections are stable identifiers
+matching `^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$`. Service keys are resource
+identity: renaming a database or bucket replaces it and is destructive. Renaming
+a volume creates an empty volume and retains the old claim until it is removed
+manually or the environment is purged. Environment-variable names and build
+argument names are not service keys.
+
+The [field reference](#field-reference) below describes each key independently
+of the examples. Use [values and expressions](#values-and-expressions) for
+interpolation, and the topic sections for runtime behavior and restrictions.
 
 ## Values and expressions
 
@@ -80,14 +95,18 @@ Rules the compiler enforces:
 
 - Requiredness derives from use: any `${NAME}` reference without an
   inline default makes the value required before deployment.
-- Expressions live in exactly two places: an application's `environment:`
-  values (`${NAME}` with concatenation such as
-  `"postgres://app:${DB_PASSWORD}@db:5432/app"`) and a route's `domain:`
-  (`${NAME}` with concatenation such as `"app.${BASE_DOMAIN}"`).
-- Every other string field is literal: image, command, build target and
+- Project-value expressions are supported in application `environment:`
+  values, application route `domain` and each `aliases` entry, and bucket
+  `route.domain`. Concatenation is allowed, such as `"www.${BASE_DOMAIN}"`.
+  Hostnames are public, even when the values supplying them are stored as secrets.
+- Other deployed string fields are literal: image, command, build target and
   arguments, route and probe paths, volume mount paths. A `${...}` there
   passes through verbatim, so shell syntax in `command` reaches the
   container untouched.
+- Host-side `dev.command` has a separate expansion step against its resolved
+  process environment; it does not declare project values. Named `commands`
+  receive that environment but their argv elements stay literal; use an explicit
+  shell to expand variables there. See [commands and local dev](#commands-and-local-dev).
 - A `{{...}}` service output may appear only in an application's
   `environment:` block and must occupy the entire value.
 - The same name with two different inline defaults is an error.
@@ -134,7 +153,9 @@ applications:
 sources. Leave it out for portable applications: they are built for
 every platform the cluster's application nodes run. Declaring a subset
 restricts builds to those platforms and pins the workload to matching
-nodes.
+nodes. The candidates are intersected with the cluster's application-node
+platforms; a configured cluster platform preference chooses one, otherwise
+all candidates build. `--platform` explicitly overrides the build selection.
 
 `image` references are imported into the managed registry and pinned by
 digest. Build contexts may not be absolute paths and may not escape the
@@ -384,6 +405,9 @@ or reach its timeout instead of stopping it halfway.
 ```
 
 `maxUnavailable` and `maxSurge` are errors under any other strategy.
+Blue-green isolates routed traffic, not background execution: both versions'
+processes exist during the overlap. Workers and scheduled jobs still need
+database-backed coordination to avoid doing the same work twice.
 `timeout` applies to every strategy: when the new version is not ready in
 time the deployment fails and the previous revision stays active. The
 clock starts at the deployment; a release command gets its own `timeout`
@@ -583,6 +607,169 @@ Changing a live database's `engine`, `version`, or `isolation`, or a
 live bucket's `visibility` or `versioning`, is refused outright; no
 confirmation allows it. Quota changes update in place, but a bucket's
 quota cannot drop to or below what it stores.
+
+## Field reference
+
+Each row is a manifest key, including object containers. `*` stands for a
+user-chosen collection key, never a literal asterisk. Fields are optional unless
+marked required. Omission defaults below describe effective behavior; some are
+applied by the runtime rather than written into `skali compile` output. A
+quantity is a positive byte value such as `256MB`; a duration uses the units
+above. Arrays contain strings unless stated otherwise. An argv array executes
+directly, without a shell; use `[sh, -c, "..."]` explicitly when a shell is needed.
+
+### Project and application source keys
+
+| Key | Type, default, and behavior |
+| --- | --- |
+| `name` | Required string; stable project key. Used to identify the project when there is no checkout binding. |
+| `description` | String; empty by default. Human-readable project description, with no interpolation. |
+| `applications` | Map of application keys to application objects; empty by default. At least one application, database, or bucket must exist. |
+| `databases` | Map of database keys to managed database objects; empty by default. |
+| `buckets` | Map of bucket keys to managed S3 bucket objects; empty by default. |
+| `applications.*.image` | OCI image reference; exactly one of nonempty `image` or `build` is required. Imported into the managed registry and pinned by digest; literal, with no interpolation. |
+| `applications.*.build` | Object describing a source build; mutually exclusive with `image`. Requires `context`. |
+| `applications.*.build.context` | Required string when using `build`; path relative to the project root. `.` is valid; absolute paths and escaping the project are rejected. |
+| `applications.*.build.dockerfile` | String; defaults to `Dockerfile` relative to the build context. May leave the context with `..`, but must stay inside the project root. |
+| `applications.*.build.target` | String; unset by default, using the Dockerfile's final stage. Selects a named multi-stage build target. |
+| `applications.*.build.arguments` | Map of build-argument names to string, number, or boolean scalars, converted to strings. Empty by default; passed literally, with no value or service-output expansion. Never put credentials here. |
+| `applications.*.platforms` | Array; omitted or empty means no application restriction. Allowed values are `linux/amd64` and `linux/arm64`, without duplicates. Applies to both images and builds; order does not express preference. |
+| `applications.*.command` | Argv array; omitted or empty preserves the image's command. Overrides the container command when set; no Skali interpolation. |
+| `applications.*.environment` | Map of environment-variable names to string, number, or boolean scalars, converted to strings. Empty by default. Names match `^[A-Za-z_][A-Za-z0-9_]*$`. Supports project values and whole-value service outputs. Null, lists, and objects are invalid values. |
+
+### Port and route keys
+
+| Key | Type, default, and behavior |
+| --- | --- |
+| `applications.*.ports` | Map of stable port names to port objects; empty by default. Names are referenced by routes, probes, and dev port pins. |
+| `applications.*.ports.*.port` | Required integer, 1–65535; port the container listens on. Declaring it does not publish it to the internet. |
+| `applications.*.ports.*.protocol` | String: `http` (default), `https`, `tcp`, or `udp`. UDP uses UDP transport; the others use TCP. Routes publish HTTP traffic, not arbitrary public TCP/UDP listeners. |
+| `applications.*.routes` | Map of stable route names to HTTP route objects; empty by default. No public application hostname exists unless a route is declared. |
+| `applications.*.routes.*.domain` | Required nonempty hostname string; no scheme, path, port, or wildcard. Supports `${NAME}` and inline defaults; resolved names are checked and claimed at deploy. |
+| `applications.*.routes.*.path` | String; default `/`. Literal path prefix beginning with `/`: `/api` also matches `/apix`. Dot segments, repeated slashes, and trailing slashes are cleaned before matching and duplicate checking. The prefix is preserved upstream. Queries, fragments, and control characters are invalid; the edge reserves its ACME and identity endpoints. |
+| `applications.*.routes.*.port` | Required named port from this application or integer/numeric string in 1–65535; the upstream target, not the public edge port. |
+| `applications.*.routes.*.tls` | String: `automatic` (default, certificate and HTTP-to-HTTPS redirect), `optional` (certificate and plain HTTP), or `disabled` (HTTP only). Also governs alias certificates and redirect schemes. |
+| `applications.*.routes.*.strategy` | String: `round-robin` (default) or `least-requests`. Chooses how the edge distributes requests across replicas; unrelated to the rollout strategy. |
+| `applications.*.routes.*.compress` | Boolean; default `true`. Enables edge compression for eligible responses. `false` disables it for this route; already encoded responses and standard event streams are skipped regardless. |
+| `applications.*.routes.*.aliases` | Array of alternate hostnames; empty by default. Supports project-value expressions. Redirects the whole alias host to `domain`, preserving path/query (301 for GET, 308 otherwise); does not serve the app on a second hostname. Aliases must be unique and cannot also be any application or bucket route domain. |
+
+### Health keys
+
+| Key | Type, default, and behavior |
+| --- | --- |
+| `applications.*.health` | Object holding optional HTTP startup, readiness, and liveness checks. No probes are created when omitted. |
+| `applications.*.health.startup` | Probe object; absent by default. Allows startup time before readiness and liveness checks begin; repeated failures restart the container. |
+| `applications.*.health.startup.http` | HTTP check object, required for a declared startup probe. |
+| `applications.*.health.startup.http.port` | Required named application port or numeric port in 1–65535. |
+| `applications.*.health.startup.http.path` | Required literal HTTP path starting with `/`; no default. |
+| `applications.*.health.startup.interval` | Duration; default `2s`. Time between startup checks. |
+| `applications.*.health.startup.timeout` | Duration; default `2s`. Deadline for each startup check. |
+| `applications.*.health.startup.failureThreshold` | Integer; default `30`. Consecutive failures before the container restarts. Use a positive value. |
+| `applications.*.health.readiness` | Probe object; absent by default. Controls readiness for traffic and deployment activation; failure removes the replica from serving without restarting it. |
+| `applications.*.health.readiness.http` | HTTP check object, required for a declared readiness probe. |
+| `applications.*.health.readiness.http.port` | Required named application port or numeric port in 1–65535. |
+| `applications.*.health.readiness.http.path` | Required literal HTTP path starting with `/`; no default. |
+| `applications.*.health.readiness.interval` | Duration; default `10s`. Time between readiness checks. |
+| `applications.*.health.readiness.timeout` | Duration; default `2s`. Deadline for each readiness check. |
+| `applications.*.health.readiness.failureThreshold` | Integer; default `3`. Consecutive failures before the replica becomes unready. Use a positive value. |
+| `applications.*.health.liveness` | Probe object; absent by default. Repeated failures restart an unhealthy container. |
+| `applications.*.health.liveness.http` | HTTP check object, required for a declared liveness probe. |
+| `applications.*.health.liveness.http.port` | Required named application port or numeric port in 1–65535. |
+| `applications.*.health.liveness.http.path` | Required literal HTTP path starting with `/`; no default. |
+| `applications.*.health.liveness.interval` | Duration; default `30s`. Time between liveness checks. |
+| `applications.*.health.liveness.timeout` | Duration; default `2s`. Deadline for each liveness check. |
+| `applications.*.health.liveness.failureThreshold` | Integer; default `3`. Consecutive failures before the container restarts. Use a positive value. |
+
+### Resources, scaling, and placement keys
+
+| Key | Type, default, and behavior |
+| --- | --- |
+| `applications.*.resources` | Object with per-replica requests and limits. Omitted fields impose no manifest-specific reservation or limit. |
+| `applications.*.resources.requests` | Resource object; omitted by default. Reserves schedulable capacity per replica. Each request must not exceed its corresponding declared limit. |
+| `applications.*.resources.requests.cpu` | Positive decimal CPU cores, as a number or string, with at most three decimals; unset by default. CPU autoscaling needs a CPU request to measure utilization. |
+| `applications.*.resources.requests.memory` | Byte quantity; unset by default. Memory reserved for each replica. |
+| `applications.*.resources.requests.temporaryStorage` | Byte quantity; unset by default. Ephemeral disk reserved for each replica. |
+| `applications.*.resources.limits` | Resource object; omitted by default. Bounds the resources each replica may consume. |
+| `applications.*.resources.limits.cpu` | Positive decimal CPU cores with at most three decimals; unset by default. CPU ceiling, enforced by throttling. |
+| `applications.*.resources.limits.memory` | Byte quantity; unset by default. Memory ceiling; exceeding it can kill the container. |
+| `applications.*.resources.limits.temporaryStorage` | Byte quantity; unset by default. Ephemeral storage ceiling; exceeding it evicts the replica. It does not provide persistent storage. |
+| `applications.*.scaling` | Object; defaults to one fixed replica without autoscaling. |
+| `applications.*.scaling.replicas` | Object setting the replica range. A fixed replica count uses `min` with `max` omitted or equal. |
+| `applications.*.scaling.replicas.min` | Integer; default `1`. Minimum/fixed replica count; use at least 1. Volumes require one replica. |
+| `applications.*.scaling.replicas.max` | Integer; default equals `min`, and must be at least `min`. A greater value requires CPU autoscaling. |
+| `applications.*.scaling.autoscaling` | Object; absent by default. Defines automatic scaling policy; currently only CPU is supported. |
+| `applications.*.scaling.autoscaling.cpu` | Object; absent by default. CPU utilization policy for the replica range. |
+| `applications.*.scaling.autoscaling.cpu.targetUtilization` | Integer percentage, 1–100; no target by default. Required when `max > min`, and invalid with a fixed replica count. Measured relative to CPU requests. |
+| `applications.*.placement` | Object; defaults to preferred spreading across nodes. |
+| `applications.*.placement.spread` | Object controlling topology spreading with maximum skew 1. Preferred spread can still place replicas together when capacity is limited. |
+| `applications.*.placement.spread.across` | String: `nodes` (effective default) or `zones`. Zones use the nodes' topology zone labels. |
+| `applications.*.placement.spread.minimum` | Nonnegative integer; unset/0 by default. Minimum eligible topology domains; enforced only with `enforcement: required`. With preferred spreading it is recorded but does not constrain scheduling. |
+| `applications.*.placement.spread.enforcement` | String: `preferred` (effective default) or `required`. Required spread leaves replicas pending when the constraint cannot be met. |
+
+### Deployment and volume keys
+
+| Key | Type, default, and behavior |
+| --- | --- |
+| `applications.*.deployment` | Object; omitted means no release hook and the default rollout policy. |
+| `applications.*.deployment.releaseCommand` | Object; absent by default. Runs a one-off migration/hook with the candidate image and resolved environment before activation. Skipped for host-intercepted dev applications. |
+| `applications.*.deployment.releaseCommand.command` | Argv array; empty/omitted means no release hook. Runs once per deployment without an automatic retry; no Skali interpolation. |
+| `applications.*.deployment.releaseCommand.timeout` | Duration; effective default `10m`. Bounds the release hook once it starts; timeout fails the deployment. |
+| `applications.*.deployment.rollout` | Object controlling replacement and readiness deadlines; valid with or without a release command. |
+| `applications.*.deployment.rollout.strategy` | String: `blue-green` (default without volumes), `rolling`, or `recreate` (required and default with volumes). Blue-green needs capacity for both versions; recreate incurs downtime. |
+| `applications.*.deployment.rollout.maxUnavailable` | Nonnegative integer; default `0` for rolling. Number of replicas allowed unavailable; valid only when strategy is explicitly/effectively rolling. Cannot be zero together with `maxSurge`. |
+| `applications.*.deployment.rollout.maxSurge` | Nonnegative integer; default `1` for rolling. Extra replicas during rollout; rejected for blue-green and recreate, even when explicitly set to zero. |
+| `applications.*.deployment.rollout.timeout` | Duration; effective default `10m`. Readiness deadline; a failed candidate does not become the active revision. The release command has its own timeout, followed by a fresh rollout deadline. |
+| `applications.*.shutdown` | Object controlling container termination; optional. |
+| `applications.*.shutdown.gracePeriod` | Duration; default `30s`. Time after SIGTERM to drain and exit before forced termination. |
+| `applications.*.volumes` | Map of stable volume names to persistent volume objects; empty by default. Requires one replica and recreate rollouts. Removing a declaration retains its PVC; purging the environment deletes it. |
+| `applications.*.volumes.*.mountPath` | Required absolute container path; literal. The volume is mounted read/write there. |
+| `applications.*.volumes.*.size` | Required positive byte quantity. Requested persistent capacity; advisory on the local driver, enforced on Longhorn. Volumes can grow but cannot shrink. |
+
+### Host development keys
+
+| Key | Type, default, and behavior |
+| --- | --- |
+| `applications.*.commands` | Map of stable command names to nonempty argv arrays; empty by default. `skali dev run <name>` executes on the host in the project root with the application's resolved environment. Names shared by apps require an app-qualified selection. This map is client-only and does not change a deployment hash. |
+| `applications.*.dev` | Object; absent by default. Enables host execution/interception during `skali dev`; requires `command`. Ignored by remote deploys and `dev --preview`, but still validated. Does not replace the required `image` or `build`. |
+| `applications.*.dev.command` | Required nonempty argv array when `dev` is present. Runs the host dev server in the project root. `${VAR}` expands from the resolved process environment, including injected `SKALI_PORT_<NAME>` and `PORT` for a single port. Bind a non-loopback address. |
+| `applications.*.dev.ports` | Map of declared application port names to integer host ports in 1–65535; empty by default. Pins only listed ports; other ports are allocated automatically. A busy pinned port fails instead of silently moving. |
+
+### Database keys
+
+| Key | Type, default, and behavior |
+| --- | --- |
+| `databases.*.engine` | Required string; only `postgres` is supported. Cannot be changed on an existing database. |
+| `databases.*.version` | Required major number or string; supported values are `17` and `18`. Skali chooses the patch image. Changing a live database's major is refused; it is not a major-upgrade mechanism. |
+| `databases.*.isolation` | String: `shared` (default, installation pool per major), `project` (pool for this environment), or `dedicated` (pool for this database). Immutable after creation. Dev uses one shared pool regardless. |
+| `databases.*.availability` | String: `single` (default), `asynchronous` (two database-capable nodes), or `synchronous` (three). Declares minimum availability; insufficient capacity stays pending. Dev only provides single-instance availability. |
+| `databases.*.storage` | Object with requested storage size; omitted by default. This is pool capacity intent, not a per-database usage quota. |
+| `databases.*.storage.size` | Positive byte quantity; unset by default. Used when creating a dedicated pool, with a 10GiB managed-pool floor. Shared and project pools use platform capacity (10GiB initially); dev uses a 1GiB pool. Does not enforce an individual database quota or resize an existing pool. |
+| `databases.*.extensions` | Array; empty by default. Supported names are listed in the Databases section, including `vector`; unknown names and duplicates fail validation. Applied before consumers become ready. Removing a name does not drop an installed extension. |
+| `databases.*.recovery` | Object of recovery intent; absent by default. Currently recorded only, not an enabled recovery service. |
+| `databases.*.recovery.pointInTime` | Duration; unset by default. Accepted and recorded, but point-in-time recovery is not implemented. Restore from snapshots instead. |
+
+### Bucket keys
+
+| Key | Type, default, and behavior |
+| --- | --- |
+| `buckets.*.visibility` | String: `private` (default) or `public-read`. Only private is deployable; public-read is recognized grammar but rejected at deploy. A public route does not change visibility or remove authentication. |
+| `buckets.*.quotas` | Object; no quotas by default. Only storage quota is enforced in the current platform. |
+| `buckets.*.quotas.storage` | Positive byte quantity; unset means no bucket storage quota. At/over quota, uploads are refused after the next upkeep measurement; reads/deletes continue. A new/lowered quota must exceed current usage. |
+| `buckets.*.quotas.objects` | Nonnegative integer; unset/0 means no limit. Positive object-count limits are recognized but rejected at deploy. |
+| `buckets.*.quotas.maxObjectSize` | Positive byte quantity; unset by default. Recognized but rejected at deploy. |
+| `buckets.*.versioning` | String: `disabled` (default) or `enabled`. Enabled is recognized but rejected at deploy. |
+| `buckets.*.lifecycle` | Object; optional. Abandoned multipart uploads are cleaned up even when it is omitted. |
+| `buckets.*.lifecycle.abortIncompleteUploadsAfter` | Duration; effective default `1d`. Uploads older than this are aborted and their parts stop consuming quota. Applies to still-running multipart uploads too. |
+| `buckets.*.lifecycle.expireNoncurrentVersionsAfter` | Duration; unset by default. Recognized but rejected at deploy because noncurrent-version expiry is not supported. |
+| `buckets.*.cors` | Object; absent means the store's permissive preflight fallback (any origin, supported S3 methods, requested headers, exposed ETag). When declared, requires allowedOrigins and restricts browser access; signatures still authorize every S3 request. |
+| `buckets.*.cors.allowedOrigins` | Required nonempty array when CORS is declared. Literal HTTP(S) scheme and host, optionally a port, without path/query/fragment; `*` permits every origin. No `${NAME}` expansion. |
+| `buckets.*.cors.allowedMethods` | Array; defaults to `GET`, `PUT`. Allowed values: GET, PUT, POST, DELETE, HEAD; normalized to uppercase. OPTIONS preflights are handled by the store, not listed here. |
+| `buckets.*.cors.allowedHeaders` | Array; empty by default in a declared policy. Headers browsers may send, e.g. `content-type`; use `*` when all request headers are needed. |
+| `buckets.*.cors.exposeHeaders` | Array; empty by default in a declared policy. Response headers browser JavaScript may read; include `ETag` for multipart completion. |
+| `buckets.*.cors.maxAge` | Duration; unset records zero (no positive preflight cache lifetime). Controls how long browsers may cache a preflight; converted to whole seconds. |
+| `buckets.*.route` | Object; absent means in-cluster access only. Publishes this private bucket through the edge, using path-style S3 requests. No route path, aliases, compression, or strategy keys are supported here. |
+| `buckets.*.route.domain` | Required hostname when route is declared. Supports project-value expressions. Becomes `endpoint`; `internal_endpoint` remains internal. May be shared by buckets in one environment, but not with application domains or aliases. |
+| `buckets.*.route.tls` | String: `automatic` (default), `optional`, or `disabled`, with the same certificate/HTTP behavior as application routes. Endpoint uses HTTPS except when disabled. |
 
 ## Examples
 
@@ -888,3 +1075,81 @@ The thumbnailer reads through `internal_endpoint`, which stays inside the
 cluster, while `endpoint` is the bucket route's origin the web application
 signs browser URLs for. `availability: asynchronous` needs two
 database-capable nodes; local development runs it as a single instance.
+
+<!-- BEGIN GENERATED MANIFEST CHANGES -->
+## Manifest change history
+
+This compiler understands manifest revision **10**. Revision numbers order
+change records; they are not release versions, deployment revisions, or the
+`v1` in the floating editor-schema URL. Never put a revision in the manifest.
+Run `skali skill read manifest --since N` for entries strictly after N;
+`--since 0` prints the full ledger. `skali manifest upgrade` records local
+review after validating; `--acknowledge` confirms relevant semantic changes,
+not permission to use unsupported fields or skip compilation.
+
+The ledger began after the original grammar already existed, so it is not
+an inventory of every feature. Revisions 7–10 backfill features that shipped
+without records; they are informational additions, not changes introduced
+by this release, and do not add acknowledgement gates. Old releases retain
+their original embedded ledgers. The field reference above describes current
+behavior; historical entries can describe fields that were later removed.
+
+### Revision 1: removed `version`
+
+version is no longer part of the manifest
+
+run skali manifest upgrade to remove the obsolete version field
+
+### Revision 2: added `backups.*.strategy`
+
+backup policies gained an optional strategy field; complete is the only value and the default, and policies are now enforced: snapshots run on the schedule and retention deletes the ones they produced
+
+backups has since been removed; configure automatic backups per environment with skali backup schedule set
+
+### Revision 3: added `applications.*.routes.*.compress`
+
+routes gained an optional compress field; the edge now compresses text-like responses by default (gzip, br, zstd) and compress: false opts a route out
+
+nothing to change; write compress: false for routes that stream events or already compress their responses
+
+### Revision 4: removed `backups`
+
+backups was removed from the manifest; automatic backups are an environment setting now, one schedule per environment, set outside the manifest
+
+run skali manifest upgrade to drop the block, then turn automatic backups on per environment with skali backup schedule set
+
+### Revision 5: removed `skali`
+
+the skali release watermark is no longer part of the manifest
+
+run skali manifest upgrade to remove it; review history is stored locally in .skali/
+
+### Revision 6: added `buckets.*.route`
+
+buckets gained an optional route block (domain, tls); a bucket with a route is published on that hostname through the edge and its endpoint output becomes the https origin
+
+nothing to change; declare route.domain on a bucket to publish it, buckets without one stay reachable in-cluster only (or on the installation-wide S3 endpoint while that still exists)
+
+### Revision 7: added `applications.*.routes.*.aliases`
+
+history backfill: application routes gained aliases, hostnames permanently redirected by the edge to the route domain while preserving path and query; aliases accept project-value expressions and follow the route's TLS policy
+
+optional; use aliases for www or retired hostnames, and a separate route when the second hostname should serve the application; this records an already shipped feature without changing its behavior
+
+### Revision 8: added `buckets.*.cors`
+
+history backfill: buckets gained cors with allowedOrigins, allowedMethods, allowedHeaders, exposeHeaders, and maxAge; a declared policy replaces the store's permissive preflight fallback
+
+optional; origins are literal HTTP(S) origins or *, methods default to GET and PUT, and browser multipart uploads need ETag exposed; this records already shipped support
+
+### Revision 9: added `buckets.*.lifecycle.abortIncompleteUploadsAfter`
+
+history backfill: deploy support was added for the existing abortIncompleteUploadsAfter vocabulary; the platform aborts multipart uploads older than this duration, with an effective default of one day when omitted
+
+choose a duration longer than the longest expected upload; expireNoncurrentVersionsAfter remains unsupported; this informational entry records already shipped support and does not introduce a new cleanup default
+
+### Revision 10: added `databases.*.extensions`
+
+history backfill: supported extensions include vector (pgvector); the compiler checks extension names, duplicates, and PostgreSQL majors against the bundled catalog (currently majors 17 and 18)
+
+declare extensions in the manifest before migrations need them; removing a name does not drop the installed extension; this records already shipped catalog support and validation
