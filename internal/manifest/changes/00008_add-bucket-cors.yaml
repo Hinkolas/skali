@@ -1,0 +1,4 @@
+kind: added
+path: "buckets.*.cors"
+message: "history backfill: buckets gained cors with allowedOrigins, allowedMethods, allowedHeaders, exposeHeaders, and maxAge; a declared policy replaces the store's permissive preflight fallback"
+hint: "optional; origins are literal HTTP(S) origins or *, methods default to GET and PUT, and browser multipart uploads need ETag exposed; this records already shipped support"

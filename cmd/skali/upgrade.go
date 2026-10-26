@@ -52,7 +52,7 @@ func newUpgradeCommand() *cobra.Command {
 			return runUpgrade(command.Context(), command.OutOrStdout(), opts)
 		},
 	}
-	command.Flags().StringVar(&requested, "version", "", "exact release tag to install (overrides --channel; may downgrade)")
+	command.Flags().StringVar(&requested, "version", "", "exact release tag to install (mutually exclusive with --channel; may downgrade)")
 	command.Flags().StringVar(&channelFlag, "channel", "", "release channel, stable or beta (default stable; beta for a prerelease build)")
 	return command
 }

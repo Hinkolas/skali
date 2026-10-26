@@ -158,12 +158,40 @@ values. An example that is meant to fail goes in `expectedFailures` in
 `examples/examples_test.go`, with the reason.
 
 The editor schemas in [`schemas/`](../schemas/) are generated from the Go
-types: run `task generate` (or `go generate ./internal/manifest`) after
-changing manifest wire types, and keep `internal/skill/assets/reference/`
-(the references `skali skill read` serves) in step with them; a test
-compiles every manifest fence in both asset sets, and another keeps the
-installed set under `internal/skill/assets/skill/` free of release-bound
-content. When a compiled
+types. `task generate` refreshes schemas, embedded reference catalogs, and the
+sqlc store. The documentation-specific commands are:
+
+```sh
+go generate ./internal/manifest ./internal/layout ./internal/installer
+go generate ./cmd/skali ./internal/skill
+go test ./internal/manifest ./internal/skill ./cmd/skali ./examples
+npm test --prefix website
+```
+
+For a manifest change, update the key's prose row in
+`internal/skill/assets/reference/manifest.md`, a compiled `yaml manifest`
+example (or explain why the option is intentionally not deployable), and the
+append-only ledger in `internal/manifest/changes/`. Number new records after
+the current highest revision; never renumber or edit merged records. Include
+meaning/default changes as well as new keys. A frozen field inventory from
+revision 5 catches unrecorded additions/removals; it is not a golden to refresh.
+It cannot detect semantic changes, which still require code review.
+
+For a CLI change, edit the actual command/flag help and regenerate the catalog
+in `internal/skill/assets/reference/cli.md`; update the workflow notes before
+the generated marker for interactions the flag list cannot explain. CI compares
+the whole public command tree, including aliases, inherited flags, types,
+defaults, and flag groups, against that catalog. The manifest's change-history
+section is generated from the same ledger that `skill read --since` uses.
+
+Tests separately require every manifest key to have a prose explanation,
+compile complete examples in the references and README, and keep the installed
+skill under `internal/skill/assets/skill/` free of release-bound grammar. Website
+tests check that stable and RC schemas are published under different versioned
+URLs. Floating website docs/schema URLs follow stable; release-specific schemas
+are available for RCs too (see [website maintenance](../website/README.md)).
+
+When a compiled
 default changes, refresh the revision and render goldens with
 `UPDATE_GOLDEN=1 go test ./internal/revision ./internal/kubernetes` and read
 the diff before keeping it.

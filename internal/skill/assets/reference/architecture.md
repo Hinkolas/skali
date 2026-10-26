@@ -103,6 +103,10 @@ new-deployment detection and reload on (SvelteKit `version.pollInterval`,
 Next.js build id checks); `blue-green` shrinks that window but cannot
 close it.
 
+Blue-green switches routed traffic; it does not suspend background work in
+the old or candidate processes. Both can consume jobs during the overlap,
+so workers need the same coordination described under replication safety.
+
 ## Scaling and placement
 
 Declare capacity in the manifest, not in code:
@@ -129,10 +133,12 @@ does everything. Each application scales and rolls out independently.
 same provisioning, same edge. Routes serve https on `*.localhost` domains
 on the default ports from a development CA the CLI generated (so
 `https://${APP_DOMAIN}` is the origin locally too, and `tls:` policies
-behave as in production). Known boundaries: databases share one
-single-instance pool regardless of isolation and availability intents,
-and bucket endpoints are in-cluster. Design for production and the dev
-cluster follows.
+behave as in production). Databases share one single-instance pool regardless
+of isolation intent; higher availability cannot be satisfied locally. A bucket
+with a route publishes that route as its endpoint in dev as in production;
+without a route its endpoint is internal. Host dev processes receive loopback
+database and bucket addresses instead. A browser using presigned URLs must be
+able to reach the exact endpoint used for signing; never rewrite a signed URL.
 
 An application may additionally declare a `dev:` block for a fast edit
 loop: bare `skali dev` then skips building it and runs the dev command

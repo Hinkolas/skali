@@ -2,6 +2,7 @@ package skill_test
 
 import (
 	"io/fs"
+	"os"
 	"regexp"
 	"sort"
 	"strings"
@@ -30,7 +31,10 @@ var releaseTag = regexp.MustCompile(`v\d+\.\d+\.\d+`)
 func documents(t *testing.T) map[string]string {
 	t.Helper()
 	found := map[string]string{}
-	err := fs.WalkDir(skill.FS(), ".", func(path string, entry fs.DirEntry, err error) error {
+	readme, err := fs.ReadFile(os.DirFS("../.."), "README.md")
+	require.NoError(t, err)
+	found["README.md"] = string(readme)
+	err = fs.WalkDir(skill.FS(), ".", func(path string, entry fs.DirEntry, err error) error {
 		require.NoError(t, err)
 		if entry.IsDir() || !strings.HasSuffix(path, ".md") {
 			return nil
@@ -118,6 +122,33 @@ func TestManifestReferenceCoversEveryField(t *testing.T) {
 	require.Empty(t, missing, "fields in no ```yaml manifest block of the manifest reference")
 	for field := range uncompiledFields {
 		require.True(t, fields[field], "uncompiledFields lists %s, which is not a manifest field", field)
+	}
+}
+
+// Examples exercise syntax, but they cannot explain an option. Require a
+// dedicated prose row for every key (including containers), and reject stale
+// rows naming fields that no longer exist.
+func TestManifestReferenceExplainsEveryField(t *testing.T) {
+	t.Parallel()
+	schema, err := manifest.Schema()
+	require.NoError(t, err)
+	fields := map[string]bool{}
+	schemaFields(schema, "", fields)
+	reference, ok := skill.Reference("manifest")
+	require.True(t, ok)
+	_, referenceText, found := strings.Cut(string(reference), "## Field reference\n")
+	require.True(t, found)
+	referenceText, _, _ = strings.Cut(referenceText, "## Examples\n")
+	rows := regexp.MustCompile("(?m)^\\| `([^`]+)` \\| (.+) \\|$")
+	explained := map[string]bool{}
+	for _, row := range rows.FindAllStringSubmatch(referenceText, -1) {
+		require.True(t, fields[row[1]], "field reference describes unknown key %s", row[1])
+		require.False(t, explained[row[1]], "duplicate field explanation: %s", row[1])
+		require.NotEmpty(t, strings.TrimSpace(row[2]), "%s needs an explanation", row[1])
+		explained[row[1]] = true
+	}
+	for field := range fields {
+		require.True(t, explained[field], "%s needs a prose row in the field reference", field)
 	}
 }
 

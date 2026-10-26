@@ -1,0 +1,4 @@
+kind: added
+path: "applications.*.routes.*.aliases"
+message: "history backfill: application routes gained aliases, hostnames permanently redirected by the edge to the route domain while preserving path and query; aliases accept project-value expressions and follow the route's TLS policy"
+hint: "optional; use aliases for www or retired hostnames, and a separate route when the second hostname should serve the application; this records an already shipped feature without changing its behavior"

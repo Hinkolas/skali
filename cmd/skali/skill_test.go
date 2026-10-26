@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -103,13 +104,15 @@ func TestSkillReadSince(t *testing.T) {
 	require.Contains(t, out, "  1  removed  version")
 	require.Contains(t, out, "  5  removed  skali")
 	require.Contains(t, out, "  6  added  buckets.*.route")
-	for _, value := range []string{"-1", "7", "v0.1.0-rc.3", "latest", ""} {
+	require.Contains(t, out, "  7  added  applications.*.routes.*.aliases")
+	for _, value := range []string{"-1", strconv.Itoa(manifest.CurrentRevision() + 1), "v0.1.0-rc.3", "latest", ""} {
 		_, err = runCapturingStdout(t, func() error { return execute(newRootCommand(), "skill", "read", "manifest", "--since", value) })
 		require.ErrorContains(t, err, "must be a revision")
 	}
-	out, err = runCapturingStdout(t, func() error { return execute(newRootCommand(), "skill", "read", "manifest", "--since", "6") })
+	current := strconv.Itoa(manifest.CurrentRevision())
+	out, err = runCapturingStdout(t, func() error { return execute(newRootCommand(), "skill", "read", "manifest", "--since", current) })
 	require.NoError(t, err)
-	require.Contains(t, out, "no manifest changes since revision 6")
+	require.Contains(t, out, "no manifest changes since revision "+current)
 	for _, args := range [][]string{{"skill", "read", "cli", "--since", "0"}, {"skill", "read", "--since", "0"}} {
 		_, err = runCapturingStdout(t, func() error { return execute(newRootCommand(), args...) })
 		require.ErrorContains(t, err, "--since applies to the manifest topic")

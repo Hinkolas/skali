@@ -7,7 +7,7 @@
 
 	const title = 'The skali.yaml manifest — Skali';
 	const description =
-		'Every skali.yaml field, default, unit and validation rule, for the newest Skali release.';
+		'Every skali.yaml field, default, unit and validation rule, for the stable Skali release, with guidance for prereleases.';
 </script>
 
 <svelte:head>
@@ -50,8 +50,25 @@
 			<div class="flex flex-wrap gap-x-12 gap-y-2 border-b border-border-section py-5">
 				<dt class="shrink-0 basis-55 pt-0.5 font-mono text-xs text-text-faint">This page</dt>
 				<dd class="m-0 max-w-160 text-[15px] leading-[1.6] text-text-tertiary">
-					Describes <span class="font-mono text-text-primary">{data.ref}</span>, the newest release,
-					and follows each new one.
+					Describes <span class="font-mono text-text-primary">{data.ref}</span>. By default this
+					page and the floating editor schema follow the newest stable release, falling back to a
+					prerelease only when no stable release exists. A newer RC can support fields absent here.
+				</dd>
+			</div>
+			<div class="flex flex-wrap gap-x-12 gap-y-2 border-b border-border-section py-5">
+				<dt class="shrink-0 basis-55 pt-0.5 font-mono text-xs text-text-faint">Editor schema</dt>
+				<dd class="m-0 max-w-160 text-[15px] leading-[1.6] text-text-tertiary">
+					Pin your editor to
+					<code class="font-mono break-all text-text-primary">
+						https://skali.dev/schemas/&lt;release&gt;/skali.schema.json
+					</code>, replacing &lt;release&gt; with the full tag, including v. The
+					<a
+						href="/schemas/releases.json"
+						rel="external"
+						class="text-text-secondary underline decoration-border-strong underline-offset-3"
+						>schema release index</a
+					>
+					includes prereleases. The v1 in the floating URL is not a manifest review revision.
 				</dd>
 			</div>
 			<div class="flex flex-wrap gap-x-12 gap-y-2 border-b border-border-section py-5">
@@ -85,7 +102,7 @@
 
 	<div class="mt-[clamp(56px,7vw,96px)] flex gap-12">
 		<nav aria-label="On this page" class="hidden w-55 shrink-0 xl:block">
-			<div class="sticky top-8 flex flex-col gap-3">
+			<div class="sticky top-8 flex max-h-[calc(100vh-4rem)] flex-col gap-3 overflow-y-auto">
 				<span class="font-mono text-[11px] tracking-[0.08em] text-text-faint uppercase">
 					On this page
 				</span>
@@ -222,7 +239,15 @@
 	}
 	.reference :global(td) {
 		padding: 12px 24px 12px 0;
+		vertical-align: top;
 		color: var(--color-text-tertiary);
 		border-bottom: 1px solid var(--color-border-section);
+	}
+	.reference :global(th:first-child),
+	.reference :global(td:first-child) {
+		min-width: 240px;
+	}
+	.reference :global(td:last-child) {
+		min-width: 280px;
 	}
 </style>

@@ -1,0 +1,4 @@
+kind: added
+path: "buckets.*.lifecycle.abortIncompleteUploadsAfter"
+message: "history backfill: deploy support was added for the existing abortIncompleteUploadsAfter vocabulary; the platform aborts multipart uploads older than this duration, with an effective default of one day when omitted"
+hint: "choose a duration longer than the longest expected upload; expireNoncurrentVersionsAfter remains unsupported; this informational entry records already shipped support and does not introduce a new cleanup default"

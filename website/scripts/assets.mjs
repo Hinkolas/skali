@@ -7,14 +7,18 @@
 //                             not main: main may already describe fields the
 //                             released binaries reject. Each file is served at
 //                             its own $id.
+//   /schemas/<release>/...   schemas pinned to each available release tag,
+//                             including prereleases newer than stable.
+//   /schemas/releases.json   the floating selection and available pinned tags.
 //
 // RELEASE_REF overrides the tag (any git ref, e.g. RELEASE_REF=HEAD to
 // preview unreleased schema changes). Both outputs are gitignored.
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { copyFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { releaseRef } from './releases.mjs';
+import { publishSchemas } from './schema-assets.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const output = fileURLToPath(new URL('../static/', import.meta.url));
@@ -22,20 +26,9 @@ const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8'
 
 copyFileSync(join(root, 'install.sh'), join(output, 'install.sh'));
 
-const ref = releaseRef(git('tag', '--list', 'v*').split('\n'));
-const schemas = git('ls-tree', '--name-only', ref, 'schemas/')
-	.split('\n')
-	.filter((path) => path.endsWith('.schema.json'));
-if (schemas.length === 0) throw new Error(`${ref} has no schemas/*.schema.json`);
-
-const destination = join(output, 'schemas', 'v1');
-rmSync(join(output, 'schemas'), { recursive: true, force: true });
-mkdirSync(destination, { recursive: true });
-for (const path of schemas) {
-	const source = git('show', `${ref}:${path}`);
-	const url = `https://skali.dev/schemas/v1/${basename(path)}`;
-	const id = JSON.parse(source).$id;
-	if (id !== url) throw new Error(`${ref}:${path} has $id ${id}, but would be served at ${url}`);
-	writeFileSync(join(destination, basename(path)), source);
-}
-console.log(`Copied install.sh and ${schemas.length} schemas from ${ref}`);
+const tags = git('tag', '--list', 'v*').split('\n');
+const ref = releaseRef(tags);
+const published = publishSchemas(git, output, ref, tags);
+console.log(
+	`Copied install.sh, ${published.schemas} floating schemas from ${ref}, and schemas for ${published.releases} releases`
+);

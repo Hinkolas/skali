@@ -4,6 +4,7 @@
 	"version": "0.0.1",
 	"type": "module",
 	"scripts": {
+		"test": "node --test scripts/*.test.mjs",
 		"assets": "node scripts/assets.mjs",
 		"dev": "npm run assets && vite dev",
 		"build": "npm run assets && vite build",

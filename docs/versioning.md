@@ -145,6 +145,22 @@ conflicts before merging, and never modify, remove or renumber merged records.
 Records are embedded directly in ordinary builds; tagging needs no ledger
 preparation, stamping or generation. Application release numbers are independent.
 
+The original grammar predates revision 1. Revisions 7–10 repair missing history
+for already shipped route aliases, bucket CORS, multipart cleanup support, and
+the database extension catalog. They are informational additions, do not change
+runtime behavior, and do not require a new semantic acknowledgement. Older
+binaries retain the ledger they shipped with; a small revision number alone
+does not prove a field is unavailable. Read the target release's field reference.
+The manifest reference also contains a generated copy of the entire ledger.
+
+Product release notes are published with each [GitHub release](https://github.com/Hinkolas/skali/releases)
+from Git history; they are broader than the manifest ledger. Deployment
+revision IDs/checksums describe concrete deployable snapshots, not this grammar
+history. The editor schema's floating `/schemas/v1/` URL follows stable; it does
+not encode a manifest review revision. Pin an editor to
+`https://skali.dev/schemas/<release>/skali.schema.json` for an exact release,
+including prereleases, and use `skali validate` for checks beyond JSON Schema.
+
 The local CLI stores per-manifest acknowledgements in
 `.skali/manifest-review.yaml` beside the manifest, keyed by filename. This is
 self-ignoring, disposable checkout state, separate from target bindings. Missing

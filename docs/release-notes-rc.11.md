@@ -1,5 +1,10 @@
 # v0.1.0-rc.11 — final release candidate (draft)
 
+This is the archived preparation note for **v0.1.0-rc.11**, not the current
+release instructions. See [published releases](https://github.com/Hinkolas/skali/releases)
+for release changelogs and [development](development.md#building) for the
+current release process. References to "this branch" below are historical.
+
 This candidate gathers the changes since `v0.1.0-rc.10` and completes the
 remaining small release fixes. It is prepared for publication; no tag or release
 has been published from this branch.

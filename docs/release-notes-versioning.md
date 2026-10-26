@@ -1,5 +1,10 @@
 # Versioning redesign: v0.1.0-rc.3 contract
 
+This is a historical release note. For current behavior, see
+[versioning](versioning.md) and `skali skill read cli` for your target release.
+In particular, subsequent releases added `skali dev upgrade`; the reset-only
+restriction below describes rc.3.
+
 - Commands verify the selected cluster and run its exact CLI release. The
   installed CLI is always at least as new as every cluster it manages: a newer
   target (including a prerelease) requires `skali upgrade --version` first,
