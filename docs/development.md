@@ -177,11 +177,16 @@ meaning/default changes as well as new keys. A frozen field inventory from
 revision 5 catches unrecorded additions/removals; it is not a golden to refresh.
 It cannot detect semantic changes, which still require code review.
 
-For a CLI change, edit the actual command/flag help and regenerate the catalog
-in `internal/skill/assets/reference/cli.md`; update the workflow notes before
-the generated marker for interactions the flag list cannot explain. CI compares
+For a CLI change, edit the actual command/flag help and run `go generate ./cmd/skali`.
+It regenerates the overview/index in `internal/skill/assets/reference/cli.md`
+and one page per public command under `reference/cli/`; retired generated pages
+are removed. Update the handwritten guides in `reference/cli/workflows/` for
+interactions the flag list cannot explain, and assign new command families a
+guide in `cliCommandWorkflow`. CI compares
 the whole public command tree, including aliases, inherited flags, types,
-defaults, and flag groups, against that catalog. The manifest's change-history
+defaults, and flag groups, against those pages, and checks their links resolve.
+`skali skill read cli <command...>` reads one page; `skill read cli workflows`
+lists the shared guides. The manifest's change-history
 section is generated from the same ledger that `skill read --since` uses.
 
 Tests separately require every manifest key to have a prose explanation,

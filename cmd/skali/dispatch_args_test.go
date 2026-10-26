@@ -31,6 +31,7 @@ func TestPreparseArgs(t *testing.T) {
 		{"managed upgrade version", []string{"cluster", "upgrade", "--version", "v0.5.0"}, invocation{command: "cluster", path: "cluster upgrade"}},
 		{"dev remote override", []string{"dev", "--remote", "acme"}, invocation{command: "dev", path: "dev", remote: "acme"}},
 		{"skill read with since", []string{"skill", "read", "manifest", "--since", "0"}, invocation{command: "skill", path: "skill read"}},
+		{"focused CLI reference", []string{"skill", "read", "cli", "cluster", "node", "remove", "--remote", "acme", "--offline"}, invocation{command: "skill", path: "skill read", remote: "acme", offline: true}},
 		{"skill install", []string{"skill", "install", "--agent", "claude"}, invocation{command: "skill", path: "skill install"}},
 		{"unknown command", []string{"frobnicate"}, invocation{command: "frobnicate", path: "frobnicate"}},
 		{"bare", nil, invocation{}},

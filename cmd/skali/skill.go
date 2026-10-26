@@ -78,17 +78,19 @@ func newSkillInstallCommand() *cobra.Command {
 func newSkillReadCommand() *cobra.Command {
 	var since string
 	command := &cobra.Command{
-		Use:   "read [topic]",
+		Use:   "read [topic] [command...]",
 		Short: "Print a skali reference at the target's release",
 		Long: "Prints one of the references coding agents read instead of guessing: " +
 			"manifest (grammar), architecture (platform behavior), or " +
-			"cli (the commands used from the terminal). Without a topic the topics are " +
-			"listed. Run from the project directory the command dispatches to the " +
+			"cli (the command overview). Read one command with 'skill read cli deploy' " +
+			"or 'skill read cli cluster node remove'; 'skill read cli workflows' lists " +
+			"cross-command guidance. Slash-separated topics such as cli/deploy also work. " +
+			"Without a topic the top-level topics are listed. Run from the project directory the command dispatches to the " +
 			"release of the project's target cluster, so the reference matches the " +
 			"cluster that will compile the manifest. --since <revision> prints the " +
 			"manifest grammar changes since that revision instead of the reference " +
 			"(the same ledger skali validate and skali manifest upgrade consult).",
-		Args:              cobra.MaximumNArgs(1),
+		Args:              cobra.ArbitraryArgs,
 		ValidArgsFunction: completeTopics,
 		RunE: func(command *cobra.Command, args []string) error {
 			out := command.OutOrStdout()
@@ -101,9 +103,12 @@ func newSkillReadCommand() *cobra.Command {
 				listTopics(out)
 				return nil
 			}
-			topic := args[0]
+			topic := strings.Join(args, "/")
 			content, ok := skill.Reference(topic)
 			if !ok {
+				if strings.HasPrefix(topic, "cli/") {
+					return fmt.Errorf("unknown CLI reference %q; run skali skill read cli for this release's command index", strings.Join(args, " "))
+				}
 				return fmt.Errorf("unknown topic %q (valid: %s)", topic, strings.Join(skill.TopicNames(), ", "))
 			}
 			if !command.Flags().Changed("since") {
@@ -154,12 +159,32 @@ func renderChangesSince(out io.Writer, since int, current string, changes []mani
 }
 
 func completeTopics(_ *cobra.Command, args []string, toComplete string) ([]cobra.Completion, cobra.ShellCompDirective) {
-	if len(args) > 0 {
-		return nil, cobra.ShellCompDirectiveNoFileComp
-	}
 	var values []cobra.Completion
-	for _, topic := range skill.Topics() {
-		values = append(values, cobra.CompletionWithDesc(topic.Name, topic.Summary))
+	if len(args) == 0 && !strings.Contains(toComplete, "/") {
+		for _, topic := range skill.Topics() {
+			values = append(values, cobra.CompletionWithDesc(topic.Name, topic.Summary))
+		}
+	} else {
+		prefix := strings.Join(args, "/")
+		if prefix != "" {
+			prefix += "/"
+		}
+		seen := map[string]bool{}
+		for _, name := range skill.ReferenceNames() {
+			if !strings.HasPrefix(name, prefix+toComplete) {
+				continue
+			}
+			rest := strings.TrimPrefix(name, prefix)
+			// Complete one path component at a time, retaining a slash prefix
+			// when the caller uses a single slash-separated topic argument.
+			end := strings.LastIndex(toComplete, "/") + 1
+			component, _, _ := strings.Cut(rest[end:], "/")
+			value := rest[:end] + component
+			if !seen[value] {
+				values = append(values, value)
+				seen[value] = true
+			}
+		}
 	}
 	return filterCompletions(values, toComplete)
 }

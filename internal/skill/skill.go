@@ -47,24 +47,38 @@ type Topic struct {
 func Topics() []Topic {
 	return []Topic{
 		{Name: "manifest", Summary: "every skali.yaml field, default, unit, and validation rule"},
-		{Name: "cli", Summary: "the skali commands an agent uses from the terminal"},
+		{Name: "cli", Summary: "command overview; read cli <command...> for focused flags and workflows"},
 		{Name: "architecture", Summary: "application architecture, defaults, and platform lifecycle"},
 	}
 }
 
-// Reference returns the embedded reference for a topic; ok is false for
-// a name Topics does not list.
+// Reference returns a top-level reference or a focused CLI page. Names use
+// slash-separated paths; traversal and unknown pages never fall back.
 func Reference(name string) (content []byte, ok bool) {
-	for _, topic := range Topics() {
-		if topic.Name == name {
-			data, err := assets.ReadFile("assets/reference/" + name + ".md")
-			if err != nil {
-				panic(err)
-			}
-			return data, true
-		}
+	if !fs.ValidPath(name) || (name != "manifest" && name != "architecture" && name != "cli" && !strings.HasPrefix(name, "cli/")) {
+		return nil, false
 	}
-	return nil, false
+	data, err := assets.ReadFile("assets/reference/" + name + ".md")
+	return data, err == nil
+}
+
+// ReferenceNames includes focused pages as well as the top-level topics.
+// Deriving it from the embedded files keeps discovery and completion aligned.
+func ReferenceNames() []string {
+	var names []string
+	err := fs.WalkDir(assets, "assets/reference", func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !entry.IsDir() && strings.HasSuffix(path, ".md") {
+			names = append(names, strings.TrimSuffix(strings.TrimPrefix(path, "assets/reference/"), ".md"))
+		}
+		return nil
+	})
+	if err != nil {
+		panic(err)
+	}
+	return names
 }
 
 // TopicNames lists the topic names in display order.

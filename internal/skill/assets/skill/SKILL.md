@@ -20,12 +20,17 @@ Run these reference commands from the project directory, using the same
 - `skali skill read manifest` before editing any part of a manifest. Its field
   reference explains every key, default, expression boundary, and deployment
   restriction; examples supplement that reference.
-- `skali skill read cli` before using skali commands. Start with the command
-  index, then read the relevant workflow and full command entry, including
-  inherited flags, defaults, aliases, and flag combinations. It covers local
-  development, deployment/promotion/rollback, logs and runs, exec and SQL,
-  values, backups, credential rotation, access and environments, remotes,
-  cluster lifecycle, upgrades, and completions.
+- `skali skill read cli` for the command overview. Then load only the command
+  needed, such as `skali skill read cli deploy` or `skali skill read cli cluster
+  node remove`, and its linked workflow guide. Each command page includes all
+  its flags, inherited flags, defaults, aliases, and flag combinations. Group
+  pages list their children; `skali skill read cli workflows` lists shared
+  guidance for deployment, dev, backups, data, access, and cluster operations.
+
+Discover focused pages through the target's overview. If an older release's
+overview is a combined reference without those links, use that reference;
+do not substitute pages from a newer release. Keep the overview and selected
+pages in context for the current target instead of loading every command page.
 
 For a large reference, save the command output to a temporary file, retain its
 provenance header, and search for the relevant headings. Reread from the CLI

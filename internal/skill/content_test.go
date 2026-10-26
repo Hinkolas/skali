@@ -3,6 +3,7 @@ package skill_test
 import (
 	"io/fs"
 	"os"
+	"path"
 	"regexp"
 	"sort"
 	"strings"
@@ -45,10 +46,10 @@ func documents(t *testing.T) map[string]string {
 		return nil
 	})
 	require.NoError(t, err)
-	for _, topic := range skill.Topics() {
-		data, ok := skill.Reference(topic.Name)
-		require.True(t, ok, topic.Name)
-		found["reference/"+topic.Name] = string(data)
+	for _, name := range skill.ReferenceNames() {
+		data, ok := skill.Reference(name)
+		require.True(t, ok, name)
+		found["reference/"+name] = string(data)
 	}
 	return found
 }
@@ -239,13 +240,37 @@ func TestTopicsMatchReferenceFiles(t *testing.T) {
 
 	names := skill.TopicNames()
 	require.Equal(t, []string{"manifest", "cli", "architecture"}, names)
-	for _, name := range names {
+	for _, name := range skill.ReferenceNames() {
 		content, ok := skill.Reference(name)
 		require.True(t, ok, name)
 		require.True(t, strings.HasPrefix(string(content), "# "), "%s must start with a title", name)
 	}
 	_, ok := skill.Reference("architecture")
 	require.True(t, ok, "architecture is served by the selected release")
-	_, ok = skill.Reference("../skill/SKILL")
-	require.False(t, ok)
+	for _, name := range []string{"../skill/SKILL", "cli/../../skill/SKILL", "/cli/deploy", "cli//deploy", "cli/unknown", "cli/cluster/restore"} {
+		_, ok = skill.Reference(name)
+		require.False(t, ok, name)
+	}
+}
+
+// Focused references need usable navigation in both CLI output and repository
+// browsing. A renamed command/guide must not leave dangling Markdown links.
+func TestCLIReferenceLinksResolve(t *testing.T) {
+	links := regexp.MustCompile(`\[[^\]]+\]\(([^)]+)\)`)
+	for _, name := range skill.ReferenceNames() {
+		if name != "cli" && !strings.HasPrefix(name, "cli/") {
+			continue
+		}
+		data, ok := skill.Reference(name)
+		require.True(t, ok)
+		for _, match := range links.FindAllStringSubmatch(string(data), -1) {
+			link, _, _ := strings.Cut(match[1], "#")
+			if !strings.HasSuffix(link, ".md") || strings.Contains(link, "://") {
+				continue
+			}
+			target := strings.TrimSuffix(path.Join(path.Dir(name), link), ".md")
+			_, ok := skill.Reference(target)
+			require.True(t, ok, "%s has a broken reference link: %s", name, link)
+		}
+	}
 }

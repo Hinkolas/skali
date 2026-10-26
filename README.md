@@ -323,8 +323,10 @@ deployment revisions are independent. Automatic backups are configured with
 `skali skill install` installs the guide for authoring manifests, developing
 and deploying apps, and operating the platform. For unattended installation,
 use `skali skill install --agent codex`, `--agent claude`, or `--all`.
-The guide loads the manifest, complete CLI command/flag catalog, and architecture
-references through `skali skill read`. A selected cluster determines the release;
+The guide loads the manifest, CLI overview, and architecture references through
+`skali skill read`. Command pages load separately, for example `skali skill read
+cli deploy` or `skali skill read cli cluster node remove`; each links its workflow
+guide. A selected cluster determines the release;
 without a target, the invoked CLI supplies its own references. Read the header
 and reread references after changing the target or release.
 
@@ -333,7 +335,7 @@ and reread references after changing the target or release.
 | Topic | |
 | --- | --- |
 | [Manifest reference](https://skali.dev/docs/manifest) | Every `skali.yaml` field, default, and validation rule |
-| [CLI reference](internal/skill/assets/reference/cli.md) | Every command, argument, alias, and public flag; `skali skill read cli` selects your target's version |
+| [CLI reference](internal/skill/assets/reference/cli.md) | Overview linking every command and workflow; `skali skill read cli <command...>` reads one command's complete flag reference |
 | [Manifest source reference](internal/skill/assets/reference/manifest.md) | This checkout's field reference, examples, and manifest change history |
 | [Databases](docs/databases.md) | Managed PostgreSQL: versions, extensions, isolation, availability |
 | [Buckets](docs/buckets.md) | S3 buckets: quotas, hostnames, browser uploads, topology |

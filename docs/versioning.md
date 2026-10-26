@@ -36,6 +36,13 @@ commands put selection information on stderr, keeping JSON and compiled output
 on stdout clean. `skali version` reports the invoked binary; it does not identify
 the binary that answered a previous reference request.
 
+The CLI reference starts with an overview and command index. Focused reads such
+as `skali skill read cli deploy` and `skali skill read cli cluster node remove`
+dispatch through the same target selection and carry the same provenance.
+`skali skill read cli workflows` lists cross-command guides. Older releases
+that only embed a combined CLI reference keep that interface: read their
+overview instead of substituting newer documentation.
+
 ## 2. Exact dispatch, offline work and the home rule
 
 The release feed supplies binaries with published checksums. Cached entries
