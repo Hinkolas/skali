@@ -57,7 +57,8 @@ jobs:
             # First match wins. Anything not listed is treated as source and
             # runs the Go checks plus the release rehearsal, so a new
             # directory defaults to being checked. README examples are tested;
-            # markdown under internal/ is embedded in binaries.
+            # markdown under internal/ is embedded in binaries. The Apple app
+            # is built with Xcode and nothing in Go or the release reads it.
             while IFS= read -r f; do
               [ -n "$f" ] || continue
               case "$f" in
@@ -66,6 +67,7 @@ jobs:
                 ROADMAP.md|SECURITY.md|LICENSE|docs/*|.github/*|.claude/*|.gitignore|.gitleaks.toml|.env.example|Taskfile.yml|compose.yaml) ;;
                 studio/*) studio=true; release=true ;;
                 website/*) website=true ;;
+                apps/apple/*) ;;
                 install.sh) website=true; release=true ;;
                 .goreleaser.yaml|.dockerignore|scripts/*|build/*) release=true ;;
                 *) go=true; release=true ;;
