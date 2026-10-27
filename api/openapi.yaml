@@ -5264,7 +5264,9 @@ components:
       description: |
         The insights report of one finished build. The log keeps at most
         2 MiB: a longer log keeps its head and tail around an omission
-        line, and `log_truncated` says so.
+        line, and `log_truncated` says so. The server redacts the report
+        before it cuts anything: stored step names keep 512 bytes, the
+        error 8 KiB, and each log line 8 KiB.
       required: [outcome, engine, platform, started_at, finished_at, steps, log, log_lines, log_truncated]
       properties:
         outcome:

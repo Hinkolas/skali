@@ -251,7 +251,7 @@ func TestDeploymentFlowEndToEnd(t *testing.T) {
 	require.Equal(t, http.StatusOK, status)
 	require.Empty(t, body["logs"])
 	// A log at its bound uploads even when JSON escapes every byte of it.
-	escaped := strings.Repeat("<", 2<<20)
+	escaped := strings.TrimSuffix(strings.Repeat(strings.Repeat("<", 8191)+"\n", 255), "\n")
 	report["log"] = escaped
 	status, body = a.do("PUT", "/v1/steps/"+buildStepID+"/build-insights", token, report)
 	require.Equal(t, http.StatusNoContent, status, "%v", body)

@@ -17,32 +17,26 @@ import (
 	"github.com/Hinkolas/skali/internal/store"
 )
 
-// maxStoredInsightsLog bounds a stored log on the way out; redaction may
-// lengthen a log past the upload bound, never by this much.
-const maxStoredInsightsLog = 4 * build.MaxInsightsLogBytes
 
 // ErrInvalidInsights: the report is malformed or exceeds its bounds.
 var ErrInvalidInsights = errors.New("buildstore: invalid insights report")
 
 // PutInsights stores the insights report of the build a step ran,
-// replacing an earlier upload. Everything the builder printed passes the
-// redactor first; the log is kept compressed.
+// replacing an earlier upload. The report is sealed first: everything the
+// builder printed passes the redactor before anything is cut to its
+// stored bound. The log is kept compressed.
 func (s *Service) PutInsights(ctx context.Context, stepID uuid.UUID, redactor *redact.Redactor, report build.Insights) error {
 	if err := report.Validate(); err != nil {
 		return fmt.Errorf("%w: %w", ErrInvalidInsights, err)
 	}
-	steps := make([]build.InsightsStep, len(report.Steps))
-	for i, step := range report.Steps {
-		step.Name = redactor.Redact(step.Name)
-		steps[i] = step
-	}
-	encodedSteps, err := json.Marshal(steps)
+	report = report.Seal(redactor.Redact)
+	encodedSteps, err := json.Marshal(report.Steps)
 	if err != nil {
 		return fmt.Errorf("buildstore: encode insights steps: %w", err)
 	}
 	var compressed bytes.Buffer
 	writer := gzip.NewWriter(&compressed)
-	if _, err := io.WriteString(writer, redactor.Redact(report.Log)); err != nil {
+	if _, err := io.WriteString(writer, report.Log); err != nil {
 		return fmt.Errorf("buildstore: compress insights log: %w", err)
 	}
 	if err := writer.Close(); err != nil {
@@ -55,7 +49,7 @@ func (s *Service) PutInsights(ctx context.Context, stepID uuid.UUID, redactor *r
 		Platform:     report.Platform,
 		StartedAt:    report.StartedAt,
 		FinishedAt:   report.FinishedAt,
-		Error:        redactor.Redact(report.Error),
+		Error:        report.Error,
 		Steps:        encodedSteps,
 		LogGzip:      compressed.Bytes(),
 		LogLines:     int32(report.LogLines),
@@ -94,9 +88,12 @@ func (s *Service) GetInsights(ctx context.Context, stepID uuid.UUID) (*build.Ins
 	if err != nil {
 		return nil, fmt.Errorf("buildstore: open insights log: %w", err)
 	}
-	log, err := io.ReadAll(io.LimitReader(reader, maxStoredInsightsLog))
+	log, err := io.ReadAll(io.LimitReader(reader, build.MaxStoredInsightsLogBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("buildstore: read insights log: %w", err)
+	}
+	if len(log) > build.MaxStoredInsightsLogBytes {
+		return nil, fmt.Errorf("buildstore: insights log of step %s exceeds its stored bound", stepID)
 	}
 	report.Log = string(log)
 	return report, nil

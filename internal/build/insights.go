@@ -59,24 +59,34 @@ const (
 // EngineDockerBuildx names the docker engine in provenance and insights.
 const EngineDockerBuildx = "docker-buildx"
 
-// Bounds of one insights report. The recorder keeps within them and the
-// server refuses a report beyond them.
+// Bounds of one insights report. The recorder only ever drops whole
+// lines and whole texts, never cuts one: it cannot know the secrets the
+// server redacts, and a cut through a secret would leave a fragment the
+// redactor no longer recognizes. The server redacts first and cuts after,
+// to the stored bounds (Seal).
 const (
 	MaxInsightsLogBytes  = 2 << 20
 	MaxInsightsSteps     = 1000
 	MaxInsightsLineBytes = 8192
 	maxInsightsHeadBytes = 256 << 10
+	// A stored step name and error are cut to these after redaction.
 	maxInsightsNameBytes = 512
 	maxInsightsTextBytes = 8192
-	maxInsightsTagBytes  = 128
+	// An uploaded step name or error longer than these is replaced whole.
+	maxUploadNameBytes  = 2048
+	maxUploadErrorBytes = 64 << 10
+	maxInsightsTagBytes = 128
 	// maxInsightsMarkerBytes is the room the omission marker takes beyond
 	// the log bound.
 	maxInsightsMarkerBytes = 64
-	// MaxInsightsJSONBytes bounds a report's JSON encoding: every bounded
-	// text at its worst-case escaping (six bytes per byte, as in \u003c),
-	// plus room for the rest.
-	MaxInsightsJSONBytes = 6*(MaxInsightsLogBytes+maxInsightsMarkerBytes+MaxInsightsSteps*maxInsightsNameBytes+
-		maxInsightsTextBytes+2*maxInsightsTagBytes) + 1<<20
+	// MaxInsightsJSONBytes bounds an uploaded report's JSON encoding:
+	// every bounded text at its worst-case escaping (six bytes per byte,
+	// as in \u003c), plus room for the rest.
+	MaxInsightsJSONBytes = 6*(MaxInsightsLogBytes+maxInsightsMarkerBytes+MaxInsightsSteps*maxUploadNameBytes+
+		maxUploadErrorBytes+2*maxInsightsTagBytes) + 1<<20
+	// MaxStoredInsightsLogBytes bounds a sealed log: lines cut to
+	// MaxInsightsLineBytes, kept within MaxInsightsLogBytes.
+	MaxStoredInsightsLogBytes = MaxInsightsLogBytes + maxInsightsMarkerBytes
 )
 
 // Validate checks a report against the insights bounds.
@@ -95,15 +105,15 @@ func (i Insights) Validate() error {
 	if len(i.Engine) > maxInsightsTagBytes || len(i.Platform) > maxInsightsTagBytes {
 		return errors.New("engine and platform must be short identifiers")
 	}
-	if len(i.Error) > maxInsightsTextBytes {
-		return fmt.Errorf("error exceeds %d bytes", maxInsightsTextBytes)
+	if len(i.Error) > maxUploadErrorBytes {
+		return fmt.Errorf("error exceeds %d bytes", maxUploadErrorBytes)
 	}
 	if len(i.Steps) > MaxInsightsSteps {
 		return fmt.Errorf("at most %d steps", MaxInsightsSteps)
 	}
 	for _, step := range i.Steps {
-		if step.Name == "" || len(step.Name) > maxInsightsNameBytes {
-			return fmt.Errorf("step names must be 1 to %d bytes", maxInsightsNameBytes)
+		if step.Name == "" || len(step.Name) > maxUploadNameBytes {
+			return fmt.Errorf("step names must be 1 to %d bytes", maxUploadNameBytes)
 		}
 		switch step.Status {
 		case StepDone, StepCached, StepError, StepCanceled, StepIncomplete:
@@ -123,28 +133,103 @@ func (i Insights) Validate() error {
 	return nil
 }
 
-// InsightsRecorder is a ProgressSink that records a build's insights. It
-// keeps the log's head and as much of its tail as fits the bound, the end
-// being where a failure explains itself. Safe for the engine's concurrent
-// stdout and stderr streams.
+// Seal makes an uploaded report storable: it redacts every text the
+// builder printed, then cuts step names, the error, and over-long log lines
+// to their stored bounds and keeps the log within MaxInsightsLogBytes, which
+// redaction may have outgrown. Redacting before cutting leaves no secret
+// fragment behind.
+func (i Insights) Seal(redact func(string) string) Insights {
+	sealed := i
+	sealed.Steps = make([]InsightsStep, len(i.Steps))
+	for index, step := range i.Steps {
+		step.Name = cutText(redact(step.Name), maxInsightsNameBytes)
+		sealed.Steps[index] = step
+	}
+	sealed.Error = cutText(redact(i.Error), maxInsightsTextBytes)
+	var window logWindow
+	for line := range strings.SplitSeq(redact(i.Log), "\n") {
+		window.keep(cutText(line, MaxInsightsLineBytes))
+	}
+	var trimmed bool
+	sealed.Log, trimmed = window.text()
+	sealed.LogTruncated = i.LogTruncated || trimmed
+	return sealed
+}
+
+// cutText cuts text to at most limit bytes plus a marker, on a rune
+// boundary.
+func cutText(text string, limit int) string {
+	if len(text) <= limit {
+		return text
+	}
+	const marker = " … [truncated]"
+	cut := limit - len(marker)
+	for cut > 0 && !utf8.RuneStart(text[cut]) {
+		cut--
+	}
+	return text[:cut] + marker
+}
+
+// logWindow keeps a log's head and as much of its tail as fits
+// MaxInsightsLogBytes, the end being where a failure explains itself. It
+// drops whole lines only. tail[tailStart:] is the kept tail; dropped lines
+// are compacted away once they fill half the slice, so a long log costs
+// amortized constant work per line.
+type logWindow struct {
+	head      []string
+	headBytes int
+	tail      []string
+	tailStart int
+	tailBytes int
+	omitted   int
+}
+
+func (w *logWindow) keep(line string) {
+	size := len(line) + 1
+	if w.omitted == 0 && len(w.tail) == w.tailStart && w.headBytes+size <= maxInsightsHeadBytes {
+		w.head = append(w.head, line)
+		w.headBytes += size
+		return
+	}
+	w.tail = append(w.tail, line)
+	w.tailBytes += size
+	budget := MaxInsightsLogBytes - w.headBytes
+	for w.tailBytes > budget && w.tailStart < len(w.tail) {
+		w.tailBytes -= len(w.tail[w.tailStart]) + 1
+		w.tail[w.tailStart] = ""
+		w.tailStart++
+		w.omitted++
+	}
+	if w.tailStart > len(w.tail)/2 {
+		w.tail = append(w.tail[:0], w.tail[w.tailStart:]...)
+		w.tailStart = 0
+	}
+}
+
+// text joins the kept lines, with the omission marker where lines were
+// dropped; truncated reports that some were.
+func (w *logWindow) text() (log string, truncated bool) {
+	lines := append([]string(nil), w.head...)
+	if w.omitted > 0 {
+		lines = append(lines, omissionMarker(w.omitted))
+	}
+	lines = append(lines, w.tail[w.tailStart:]...)
+	return strings.Join(lines, "\n"), w.omitted > 0
+}
+
+// InsightsRecorder is a ProgressSink that records a build's insights
+// within the upload bounds. Safe for the engine's concurrent stdout and
+// stderr streams.
 type InsightsRecorder struct {
 	engine, platform string
 	started          time.Time
 	now              func() time.Time
 
-	mu        sync.Mutex
-	head      []string
-	headBytes int
-	// tail[tailStart:] is the kept tail; dropped lines are compacted away
-	// only once they fill half the slice, so a long log costs amortized
-	// constant work per line.
-	tail      []string
-	tailStart int
-	tailBytes int
-	lines     int
-	omitted   int
-	steps     []*recordedStep
-	vertices  map[int]*recordedStep
+	mu       sync.Mutex
+	window   logWindow
+	lines    int
+	steps    []*recordedStep
+	vertices map[int]*recordedStep
 }
 
 type recordedStep struct {
@@ -173,45 +258,14 @@ func (r *InsightsRecorder) Line(_, message string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.lines++
-	r.keep(line)
+	r.window.keep(line)
 	r.observe(line)
 }
 
+// cleanInsightsLine strips terminal styling; a line is never cut here.
 func cleanInsightsLine(message string) string {
-	line := strings.ToValidUTF8(ansi.Strip(message), "�")
-	line = strings.TrimRight(line, "\r")
-	if len(line) > MaxInsightsLineBytes {
-		cut := MaxInsightsLineBytes
-		for cut > 0 && !utf8.RuneStart(line[cut]) {
-			cut--
-		}
-		line = line[:cut] + " … [line truncated]"
-	}
-	return line
-}
-
-// keep stores the line in the head while it has room, then in the tail,
-// dropping the tail's oldest lines beyond the bound.
-func (r *InsightsRecorder) keep(line string) {
-	size := len(line) + 1
-	if r.omitted == 0 && len(r.tail) == r.tailStart && r.headBytes+size <= maxInsightsHeadBytes {
-		r.head = append(r.head, line)
-		r.headBytes += size
-		return
-	}
-	r.tail = append(r.tail, line)
-	r.tailBytes += size
-	budget := MaxInsightsLogBytes - r.headBytes
-	for r.tailBytes > budget && r.tailStart < len(r.tail) {
-		r.tailBytes -= len(r.tail[r.tailStart]) + 1
-		r.tail[r.tailStart] = ""
-		r.tailStart++
-		r.omitted++
-	}
-	if r.tailStart > len(r.tail)/2 {
-		r.tail = append(r.tail[:0], r.tail[r.tailStart:]...)
-		r.tailStart = 0
-	}
+	line := strings.ToValidUTF8(ansi.Strip(message), "\uFFFD")
+	return strings.TrimRight(line, "\r")
 }
 
 // observe follows the vertex lines. "#0 building with" opens a builder
@@ -238,8 +292,8 @@ func (r *InsightsRecorder) observe(line string) {
 			return
 		}
 		name := text
-		if len(name) > maxInsightsNameBytes {
-			name = strings.ToValidUTF8(name[:maxInsightsNameBytes-len("…")], "") + "…"
+		if len(name) > maxUploadNameBytes {
+			name = fmt.Sprintf("(step #%d: a name of %d bytes)", id, len(name))
 		}
 		step = &recordedStep{name: name, status: StepIncomplete}
 		r.vertices[id] = step
@@ -280,20 +334,14 @@ func (r *InsightsRecorder) Finish(err error) Insights {
 	if err != nil {
 		insights.Outcome = InsightsFailed
 		insights.Error = err.Error()
-		if len(insights.Error) > maxInsightsTextBytes {
-			insights.Error = strings.ToValidUTF8(insights.Error[:maxInsightsTextBytes-len("…")], "") + "…"
+		if len(insights.Error) > maxUploadErrorBytes {
+			insights.Error = fmt.Sprintf("the build failed (an error of %d bytes)", len(insights.Error))
 		}
 	}
 	for _, step := range r.steps {
 		insights.Steps = append(insights.Steps, InsightsStep{Name: step.name, Status: step.status, Seconds: step.seconds})
 	}
-	lines := append([]string(nil), r.head...)
-	if r.omitted > 0 {
-		insights.LogTruncated = true
-		lines = append(lines, omissionMarker(r.omitted))
-	}
-	lines = append(lines, r.tail[r.tailStart:]...)
-	insights.Log = strings.Join(lines, "\n")
+	insights.Log, insights.LogTruncated = r.window.text()
 	return insights
 }
 

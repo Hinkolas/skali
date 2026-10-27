@@ -116,9 +116,55 @@ func TestInsightsRecorderBoundsTheLog(t *testing.T) {
 	require.True(t, strings.HasPrefix(lines[0], "00000 "), "the head stays")
 	require.Contains(t, report.Log, "lines omitted …")
 	require.True(t, strings.HasPrefix(lines[len(lines)-2], fmt.Sprintf("%05d ", total-1)), "the end stays")
-	last := lines[len(lines)-1]
-	require.True(t, strings.HasSuffix(last, "… [line truncated]"))
-	require.LessOrEqual(t, len(last), MaxInsightsLineBytes+len(" … [line truncated]"))
+	require.Equal(t, strings.Repeat("y", 3*MaxInsightsLineBytes), lines[len(lines)-1],
+		"the recorder never cuts a line: it cannot know where a secret sits")
+}
+
+// Sealing redacts before it cuts, so a cut never leaves a fragment of a
+// secret the redactor would have recognized whole.
+func TestInsightsSealRedactsBeforeCutting(t *testing.T) {
+	secret := "hunter2-secret"
+	redact := strings.NewReplacer(secret, "[redacted:API_KEY]").Replace
+	name := strings.Repeat("n", maxInsightsNameBytes-4) + secret
+	line := strings.Repeat("l", MaxInsightsLineBytes-4) + secret
+	start := time.Date(2026, 10, 27, 9, 55, 25, 0, time.UTC)
+	report := Insights{Outcome: InsightsFailed, StartedAt: start, FinishedAt: start,
+		Error: strings.Repeat("e", maxInsightsTextBytes-4) + secret,
+		Steps: []InsightsStep{{Name: name, Status: StepError}},
+		Log:   "#1 start\n" + line + "\n#1 ERROR",
+	}
+	require.NoError(t, report.Validate())
+	sealed := report.Seal(redact)
+	for _, text := range []string{sealed.Steps[0].Name, sealed.Error, sealed.Log} {
+		require.NotContains(t, text, "hunt", "no fragment of the secret survives")
+	}
+	require.LessOrEqual(t, len(sealed.Steps[0].Name), maxInsightsNameBytes)
+	require.LessOrEqual(t, len(sealed.Error), maxInsightsTextBytes)
+	lines := strings.Split(sealed.Log, "\n")
+	require.Equal(t, "#1 start", lines[0])
+	require.LessOrEqual(t, len(lines[1]), MaxInsightsLineBytes)
+	require.Equal(t, "#1 ERROR", lines[2])
+	require.False(t, sealed.LogTruncated)
+}
+
+// Redaction may lengthen a log past its bound; sealing keeps the log's
+// start and end within it and says so.
+func TestInsightsSealBoundsALogRedactionLengthened(t *testing.T) {
+	redact := strings.NewReplacer("x", "[redacted:SESSION_SECRET]").Replace
+	var log strings.Builder
+	for index := range 2000 {
+		fmt.Fprintf(&log, "%05d %s\n", index, strings.Repeat("x", 1000))
+	}
+	log.WriteString("#9 ERROR: the end")
+	start := time.Date(2026, 10, 27, 9, 55, 25, 0, time.UTC)
+	report := Insights{Outcome: InsightsFailed, StartedAt: start, FinishedAt: start, Log: log.String(), LogLines: 2001}
+	require.NoError(t, report.Validate())
+	sealed := report.Seal(redact)
+	require.True(t, sealed.LogTruncated)
+	require.LessOrEqual(t, len(sealed.Log), MaxStoredInsightsLogBytes)
+	require.True(t, strings.HasPrefix(sealed.Log, "00000 [redacted:SESSION_SECRET]"))
+	require.True(t, strings.HasSuffix(sealed.Log, "#9 ERROR: the end"))
+	require.Equal(t, 2001, sealed.LogLines)
 }
 
 func TestInsightsValidate(t *testing.T) {
@@ -136,7 +182,8 @@ func TestInsightsValidate(t *testing.T) {
 		"duration":      func(i *Insights) { i.Steps[0].Seconds = -1 },
 		"log":           func(i *Insights) { i.Log = strings.Repeat("x", MaxInsightsLogBytes+maxInsightsMarkerBytes+1) },
 		"steps":         func(i *Insights) { i.Steps = make([]InsightsStep, MaxInsightsSteps+1) },
-		"error":         func(i *Insights) { i.Error = strings.Repeat("x", maxInsightsTextBytes+1) },
+		"error":         func(i *Insights) { i.Error = strings.Repeat("x", maxUploadErrorBytes+1) },
+		"name length":   func(i *Insights) { i.Steps[0].Name = strings.Repeat("x", maxUploadNameBytes+1) },
 	} {
 		report := valid
 		report.Steps = append([]InsightsStep(nil), valid.Steps...)

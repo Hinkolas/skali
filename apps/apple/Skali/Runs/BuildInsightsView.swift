@@ -7,12 +7,22 @@ import SwiftUI
 /// report lands, so a report missing just after the build finished is
 /// asked for again for a while.
 struct BuildInsightsView: View {
-    let step: RunStep
+    let runID: String
     let api: any ClusterAPI
 
+    /// The step as last seen: followed through the run's own updates while
+    /// the build runs, since the run screen stops following once this one
+    /// is pushed.
+    @State private var step: RunStep
     @State private var insights: BuildInsights?
     @State private var loaded = false
     @State private var error: String?
+
+    init(step: RunStep, runID: String, api: any ClusterAPI) {
+        self.runID = runID
+        self.api = api
+        _step = State(initialValue: step)
+    }
 
     var body: some View {
         List {
@@ -85,7 +95,22 @@ struct BuildInsightsView: View {
         }
         .navigationTitle(step.title)
         .navigationBarTitleDisplayMode(.inline)
-        .task(id: "\(step.id):\(step.status)") { await load() }
+        .task(id: step.id) { await follow() }
+    }
+
+    /// Follows a running build to its end, then loads its report.
+    private func follow() async {
+        if step.isActive {
+            do {
+                for try await tree in api.runUpdates(id: runID) {
+                    if let latest = tree.step(id: step.id) { step = latest }
+                    if !step.isActive { break }
+                }
+            } catch {
+                if error is CancellationError { return }
+            }
+        }
+        await load()
     }
 
     private func load() async {
