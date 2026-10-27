@@ -122,14 +122,10 @@ func HealNodePullCredential(ctx context.Context, runner host.Runner, restart boo
 // together; a crash in between still reports truthfully because status
 // probes the installed version rather than the record.
 func UpgradeK3s(ctx context.Context, runner host.Runner, record *Record, progress Progress) error {
-	role := record.Node.Role
-	// Hosts installed before Longhorn shipped gain its prerequisites on
-	// their next upgrade, regardless of the storage driver: every host
-	// stays permanently ready, so enabling longhorn later is a plain
-	// re-init with no per-host pass.
-	if err := EnsureStoragePrerequisites(ctx, runner, progress); err != nil {
+	if err := record.validateStorage(); err != nil {
 		return err
 	}
+	role := record.Node.Role
 	if err := upgradeK3s(ctx, runner, role, progress); err != nil {
 		return err
 	}

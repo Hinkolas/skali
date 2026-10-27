@@ -93,12 +93,6 @@ type Options struct {
 	// ManagedCluster enables capability placement on Skali-labeled nodes.
 	ManagedCluster bool
 
-	// StorageClass names the storage class application volume claims
-	// provision on (the skali-app Longhorn class on managed clusters).
-	// Empty keeps the cluster default, so offline rendering and dev
-	// clusters stay byte-identical to a render before the field existed.
-	StorageClass string
-
 	// Certificates enables TLS issuance: routes not opting out render a
 	// websecure IngressRoute, an explicit cert-manager Certificate, and a
 	// plain-HTTP companion (redirecting on `automatic`). False keeps every
@@ -394,9 +388,6 @@ func renderApplication(project compiler.ProjectDefinition, key string, options O
 					corev1.ResourceStorage: *resource.NewQuantity(volume.SizeBytes, resource.DecimalSI),
 				}},
 			},
-		}
-		if options.StorageClass != "" {
-			claim.Spec.StorageClassName = &options.StorageClass
 		}
 		objects = append(objects, claim)
 	}

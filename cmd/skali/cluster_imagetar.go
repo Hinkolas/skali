@@ -18,7 +18,7 @@ import (
 // through the runner and returns the image reference and id it carries.
 // This is the source-install path: a checkout builds skalid:dev locally,
 // and no fresh node could pull it from a registry. The tar lives on the
-// machine the operator runs the installer on (the Mac in darwin mode).
+// Linux server running the installer.
 func stageSkalidImage(ctx context.Context, runner host.Runner, tarPath string,
 	progress *taskProgress) (string, string, error) {
 	data, image, imageID, err := loadImageTar(ctx, tarPath)

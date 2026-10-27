@@ -57,11 +57,8 @@ type Record struct {
 	// hostname selected by the first reconciled initialization. Legacy
 	// records omit it and retain capability-only scheduling.
 	RegistryNode string `yaml:"registryNode,omitempty"`
-	// StorageDriver is the cluster-level application storage choice made
-	// at init: local keeps the k3s local-path provisioner, longhorn
-	// deploys replicated block storage with enforced volume sizes.
-	// Records written before the choice existed omit it and read as
-	// local.
+	// StorageDriver retains the old record field so unsupported installations
+	// are refused instead of silently switching their volumes to local storage.
 	StorageDriver string `yaml:"storageDriver,omitempty"`
 	// PlatformPreference is the cluster-level ordered build platform
 	// preference chosen at init: on a mixed-architecture cluster the first
@@ -117,15 +114,6 @@ func (r *Record) InstallComplete() bool {
 	return r != nil && (r.Lifecycle == nil ||
 		r.Lifecycle.Status == InstallStatusComplete ||
 		r.Lifecycle.Phase == InstallPhaseComplete)
-}
-
-// AppStorageDriver folds the pre-driver record default: anything but an
-// explicit longhorn choice reads as local.
-func (r *Record) AppStorageDriver() string {
-	if r != nil && r.StorageDriver == bundle.StorageDriverLonghorn {
-		return bundle.StorageDriverLonghorn
-	}
-	return bundle.StorageDriverLocal
 }
 
 func (r *Record) Reconciled() bool {
@@ -360,6 +348,9 @@ func RemoveRecord(ctx context.Context, runner host.Runner) error {
 // repeat run over unchanged inputs reproduces the exact bytes, and with
 // them the stamped hash.
 func (r *Record) CanonicalYAML() (string, error) {
+	if err := r.validateStorage(); err != nil {
+		return "", err
+	}
 	type canonicalRecord struct {
 		Version            string      `yaml:"version"`
 		InstallationID     string      `yaml:"installationId"`
@@ -396,4 +387,12 @@ func (r *Record) CanonicalYAML() (string, error) {
 		return "", fmt.Errorf("encode canonical installation record: %w", err)
 	}
 	return string(data), nil
+}
+
+// validateStorage accepts legacy local records and refuses removed storage backends.
+func (r *Record) validateStorage() error {
+	if r != nil && r.StorageDriver != "" && r.StorageDriver != "local" {
+		return fmt.Errorf("storage driver %q is no longer supported; this release supports local storage only", r.StorageDriver)
+	}
+	return nil
 }

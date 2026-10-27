@@ -118,7 +118,6 @@ each link opens only that command's reference. Global flags are above.
 - [`skali cluster repair`](cli/cluster/repair.md): Diagnose and repair this installation with scoped, confirmed actions
 - [`skali cluster reset-password`](cli/cluster/reset-password.md): Reset a user's password from a server node
 - [`skali cluster status`](cli/cluster/status.md): Show the installation state and health of this host
-- [`skali cluster storage-migrate`](cli/cluster/storage-migrate.md): Move the registry volume onto the replicated storage class
 - [`skali cluster tier`](cli/cluster/tier.md): Apply the available database availability tier
 - [`skali cluster token`](cli/cluster/token.md): Print the join command for this cluster
 - [`skali cluster token list`](cli/cluster/token/list.md): List reconciled-cluster invitations

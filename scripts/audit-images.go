@@ -48,8 +48,7 @@ func main() {
 		add(v.Ref, "runtime", "internal/substrate/cnpg catalog")
 	}
 	// Include images passed in arguments/environment, not just Pod image fields:
-	// cert-manager's ACME solver and Longhorn's engine/CSI/support images are
-	// created later by their controllers.
+	// cert-manager's ACME solver is created later by its controller.
 	refPattern := regexp.MustCompile(`(?:quay\.io|ghcr\.io|docker\.io)/[a-zA-Z0-9_./-]+:[a-zA-Z0-9_.-]+`)
 	for _, manifest := range []struct {
 		data   []byte
@@ -58,7 +57,6 @@ func main() {
 	}{
 		{bundle.CNPGManifest(), "runtime", "vendored CNPG manifest"},
 		{bundle.CertManagerManifest(), "runtime", "vendored cert-manager manifest (including ACME solver)"},
-		{bundle.LonghornManifest(), "longhorn", "vendored Longhorn manifest (including controller-created images)"},
 	} {
 		refs := refPattern.FindAllString(string(manifest.data), -1)
 		if len(refs) == 0 {

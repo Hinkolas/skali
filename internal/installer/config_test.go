@@ -75,19 +75,6 @@ network:
 		CoordinatorBind: []string{"cluster", "public"},
 	}, multiHomed.NodeNetwork())
 
-	darwin, err := ParseNodeConfig([]byte(`role: server
-capabilities: [application, database]
-vm:
-  name: skali-e2e-darwin
-  network: user-v2
-  cpus: 2
-  memory: 3GiB
-  disk: 15GiB
-`))
-	require.NoError(t, err)
-	require.Equal(t, &VMConfig{
-		Name: "skali-e2e-darwin", Network: "user-v2", CPUs: 2, Memory: "3GiB", Disk: "15GiB",
-	}, darwin.VM)
 }
 
 func TestParseNodeConfigRejections(t *testing.T) {
@@ -120,17 +107,8 @@ func TestParseNodeConfigRejections(t *testing.T) {
 		"public bind without public address": {
 			"role: server\ncapabilities: [edge]\nnetwork:\n  coordinatorBind: [public]\n",
 			"no public addresses are declared"},
-		"multiple documents": {"role: server\ncapabilities: [edge]\n---\nrole: agent\ncapabilities: [edge]\n", "multiple YAML documents"},
-		"bad vm network": {"role: server\ncapabilities: [edge]\nvm:\n  network: nat\n",
-			"vm.network must be bridged, shared, or user-v2, got \"nat\""},
-		"bad vm cpus": {"role: server\ncapabilities: [edge]\nvm:\n  cpus: -2\n",
-			"vm.cpus must be a positive count"},
-		"bad vm memory": {"role: server\ncapabilities: [edge]\nvm:\n  memory: 12GB\n",
-			"vm.memory \"12GB\" is not a size like 12GiB"},
-		"bad vm disk": {"role: server\ncapabilities: [edge]\nvm:\n  disk: lots\n",
-			"vm.disk \"lots\" is not a size like 100GiB"},
-		"bad vm name": {"role: server\ncapabilities: [edge]\nvm:\n  name: \"-oops\"\n",
-			"vm.name \"-oops\" is not a valid Lima instance name"},
+		"removed VM configuration": {"role: server\ncapabilities: [edge]\nvm:\n  name: skali\n", "field vm not found"},
+		"multiple documents":       {"role: server\ncapabilities: [edge]\n---\nrole: agent\ncapabilities: [edge]\n", "multiple YAML documents"},
 	}
 	for name, testCase := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -161,7 +139,7 @@ skalid:
 	require.Equal(t, "ops@example.com", config.TLS.IssuerEmail)
 	require.Equal(t, "/root/skali-admin-password", config.Admin.PasswordFile)
 	require.Equal(t, "ghcr.io/hinkolas/skalid:v2.0.0", config.Skalid.Image)
-	require.Empty(t, config.StorageDriver(), "an omitted storage block keeps the recorded driver")
+	require.Nil(t, config.Storage)
 }
 
 func TestParseInitConfigStorageDriver(t *testing.T) {
@@ -177,16 +155,15 @@ admin:
 skalid:
   image: skalid:dev
 `
-	config, err := ParseInitConfig([]byte(base + "storage:\n  driver: longhorn\n"))
-	require.NoError(t, err)
-	require.Equal(t, "longhorn", config.StorageDriver())
+	_, err := ParseInitConfig([]byte(base + "storage:\n  driver: longhorn\n"))
+	require.ErrorContains(t, err, "no longer supported")
 
-	config, err = ParseInitConfig([]byte(base + "storage:\n  driver: local\n"))
+	config, err := ParseInitConfig([]byte(base + "storage:\n  driver: local\n"))
 	require.NoError(t, err)
-	require.Equal(t, "local", config.StorageDriver())
+	require.Equal(t, "local", config.Storage.Driver)
 
 	_, err = ParseInitConfig([]byte(base + "storage:\n  driver: zfs\n"))
-	require.ErrorContains(t, err, "storage.driver must be local or longhorn")
+	require.ErrorContains(t, err, "storage.driver must be local")
 }
 
 func TestParseInitConfigPlatformPreference(t *testing.T) {
@@ -267,7 +244,7 @@ func TestConfigSchemas(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(node), NodeSchemaID)
 	require.Contains(t, string(node), `"server"`)
-	require.Contains(t, string(node), `"user-v2"`)
+	require.NotContains(t, string(node), `"vm"`)
 
 	initSchema, err := InitConfigJSONSchema()
 	require.NoError(t, err)

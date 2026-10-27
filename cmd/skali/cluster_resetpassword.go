@@ -48,9 +48,6 @@ func newClusterResetPasswordCommand() *cobra.Command {
 
 func runResetPassword(ctx context.Context, out *os.File, reader *bufio.Reader,
 	email string, passwordStdin, disableTwoFactor bool) error {
-	if _, err := darwinPrelude(ctx, out, vmPolicyMaintain, ""); err != nil {
-		return err
-	}
 	detected, err := installer.Detect(ctx, runner())
 	if err != nil {
 		return err

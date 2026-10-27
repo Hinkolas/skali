@@ -16,7 +16,7 @@ import (
 )
 
 func newClusterInitCommand() *cobra.Command {
-	var configPath, layoutPath, storageDriver, platformPreference string
+	var configPath, layoutPath, platformPreference string
 	command := &cobra.Command{
 		Use:   "init",
 		Short: "Initialize Skali on the joined cluster (run once on a server)",
@@ -25,9 +25,6 @@ func newClusterInitCommand() *cobra.Command {
 			ctx := command.Context()
 			out := os.Stdout
 
-			if _, err := darwinPrelude(ctx, out, vmPolicyMaintain, ""); err != nil {
-				return err
-			}
 			detected, err := installer.Detect(ctx, runner())
 			if err != nil {
 				return err
@@ -65,7 +62,7 @@ func newClusterInitCommand() *cobra.Command {
 				}
 				banner(out)
 				reader := bufio.NewReader(os.Stdin)
-				return runInteractiveInit(ctx, out, reader, detected.Record, asserted, storageDriver, preference)
+				return runInteractiveInit(ctx, out, reader, detected.Record, asserted, preference)
 			}
 
 			data, err := os.ReadFile(configPath)
@@ -91,22 +88,17 @@ func newClusterInitCommand() *cobra.Command {
 			tasks := clirender.NewTasks(out)
 			progress := newTaskProgress(tasks)
 			opts := installer.InitOptions{
-				Endpoints:     installer.Endpoints{API: config.Endpoints.API, Registry: config.Endpoints.Registry},
-				TLS:           installer.TLSConfig{IssuerEmail: config.TLS.IssuerEmail, ACMEServer: config.TLS.ACMEServer},
-				SkalidImage:   config.Skalid.Image,
-				SkalidImageID: config.Skalid.ImageID,
-
+				Endpoints:          installer.Endpoints{API: config.Endpoints.API, Registry: config.Endpoints.Registry},
+				TLS:                installer.TLSConfig{IssuerEmail: config.TLS.IssuerEmail, ACMEServer: config.TLS.ACMEServer},
+				SkalidImage:        config.Skalid.Image,
+				SkalidImageID:      config.Skalid.ImageID,
 				Layout:             asserted,
-				StorageDriver:      config.StorageDriver(),
 				PlatformPreference: config.PlatformPreference(),
 				Admin: func(context.Context) (string, string, error) {
 					return config.Admin.Email, adminPassword, nil
 				},
 				Progress: progress,
 				Out:      out,
-			}
-			if storageDriver != "" {
-				opts.StorageDriver = storageDriver
 			}
 			if len(preference) > 0 {
 				opts.PlatformPreference = preference
@@ -160,8 +152,6 @@ func newClusterInitCommand() *cobra.Command {
 	}
 	command.Flags().StringVar(&configPath, "config", "", "non-interactive init configuration (init.yaml)")
 	command.Flags().StringVar(&layoutPath, "layout", "", "cluster-layout document asserting the expected membership")
-	command.Flags().StringVar(&storageDriver, "storage-driver", "",
-		"application storage driver: local (default) or longhorn; re-run init with longhorn to enable it on an existing cluster")
 	command.Flags().StringVar(&platformPreference, "platform-preference", "",
 		"ordered build platform preference for mixed-architecture clusters, comma-separated (for example linux/arm64); empty keeps the recorded choice")
 	return command

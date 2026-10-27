@@ -267,8 +267,7 @@ EOF
 }
 
 if [ "$os" = "darwin" ]; then
-  # Rootless on macOS: `skali cluster` manages its Lima VM from the user
-  # session, so the CLI lives on the user PATH.
+  # The macOS CLI runs remote operations and local development as the user.
   dest="${HOME}/.local/bin"
   mkdir -p "$dest"
   install -m 0755 "$tmp/$asset" "${dest}/${BINARY}"

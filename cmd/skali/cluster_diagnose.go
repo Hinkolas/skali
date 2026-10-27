@@ -17,11 +17,7 @@ func newClusterDiagnoseCommand() *cobra.Command {
 		Short: "Diagnose this installation from host state and the Kubernetes API",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
-			ctx := command.Context()
 			out := os.Stdout
-			if _, err := darwinPrelude(ctx, out, vmPolicyMaintain, ""); err != nil {
-				return err
-			}
 			diagnosis, err := runDiagnosis(command, out)
 			if err != nil {
 				return err

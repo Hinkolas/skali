@@ -281,7 +281,7 @@ func CacheCoordinatorState(ctx context.Context, runner host.Runner,
 }
 
 // LoadAgentConfig reads the non-secret routing part of the local mTLS
-// identity through the host abstraction, so CLI recovery also works in Lima.
+// identity through the host abstraction.
 func LoadAgentConfig(ctx context.Context, runner host.Runner) (AgentConfig, error) {
 	data, err := runner.ReadFile(ctx, AgentConfigPath)
 	if err != nil {

@@ -39,10 +39,6 @@ func installReadyHost(capabilities []string) *host.Fake {
 		}
 		return host.Result{ExitCode: 4, Stdout: "not-found\n"}, nil
 	}
-	// A fresh host installs the Longhorn prerequisites through apt.
-	fake.Handlers["apt-get"] = func(host.Command) (host.Result, error) {
-		return host.Result{}, nil
-	}
 	fake.Handlers["k3s"] = func(cmd host.Command) (host.Result, error) {
 		labels := layout.CapabilityLabels(capabilities)
 		labels[layout.ClusterLabel] = "e2e"

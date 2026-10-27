@@ -3,8 +3,8 @@
 // root-owned installation record, and the installer-owned skali-system
 // bundle converge. It never depends on the Skali API or product database;
 // its authority is exactly what skalid must not have. All host mutation
-// goes through host.Runner so the same engine drives a local Linux host, a
-// scripted test fake, and a Lima-managed VM.
+// goes through host.Runner so the engine runs on a Linux host or a scripted
+// test fake.
 package installer
 
 import "github.com/Hinkolas/skali/internal/bundle"

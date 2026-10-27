@@ -159,8 +159,7 @@ var containerInterfaces = []string{
 
 // DetectHostAddresses lists the globally scoped addresses of the host's
 // real interfaces, marking which one carries the default route. It runs
-// through the runner so it reports the managed VM's addresses on macOS,
-// not the Mac's.
+// through the runner on the Linux host being managed.
 func DetectHostAddresses(ctx context.Context, runner host.Runner) ([]HostAddress, error) {
 	result, err := runner.Run(ctx, host.Command{
 		Name: "ip", Args: []string{"-o", "addr", "show"},

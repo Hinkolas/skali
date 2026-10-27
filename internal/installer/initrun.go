@@ -44,12 +44,6 @@ type InitOptions struct {
 	// durable placement choice. Empty retains legacy capability-only
 	// placement.
 	RegistryNode string
-	// StorageDriver selects the application storage layer:
-	// bundle.StorageDriverLocal or bundle.StorageDriverLonghorn. Empty
-	// keeps the record's current driver (local on a fresh installation),
-	// so headless re-runs and upgrades never flip the choice. Switching
-	// an existing cluster from longhorn back to local is refused.
-	StorageDriver string
 	// PlatformPreference is the ordered build platform preference for
 	// mixed-architecture clusters. Empty keeps the record's current
 	// preference (none on a fresh installation), so headless re-runs and
@@ -91,6 +85,9 @@ type InitResult struct {
 func Init(ctx context.Context, runner host.Runner, record *Record, opts InitOptions) (*InitResult, error) {
 	if record == nil {
 		return nil, errors.New("init requires an installation record; run install first")
+	}
+	if err := record.validateStorage(); err != nil {
+		return nil, err
 	}
 	if record.Node.Role != layout.RoleServer {
 		return nil, errors.New("init must run on a server node")
@@ -189,36 +186,10 @@ func Init(ctx context.Context, runner host.Runner, record *Record, opts InitOpti
 	if err != nil {
 		return fail(err)
 	}
-	// The storage driver defaults to the record so a re-run or upgrade
-	// never flips the choice; an explicit option enables longhorn on an
-	// existing cluster (the converge below installs it). The reverse
-	// switch is refused: converge never uninstalls Longhorn, and volumes
-	// already on the skali-app class would strand.
-	storageDriver := opts.StorageDriver
-	if storageDriver == "" {
-		storageDriver = record.AppStorageDriver()
-	}
-	if record.AppStorageDriver() == bundle.StorageDriverLonghorn &&
-		storageDriver == bundle.StorageDriverLocal {
-		return fail(errors.New("this cluster uses the longhorn storage driver; " +
-			"switching back to local is not supported"))
-	}
-
-	// The platform preference defaults to the record for the same reason:
-	// only an explicit option changes it.
+	// Only an explicit option changes the recorded platform preference.
 	platformPreference := opts.PlatformPreference
 	if len(platformPreference) == 0 {
 		platformPreference = record.PlatformPreference
-	}
-
-	// Fresh longhorn clusters are Longhorn-native from the first converge
-	// (the claim is absent, so this reads as the Longhorn class); a re-run
-	// over an interrupted init keeps whatever shape the claim already has,
-	// exactly like LiveProfile. Under the local driver the registry always
-	// keeps the legacy local-path shape.
-	registryStorageClass, err := liveRegistryStorageClass(ctx, client, storageDriver)
-	if err != nil {
-		return fail(err)
 	}
 
 	// The record published in-cluster carries the initialization inputs;
@@ -227,7 +198,6 @@ func Init(ctx context.Context, runner host.Runner, record *Record, opts InitOpti
 	record.Endpoints = &Endpoints{API: opts.Endpoints.API, Registry: opts.Endpoints.Registry}
 	record.TLS = &TLSConfig{IssuerEmail: opts.TLS.IssuerEmail, ACMEServer: opts.TLS.ACMEServer}
 	record.RegistryNode = opts.RegistryNode
-	record.StorageDriver = storageDriver
 	record.PlatformPreference = platformPreference
 	record.Versions.Bundle = version.Version
 	record.Versions.Installer = version.Version
@@ -242,24 +212,20 @@ func Init(ctx context.Context, runner host.Runner, record *Record, opts InitOpti
 		AuthSecret:    authSecret,
 		RegistryHost:  bundle.RegistryInternalHost,
 		Production: &bundle.Production{
-			ClusterName:          record.Cluster,
-			IngressHost:          opts.Endpoints.API,
-			RegistryDomain:       opts.Endpoints.Registry,
-			TokenKeyPEM:          tokenKeyPEM,
-			TokenCertPEM:         tokenCertPEM,
-			NodePullSecret:       pullSecret,
-			ACMEEmail:            opts.TLS.IssuerEmail,
-			ACMEServer:           opts.TLS.ACMEServer,
-			Capabilities:         layout.UnionCapabilities(live.Nodes),
-			DatabaseTier:         topology.DatabaseTier,
-			DatabaseStorage:      DefaultDatabaseStorage,
-			RegistryStorage:      DefaultRegistryStorage,
-			RegistryNode:         opts.RegistryNode,
-			StorageDriver:        storageDriver,
-			PlatformPreference:   platformPreference,
-			StorageReplicas:      layout.StorageReplicas(topology.Capable[layout.CapabilityApplication]),
-			RegistryStorageClass: registryStorageClass,
-
+			ClusterName:        record.Cluster,
+			IngressHost:        opts.Endpoints.API,
+			RegistryDomain:     opts.Endpoints.Registry,
+			TokenKeyPEM:        tokenKeyPEM,
+			TokenCertPEM:       tokenCertPEM,
+			NodePullSecret:     pullSecret,
+			ACMEEmail:          opts.TLS.IssuerEmail,
+			ACMEServer:         opts.TLS.ACMEServer,
+			Capabilities:       layout.UnionCapabilities(live.Nodes),
+			DatabaseTier:       topology.DatabaseTier,
+			DatabaseStorage:    DefaultDatabaseStorage,
+			RegistryStorage:    DefaultRegistryStorage,
+			RegistryNode:       opts.RegistryNode,
+			PlatformPreference: platformPreference,
 			InstallationRecord: canonical,
 		},
 	}
@@ -323,12 +289,6 @@ func ValidateInitOptions(opts InitOptions) error {
 	}
 	if opts.Admin == nil && !opts.SkipAdmin {
 		return errors.New("init requires admin credentials")
-	}
-	switch opts.StorageDriver {
-	case "", bundle.StorageDriverLocal, bundle.StorageDriverLonghorn:
-	default:
-		return fmt.Errorf("storage driver must be %s or %s, got %q",
-			bundle.StorageDriverLocal, bundle.StorageDriverLonghorn, opts.StorageDriver)
 	}
 	if err := validatePlatformPreference(opts.PlatformPreference); err != nil {
 		return fmt.Errorf("platform preference %s", err)

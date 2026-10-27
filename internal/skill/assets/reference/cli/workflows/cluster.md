@@ -3,9 +3,9 @@
 Read with `skali skill read cli workflows cluster`.
 [CLI overview and command index](../../cli.md).
 
-Host commands run on the managed Linux node (usually with sudo); on macOS they
-operate inside the selected Lima VM. Bare `skali cluster` opens the maintenance
-menu. `cluster install` prepares a node, `cluster create` creates a reconciled
+Host commands run on the managed Linux node (usually with sudo). The macOS CLI
+supports remote API operations and Docker-based `skali dev`. Bare `skali cluster`
+opens the maintenance menu. `cluster install` prepares a node, `cluster create` creates a reconciled
 seed/coordinator, and `cluster init` initializes the platform. `--config` reads
 node/init configuration respectively; `--layout` asserts intended membership.
 These are distinct documents with their own schemas, not project manifests:
@@ -25,9 +25,8 @@ it cannot perform cleanup on that host.
 
 `cluster status`, `diagnose`, and `repair` inspect health and recover scoped
 problems. `cluster addresses` declares addressing, `rebalance` reconciles
-placement, `tier` applies available database availability, and `storage-migrate`
-moves the registry to replicated storage. Read their individual entries for
-prerequisites and flags. `cluster reset-password` is controller-side account
+placement, and `tier` applies available database availability. Read their individual
+entries for prerequisites and flags. `cluster reset-password` is controller-side account
 recovery; `cluster uninstall` removes the selected scope after confirmation.
 
 `cluster upgrade` normally submits a managed update through the authenticated

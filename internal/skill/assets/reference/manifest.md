@@ -723,7 +723,7 @@ directly, without a shell; use `[sh, -c, "..."]` explicitly when a shell is need
 | `applications.*.shutdown.gracePeriod` | Duration; default `30s`. Time after SIGTERM to drain and exit before forced termination. |
 | `applications.*.volumes` | Map of stable volume names to persistent volume objects; empty by default. Requires one replica and recreate rollouts. Removing a declaration retains its PVC; purging the environment deletes it. |
 | `applications.*.volumes.*.mountPath` | Required absolute container path; literal. The volume is mounted read/write there. |
-| `applications.*.volumes.*.size` | Required positive byte quantity. Requested persistent capacity; advisory on the local driver, enforced on Longhorn. Volumes can grow but cannot shrink. |
+| `applications.*.volumes.*.size` | Required positive byte quantity. Requested persistent capacity; advisory on local-path storage. Local-path does not support resizing existing claims. Volumes can grow but cannot shrink. |
 
 ### Host development keys
 

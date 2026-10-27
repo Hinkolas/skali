@@ -895,7 +895,7 @@ func printVolumeSizeWarning(out io.Writer, unenforced bool) {
 	}
 	style := clirender.StyleFor(out)
 	fmt.Fprintf(out, "\n  %s\n", style.Yellow("warning: this cluster uses the local storage driver, which does not "+
-		"enforce volume sizes; declared sizes are advisory (enforce them with the longhorn driver)"))
+		"enforce volume sizes; declared sizes are advisory"))
 }
 
 // healthHints names the applications whose compiled definition declares no

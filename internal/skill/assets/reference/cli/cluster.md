@@ -17,7 +17,6 @@ Install, maintain, and recover a Skali cluster
 | `--hostd-bin` | `string` | `""` | Linux skali-hostd binary to install on managed nodes (source installs) |
 | `--image-tar` | `string` | `""` | docker-save tar of the skalid image, imported into the node during init (source installs) |
 | `--verbose` | `bool` | `false` | show every recorded detail under live steps (TLS issuance fields, health snapshots) and dev proxy relay diagnostics (inherited) |
-| `--vm` | `string` | `skali` | name of the Lima VM hosting the skali node (macOS only) |
 
 ## Subcommands
 
@@ -35,7 +34,6 @@ Install, maintain, and recover a Skali cluster
 - [`skali cluster repair`](cluster/repair.md): Diagnose and repair this installation with scoped, confirmed actions
 - [`skali cluster reset-password`](cluster/reset-password.md): Reset a user's password from a server node
 - [`skali cluster status`](cluster/status.md): Show the installation state and health of this host
-- [`skali cluster storage-migrate`](cluster/storage-migrate.md): Move the registry volume onto the replicated storage class
 - [`skali cluster tier`](cluster/tier.md): Apply the available database availability tier
 - [`skali cluster token`](cluster/token.md): Print the join command for this cluster
 - [`skali cluster uninstall`](cluster/uninstall.md): Remove the Skali bundle or this node, with scoped confirmation

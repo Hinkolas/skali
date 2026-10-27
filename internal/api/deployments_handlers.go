@@ -45,9 +45,6 @@ type deploymentsHandlers struct {
 	// backups stops the backup and restore runs it drives; nil without a
 	// cluster, where no such run executes.
 	backups *backup.Controller
-	// storageClass is the application volume class; empty means the
-	// cluster default (local-path), whose declared sizes are unenforced.
-	storageClass string
 	// auth answers session freshness for the protection bypass, which is
 	// sudo-gated inside the handler because plan and open themselves are
 	// not.
@@ -211,7 +208,7 @@ func (h *deploymentsHandlers) plan(w http.ResponseWriter, r *http.Request) {
 		LocalApplications:     decodeLocalApplications(req.LocalApplications),
 		ManagedCluster:        h.managed,
 		PruneValues:           req.PruneValues,
-		UnenforcedVolumeSizes: h.managed && h.storageClass == "",
+		UnenforcedVolumeSizes: h.managed,
 	})
 	if err != nil {
 		writeDeployError(r.Context(), w, err)
@@ -418,7 +415,7 @@ func (h *deploymentsHandlers) open(w http.ResponseWriter, r *http.Request) {
 			LocalApplications:     decodeLocalApplications(req.LocalApplications),
 			ManagedCluster:        h.managed,
 			PruneValues:           req.PruneValues,
-			UnenforcedVolumeSizes: h.managed && h.storageClass == "",
+			UnenforcedVolumeSizes: h.managed,
 		},
 		Actor:              user.ID.String(),
 		BuildExecutor:      req.BuildExecutor,

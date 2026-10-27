@@ -22,15 +22,6 @@ func newClusterStatusCommand() *cobra.Command {
 
 			banner(out)
 
-			present, err := darwinPrelude(ctx, out, vmPolicyStatus, "")
-			if err != nil {
-				return err
-			}
-			if !present {
-				printDarwinFreshHeader(out)
-				return nil
-			}
-
 			status, err := installer.GatherStatus(ctx, runner())
 			if err != nil {
 				return err

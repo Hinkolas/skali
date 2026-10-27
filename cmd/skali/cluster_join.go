@@ -3,14 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/Hinkolas/skali/internal/cliprompt"
 	"os"
 
 	"github.com/spf13/cobra"
 
+	"github.com/Hinkolas/skali/internal/cliprompt"
 	"github.com/Hinkolas/skali/internal/clirender"
 	"github.com/Hinkolas/skali/internal/installer"
-	"github.com/Hinkolas/skali/internal/installer/limavm"
 	"github.com/Hinkolas/skali/internal/layout"
 )
 
@@ -18,7 +17,6 @@ func newClusterJoinCommand() *cobra.Command {
 	var server, tokenFile, rawToken, role, cluster, nodeIP string
 	var publicIPs, extraSANs, coordinatorBind []string
 	var capabilities []string
-	var assumeYes bool
 	command := &cobra.Command{
 		Use:               "join [coordinator]",
 		Short:             "Join this host to an existing cluster",
@@ -51,24 +49,8 @@ func newClusterJoinCommand() *cobra.Command {
 				return err
 			}
 
-			if _, err := darwinPrelude(ctx, out, vmPolicyInstall, ""); err != nil {
-				return err
-			}
-			// Join creates the VM with the fleet defaults (bridged), so
-			// dependency provisioning targets that network. It confirms
-			// (or takes --yes) and runs before the task printer starts,
-			// because sudo may prompt.
-			if err := ensureDarwinDeps(ctx, out, nil, limavm.NetworkBridged, assumeYes); err != nil {
-				return err
-			}
 			tasks := clirender.NewTasks(out)
 			progress := newTaskProgress(tasks)
-			// On a Mac without a VM, join creates one with the fleet
-			// defaults; sizing overrides go through install --config.
-			if err := ensureDarwinVM(ctx, progress, nil); err != nil {
-				progress.Abort()
-				return err
-			}
 			if rawToken == "" || reconciledToken(rawToken) {
 				record, enrollErr := runReconciledEnrollment(ctx, reconciledEnrollmentOptions{
 					Server: server, Token: rawToken, Capabilities: capabilities,
@@ -98,18 +80,13 @@ func newClusterJoinCommand() *cobra.Command {
 				Progress:      progress,
 				RecoverOrphan: true,
 			}
-			if err := applyDarwinInstallOptions(ctx, &opts); err != nil {
-				progress.Abort()
-				return err
-			}
 			_, err = installer.Install(ctx, runner(), opts)
 			if err != nil {
 				progress.Abort()
 				return err
 			}
-			warnings := finishDarwinInstall(ctx, progress)
 			progress.Done("")
-			warnings = append(warnings, serverCountWarning(ctx, role)...)
+			warnings := serverCountWarning(ctx, role)
 			printWarnings(out, warnings)
 			return nil
 		},
@@ -125,7 +102,6 @@ func newClusterJoinCommand() *cobra.Command {
 	command.Flags().StringSliceVar(&extraSANs, "tls-san", nil, "additional name or address for the kubernetes api certificate; repeatable")
 	command.Flags().StringSliceVar(&coordinatorBind, "coordinator-bind", nil,
 		"scopes the enrollment coordinator listens on: cluster, public, or both (servers only)")
-	command.Flags().BoolVar(&assumeYes, "yes", false, "provision missing Mac dependencies without confirmation (macOS only)")
 	return command
 }
 

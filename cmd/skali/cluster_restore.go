@@ -29,9 +29,6 @@ func newClusterRestoreCommand() *cobra.Command {
 			ctx := command.Context()
 			out := os.Stdout
 			banner(out)
-			if _, err := darwinPrelude(ctx, out, vmPolicyStatus, ""); err != nil {
-				return err
-			}
 			// Restore's audience is a rebuilt host, so every state prints
 			// the contract; detection only decorates the header.
 			detected, err := installer.Detect(ctx, runner())

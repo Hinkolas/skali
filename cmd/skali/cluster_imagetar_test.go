@@ -107,8 +107,7 @@ func TestStageSkalidImage(t *testing.T) {
 			return host.Result{}, nil
 		},
 	}}
-	// On Linux readHostFile goes through the runner; darwin reads the file
-	// directly. Feed the fake filesystem so both paths resolve.
+	// The installer reads files through the same host boundary as mutations.
 	require.NoError(t, fake.WriteFile(context.Background(), tarPath, data, 0o644))
 
 	original := activeRunner

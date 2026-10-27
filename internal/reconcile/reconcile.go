@@ -835,7 +835,6 @@ func (k *Kernel) renderInputs(environmentID uuid.UUID, rev *revision.Revision, r
 		SecretVersions:          secretVersions(rev),
 		ProgressDeadlineSeconds: int64(k.cfg.RolloutDeadline / time.Second),
 		ManagedCluster:          k.cfg.ManagedCluster,
-		StorageClass:            k.cfg.StorageClass,
 		Certificates:            k.cfg.Certificates,
 		Intercepts:              intercepts,
 		PriorityClassName:       layout.PriorityClassFor(priority),

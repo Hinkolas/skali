@@ -26,9 +26,9 @@ namespaces. Consequences:
 - `skali env remove` (a purge) is the one path that removes everything: the
   namespace goes with every volume in it.
 
-Declared sizes are only enforced on the `longhorn` driver; on `local` the
-size is advisory and volumes pin their pods to one node. See
-[`storage.md`](storage.md).
+Declared volume sizes are advisory on the supported local-path storage.
+Volumes are not replicated, and their workloads remain tied to the node
+holding the data. See [storage](storage.md).
 
 ## Environments cannot talk to each other
 
@@ -93,12 +93,9 @@ hand (`kubectl delete namespace skali-<environment-id>`); skalid logs
 
 ## The registry node cannot be removed
 
-`skali cluster node remove` refuses the node that holds the managed
-registry's data ("registry migration is not implemented"). Plan the seed
-node as permanent, or, on the `longhorn` driver, run
-`skali cluster storage-migrate` first, which moves the registry volume onto
-replicated storage; the removal guard is still in place afterwards and will
-be relaxed once migration between nodes is implemented.
+The managed registry uses a local-path volume pinned to its node.
+`skali cluster node remove` refuses to remove that node. Keep it in the
+cluster until a registry relocation workflow is available.
 
 ## Disaster recovery is manual
 

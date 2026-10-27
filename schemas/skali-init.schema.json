@@ -97,7 +97,11 @@
       "properties": {
         "driver": {
           "type": "string",
-          "description": "Application storage driver: local (default, k3s local-path, no replication or size enforcement) or longhorn (replicated block storage with enforced volume sizes). Empty keeps the recorded choice."
+          "description": "Deprecated: local storage is the only supported driver. Omit this block in new configurations.",
+          "enum": [
+            "",
+            "local"
+          ]
         }
       },
       "additionalProperties": false

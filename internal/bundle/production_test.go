@@ -50,20 +50,17 @@ func productionProfile() Profile {
 		AuthSecret:   strings.Repeat("a", 32),
 		RegistryHost: RegistryInternalHost,
 		Production: &Production{
-			ClusterName:     "acme",
-			IngressHost:     "skali.example.com",
-			RegistryDomain:  "registry.example.com",
-			TokenKeyPEM:     testTokenKeyPEM,
-			TokenCertPEM:    testTokenCertPEM,
-			NodePullSecret:  "node-pull-secret",
-			ACMEEmail:       "ops@example.com",
-			Capabilities:    layout.Capabilities,
-			DatabaseTier:    layout.TierSynchronous,
-			DatabaseStorage: "10Gi",
-			RegistryStorage: "20Gi",
-			StorageDriver:   StorageDriverLonghorn,
-			StorageReplicas: 3,
-
+			ClusterName:        "acme",
+			IngressHost:        "skali.example.com",
+			RegistryDomain:     "registry.example.com",
+			TokenKeyPEM:        testTokenKeyPEM,
+			TokenCertPEM:       testTokenCertPEM,
+			NodePullSecret:     "node-pull-secret",
+			ACMEEmail:          "ops@example.com",
+			Capabilities:       layout.Capabilities,
+			DatabaseTier:       layout.TierSynchronous,
+			DatabaseStorage:    "10Gi",
+			RegistryStorage:    "20Gi",
 			InstallationRecord: "version: \"1\"\ninstallationId: 0f0f\ncluster: production\n",
 		},
 	}
@@ -76,19 +73,19 @@ func TestLocalRenderFrozen(t *testing.T) {
 	t.Parallel()
 	profile := localProfile()
 	sources := stageSources(profile)
-	require.Len(t, sources, 12)
+	require.Len(t, sources, 11)
 
 	frozen := map[string]int{
 		"local-ownership.yaml":    1,
 		"local-namespace.yaml":    0,
 		"local-priority.yaml":     2,
-		"local-issuer.yaml":       4,
-		"local-edge.yaml":         5,
-		"local-database.yaml":     6,
-		"local-registry.yaml":     7,
-		"local-skalid.yaml":       8,
-		"local-edge-metrics.yaml": 10,
-		"local-bootstrap.yaml":    11,
+		"local-issuer.yaml":       3,
+		"local-edge.yaml":         4,
+		"local-database.yaml":     5,
+		"local-registry.yaml":     6,
+		"local-skalid.yaml":       7,
+		"local-edge-metrics.yaml": 9,
+		"local-bootstrap.yaml":    10,
 	}
 	for name, index := range frozen {
 		path := filepath.Join("testdata", name)
@@ -102,8 +99,7 @@ func TestLocalRenderFrozen(t *testing.T) {
 		require.Equal(t, string(golden), sources[index], name)
 	}
 	// Production-only stages contribute zero bytes locally.
-	require.Empty(t, sources[3], "storage stage must be empty locally")
-	require.Empty(t, sources[9], "record stage must be empty locally")
+	require.Empty(t, sources[8], "record stage must be empty locally")
 
 	// The full hash including the vendored operator manifests (CNPG and
 	// cert-manager, both applied locally) is frozen too.
@@ -459,17 +455,8 @@ func TestProductionProfileValidation(t *testing.T) {
 		"database tier":         func(p *Production) { p.DatabaseTier = "" },
 		"database storage size": func(p *Production) { p.DatabaseStorage = "" },
 		"registry storage size": func(p *Production) { p.RegistryStorage = "" },
-		"storage driver":        func(p *Production) { p.StorageDriver = "zfs" },
-		"storage replicas":      func(p *Production) { p.StorageReplicas = 0 },
-		"registry storage class": func(p *Production) {
-			p.RegistryStorageClass = "not-a-skali-class"
-		},
-		"registry storage class requires the longhorn storage driver": func(p *Production) {
-			p.StorageDriver = StorageDriverLocal
-			p.RegistryStorageClass = StorageClassName
-		},
-		"installation record": func(p *Production) { p.InstallationRecord = "" },
-		"platform preference": func(p *Production) { p.PlatformPreference = []string{"linux/riscv64"} },
+		"installation record":   func(p *Production) { p.InstallationRecord = "" },
+		"platform preference":   func(p *Production) { p.PlatformPreference = []string{"linux/riscv64"} },
 	} {
 		profile := productionProfile()
 		mutate(profile.Production)

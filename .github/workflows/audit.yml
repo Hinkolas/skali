@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       images:
-        description: Scan bundled, optional storage, build, and example images on both Linux architectures
+        description: Scan bundled, build, and example images on both Linux architectures
         type: boolean
         default: false
 

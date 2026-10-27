@@ -1,39 +1,14 @@
 # Application storage
 
 Skali provisions a persistent volume for every `volumes` entry an
-application declares. Where those volumes live is a cluster-level choice
-made at initialization, the storage driver:
+application declares. Managed Linux clusters and Docker-based local
+development use the k3s `local-path` provisioner.
 
-- `local` (the default) keeps volumes on the k3s `local-path`
-  provisioner. Nothing extra runs on the cluster, which suits
-  installations whose state lives mostly in buckets and databases; the
-  trade-off is that declared sizes are not enforced, per-volume usage is
-  not measurable, volumes pin their pods to one node, and a lost node
-  disk means lost volume data. `skali plan` and `skali deploy` print a
-  warning when a manifest declares volumes against a `local` cluster, so
-  the unenforced size is never a silent surprise.
-- `longhorn` deploys Longhorn, a replicated block-storage layer the
-  installer owns: declared sizes are enforced, usage is measurable, and a
-  volume survives the loss of the node it was written on. The cost is
-  Longhorn's operator footprint on every node.
-
-Pick it at init (`storage.driver` in init.yaml, the interactive prompt,
-or `skali cluster init --storage-driver longhorn`). A cluster on `local`
-can switch to `longhorn` at any time by re-running init with the flag;
-the reverse switch is not supported. The driver enum is also the seam for
-future provider-native drivers (for example hcloud-csi).
-
-Volumes removed from a manifest are never deleted automatically; see
-[limitations.md](limitations.md).
-
-Independent of the driver, every application's temporary storage (the
-container's writable layer, its logs, and emptyDirs) is measured from
-the kubelet and shown in the Studio, per service and as its own node
-category. Declaring `resources.limits.temporaryStorage` in the manifest
-caps it (the kubelet evicts a pod that exceeds its limit) and gives the
-Studio a capacity to show usage against. For an installation on the
-`local` driver whose state lives in buckets and databases, this is
-usually the number that matters.
+Application volumes are local to one node. Declared sizes are advisory,
+per-volume usage is not measurable, and a lost node disk means lost volume
+data. `skali plan` and `skali deploy` warn when a manifest declares volumes.
+Use environment backups to protect their contents. Volumes removed from a
+manifest are retained; see [limitations](limitations.md).
 
 ```yaml
 applications:
@@ -45,89 +20,35 @@ applications:
         size: 10GB
 ```
 
-## Where data lives (longhorn driver)
+## Where data lives
 
-| Data | Backing | Why |
+| Data | Backing | Behavior |
 | --- | --- | --- |
-| Application volumes | Longhorn class `skali-app` | enforced size, CSI usage stats, replication |
-| Managed registry | Longhorn class `skali-app` | frees the registry from its node pin |
-| Managed databases (CNPG) | local disk (`local-path`) | postgres replicates at its own layer |
-| Object storage (SeaweedFS) | local disk (hostPath) | seaweed replicates at its own layer; bucket directories live in the shared Postgres pool |
+| Application volumes | `local-path` | A volume pins its workload to one node; no replication or size enforcement. |
+| Managed registry | `local-path` | The registry keeps its node pin. |
+| Managed databases (CNPG) | `local-path` | PostgreSQL replicates at its own layer according to the database's availability tier. |
+| Object storage (SeaweedFS) | Local hostPath disks | SeaweedFS replicates object bytes at its own layer; bucket directories live in the shared PostgreSQL pool. |
 
-Under the `local` driver every row reads `local-path` (the registry keeps
-its node pin), and the rest of this section does not apply.
-
-The `skali-app` StorageClass is rendered by the bundle and is never the
-cluster default; `local-path` keeps that role. Replicas per volume follow
-the topology at initialization: one per application-capable node, capped
-at three. Replica data only lands on nodes labeled
-`node.longhorn.io/create-default-disk=true`, which the installer stamps on
-application-capable nodes at registration and re-stamps on every converge.
-
-Local development (`skali dev`) keeps every volume on the k3d default
-`local-path` class: dev data is throwaway and Longhorn does not run in
-k3d. The rendering is identical apart from the storage class name.
-
-## Host prerequisites
-
-Longhorn volumes attach over iSCSI. `skali cluster install` and
-`skali cluster upgrade` install `open-iscsi`, enable `iscsid`, and, where
-`multipathd` runs, write a blacklist at
-`/etc/multipath/conf.d/skali-longhorn.conf` so multipath never claims a
-Longhorn device. This happens under both drivers: the footprint is one
-small package and an idle daemon, and it keeps every host permanently
-ready so enabling longhorn later needs no per-host pass.
-`skali cluster diagnose` checks all of this and `skali cluster repair`
-fixes it.
+Each application's temporary storage (its writable container layer, logs,
+and emptyDirs) is measured from the kubelet and shown in the Studio.
+`resources.limits.temporaryStorage` caps it: the kubelet evicts a pod that
+exceeds the limit. This is separate from persistent volume capacity.
 
 ## Resizing
 
-Volumes only grow. Raising `size` in the manifest expands the volume
-online on the next deploy; a deploy that shrinks a volume is refused up
-front with the volume named. On `local-path` volumes (dev clusters and
-the `local` driver) sizes cannot change at all; growth there is rejected
-by the cluster at apply time.
+Skali rejects a reduction in a declared volume size before deployment.
+The local-path provisioner also does not support expanding existing claims;
+increasing their requested size is rejected by Kubernetes during apply.
+The host disk's free space limits what can actually be stored.
 
-## Enabling longhorn on an existing cluster
+## Removed storage backend
 
-A cluster on the `local` driver (including any installation that predates
-the driver choice) keeps working untouched: the converge keeps rendering
-the legacy local-path shapes until each piece is migrated explicitly,
-because a claim's storage class is immutable.
+Longhorn is no longer supported. The storage-driver prompt, CLI flag,
+registry storage migration command, and automatic iSCSI prerequisite
+installation have been removed. Older init files declaring `storage.driver:
+local` still work; new configurations can omit the block. An installation
+record selecting another driver is refused before initialization or bundle
+reconvergence; there is no automatic conversion of existing volumes.
 
-Order of operations:
-
-1. `skali cluster upgrade` on every node, so every host carries the
-   Longhorn prerequisites, then `skali cluster init --storage-driver
-   longhorn` on the server that maintains the bundle. The converge
-   installs the Longhorn operators and renders the `skali-app` class.
-   From this point, newly created volumes (new apps, new environments)
-   land on `skali-app`; existing claims stay where they are.
-2. `skali cluster storage-migrate` on the server that maintains the
-   bundle. This recreates the registry volume on `skali-app` and drops
-   the registry's node pin. Registry contents are discarded, not copied:
-   images are re-pushed by the next `skali deploy` of each project, and
-   running workloads keep their current images throughout.
-3. Per project, move the app volumes (skip projects without volumes).
-   With the project checked out and bound to the remote:
-
-   ```sh
-   # 1. Snapshot everything, volumes included, to the external S3 target.
-   skali backup create --environment production
-
-   # 2. Delete the volume-backed workloads and their claims together. The
-   #    level-triggered reconciler recreates both immediately; the new
-   #    claims render on skali-app and the pods start on empty volumes.
-   kubectl -n skali-<project>-production delete deploy,pvc -l skali.dev/managed=true
-
-   # 3. Replay the volume (and database/bucket) contents; the restore
-   #    stops the workloads itself while it writes.
-   skali backup restore <backup-id>
-   ```
-
-   Verify with `kubectl get pv`: the project's volumes now name
-   `driver.longhorn.io` as their provisioner.
-
-Interrupting `storage-migrate` is safe: every step is level-triggered and
-rerunning the command finishes the job. The per-project sequence is safe
-to repeat from the backup restore onward.
+Packages and host configuration installed by an earlier release are not
+removed during an upgrade, since other host software may use them.

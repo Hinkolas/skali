@@ -38,9 +38,6 @@ func newClusterTierCommand() *cobra.Command {
 // land here. Tier changes are explicit maintenance actions, never side
 // effects of membership changes; this flow is that explicit action.
 func runTierFlow(ctx context.Context, out *os.File, reader *bufio.Reader, yes bool) error {
-	if _, err := darwinPrelude(ctx, out, vmPolicyMaintain, ""); err != nil {
-		return err
-	}
 	status, err := installer.GatherStatus(ctx, runner())
 	if err != nil {
 		return err
