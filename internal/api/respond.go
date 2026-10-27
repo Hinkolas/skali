@@ -25,7 +25,13 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 // data, and bodies over maxBodyBytes are errors. The returned error message is
 // safe to echo to the client.
 func decodeJSON(w http.ResponseWriter, r *http.Request, v any) error {
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+	return decodeJSONLimit(w, r, v, maxBodyBytes)
+}
+
+// decodeJSONLimit is decodeJSON for the few bodies that carry more than
+// maxBodyBytes.
+func decodeJSONLimit(w http.ResponseWriter, r *http.Request, v any, limit int64) error {
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {

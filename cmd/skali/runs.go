@@ -223,6 +223,11 @@ func newRunCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if len(entries) == 0 && buildStepApplication(step.Key) != "" {
+				fmt.Fprintf(command.OutOrStdout(), "a build's output is in its insights: skali run insights %s --step %s --log\n",
+					tree.Run.ID, step.Key)
+				return nil
+			}
 			for _, entry := range entries {
 				fmt.Fprintf(command.OutOrStdout(), "%s  %-5s  %s\n",
 					entry.TS.Local().Format("15:04:05"), entry.Level, entry.Message)
@@ -230,10 +235,10 @@ func newRunCommand() *cobra.Command {
 			return nil
 		},
 	}
-	logs.Flags().StringVar(&stepKey, "step", "", "step key, e.g. artifacts.web.build")
+	logs.Flags().StringVar(&stepKey, "step", "", "step key, e.g. release:web")
 	_ = logs.MarkFlagRequired("step")
 
-	command.AddCommand(show, attach, cancel, logs)
+	command.AddCommand(show, attach, cancel, logs, newRunInsightsCommand(&remote))
 	return command
 }
 

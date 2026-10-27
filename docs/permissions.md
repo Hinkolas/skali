@@ -416,9 +416,9 @@ their environment first):
 | `POST /deployments/{id}/complete`, `.../fail` | E:deploy |
 | `POST /runs/{id}/cancel` | E:deploy |
 | `POST .../routes/probe` (new) | E:deploy; a domain that answers here triggers a fresh certificate issuance |
-| `POST /runs/{id}/steps`, `PATCH /steps/{id}`, `POST /steps/{id}/logs` | E:deploy, plus today's actor rule and artifacts-subtree rule |
+| `POST /runs/{id}/steps`, `PATCH /steps/{id}`, `PUT /steps/{id}/build-insights` | E:deploy, plus today's actor rule and artifacts-subtree rule |
 | `GET .../status`, `.../status/stream` | E:read |
-| `GET .../runs`, `.../runs/stream`, `GET /runs/{id}`, `.../stream`, `GET /steps/{id}/logs`, `.../stream` | E:read (a run outside any environment is instance-admin only) |
+| `GET .../runs`, `.../runs/stream`, `GET /runs/{id}`, `.../stream`, `GET /steps/{id}/logs`, `.../stream`, `GET /steps/{id}/build-insights` | E:read (a run outside any environment is instance-admin only) |
 | `GET .../logs/stream` (runtime logs) | E:read |
 | `GET .../exec` (S when promote-only) | E:maintain |
 | `GET .../databases/{key}/sql` (S when promote-only) | E:maintain |

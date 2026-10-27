@@ -228,7 +228,7 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 	}
 
 	h := &authHandlers{auth: d.Auth}
-	jh := &runsHandlers{journal: d.Journal}
+	jh := &runsHandlers{journal: d.Journal, builds: d.Builds}
 	psh := &projectStreamHandlers{feed: d.Feed, journal: d.Journal, resolver: ac.resolver}
 	sh := &statusHandlers{reconcile: d.Reconcile, feeds: newStatusFeeds(d.Reconcile)}
 	lh := &logsHandlers{logs: d.RuntimeLogs}
@@ -238,7 +238,7 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 		backups: d.Backups, capabilities: d.Capabilities, managed: d.ManagedCluster,
 		storageClass: d.StorageClass, auth: d.Auth,
 	}
-	ch := &clientStepsHandlers{st: d.Store, journal: d.Journal, values: d.Values}
+	ch := &clientStepsHandlers{st: d.Store, journal: d.Journal, values: d.Values, builds: d.Builds}
 	r.Route("/v1", func(r chi.Router) {
 		// Streaming: authenticated but deliberately outside the request
 		// timeout, which would cut every SSE connection at 30 seconds.
@@ -380,7 +380,7 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 				// run's own actor).
 				ac.route(r, "POST", "/runs/{id}/steps", classRunDeploy, ch.ensureStep)
 				ac.route(r, "PATCH", "/steps/{id}", classStepDeploy, ch.setStepStatus)
-				ac.route(r, "POST", "/steps/{id}/logs", classStepDeploy, ch.appendLogs)
+				ac.route(r, "PUT", "/steps/{id}/build-insights", classStepDeploy, ch.putBuildInsights)
 
 				// Observation projections: served from the observed store and
 				// database pointers, never a request-time cluster call. The
@@ -434,6 +434,7 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 				ac.route(r, "GET", "/environments/{id}/runs", classEnvRead, jh.list)
 				ac.route(r, "GET", "/runs/{id}", classRunRead, jh.get)
 				ac.route(r, "GET", "/steps/{id}/logs", classStepRead, jh.stepLogs)
+				ac.route(r, "GET", "/steps/{id}/build-insights", classStepRead, jh.buildInsights)
 				r.Group(func(r chi.Router) {
 					r.Use(RequireFresh(d.Auth))
 

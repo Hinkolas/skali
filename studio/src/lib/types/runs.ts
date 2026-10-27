@@ -112,6 +112,43 @@ export interface LogsPage {
 	next?: string;
 }
 
+/** One builder step of a build, in the order it started. */
+export interface BuildInsightsStep {
+	name: string;
+	status: 'done' | 'cached' | 'error' | 'canceled' | 'incomplete';
+	/** Absent for cached and incomplete steps. */
+	seconds?: number;
+}
+
+/** The report a build uploads once it ended (GET /v1/steps/{id}/build-insights). */
+export interface BuildInsights {
+	outcome: 'succeeded' | 'failed';
+	engine: string;
+	platform: string;
+	started_at: string;
+	finished_at: string;
+	error?: string;
+	steps: BuildInsightsStep[];
+	log: string;
+	log_lines: number;
+	log_truncated: boolean;
+}
+
+/** A local build's step, artifacts.<application>.build: its output lives
+ * in its insights report, not in the step's log. */
+export function isBuildStep(key: string): boolean {
+	const parts = key.split('.');
+	return parts.length === 3 && parts[0] === 'artifacts' && parts[1] !== '' && parts[2] === 'build';
+}
+
+/** The build's slowest steps, slowest first. */
+export function slowestBuildSteps(insights: BuildInsights, count = 5): BuildInsightsStep[] {
+	return insights.steps
+		.filter((step) => (step.seconds ?? 0) > 0)
+		.sort((a, b) => (b.seconds ?? 0) - (a.seconds ?? 0))
+		.slice(0, count);
+}
+
 /**
  * How the Studio names each run kind. The API keeps its own words; the
  * Studio says stop and delete for the two teardown decisions, matching the

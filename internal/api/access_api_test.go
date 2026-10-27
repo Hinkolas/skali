@@ -231,7 +231,8 @@ var matrixExpectations = map[string]expectation{
 }
 
 // notFoundAllowed are reads whose fixture legitimately lacks the addressed
-// thing (no draft, no claim, no backup target); 404 is their success.
+// thing (no draft, no claim, no backup target, no build insights); 404 is
+// their success.
 var notFoundAllowed = map[string]bool{
 	"GET /v1/projects/{id}/draft":                          true,
 	"GET /v1/environments/{id}/databases/{key}/connection": true,
@@ -241,6 +242,7 @@ var notFoundAllowed = map[string]bool{
 	"GET /v1/auth/device/codes/{user_code}":                true,
 	"GET /v1/system/database-pools/{name}":                 true,
 	"GET /v1/system/database-pools/{name}/metrics":         true,
+	"GET /v1/steps/{id}/build-insights":                    true,
 }
 
 // destructiveRoutes would change the fixture when let through; their allowed

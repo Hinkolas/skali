@@ -24,6 +24,7 @@ see skali dev run.
 
 - [`skali run attach`](run/attach.md): Attach the terminal to a run until it settles
 - [`skali run cancel`](run/cancel.md): Cancel a run
+- [`skali run insights`](run/insights.md): Print the insights of a run's builds
 - [`skali run list`](run/list.md): List the environment's runs
 - [`skali run logs`](run/logs.md): Print the logs of one step
 - [`skali run show`](run/show.md): Print a run's step tree

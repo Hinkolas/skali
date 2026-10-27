@@ -74,6 +74,9 @@ public protocol ClusterAPI: Sendable {
     func stepLogs(stepID: String, after cursor: String?) async throws -> LogPage
     /// A step's log entries as they are written, after `cursor`.
     func stepLogUpdates(stepID: String, after cursor: String?) -> AsyncThrowingStream<LogEntry, Error>
+    /// The insights report of the build a step ran; nil when none was
+    /// uploaded.
+    func buildInsights(stepID: String) async throws -> BuildInsights?
     /// Every account's id, name and email, to name the actors of runs.
     func userDirectory() async throws -> [DirectoryUser]
 
@@ -296,6 +299,14 @@ extension APIClient: ClusterAPI {
         .decoding(
             events("v1/steps/\(stepID)/logs/stream", query: cursor.map { [URLQueryItem(name: "after", value: $0)] } ?? []),
             event: "log")
+    }
+
+    public func buildInsights(stepID: String) async throws -> BuildInsights? {
+        do {
+            return try await get("v1/steps/\(stepID)/build-insights")
+        } catch let error as APIError where error.status == 404 {
+            return nil
+        }
     }
 
     public func userDirectory() async throws -> [DirectoryUser] {

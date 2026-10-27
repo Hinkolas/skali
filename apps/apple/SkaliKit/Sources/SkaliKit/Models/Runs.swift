@@ -153,6 +153,13 @@ public struct RunStep: Codable, Hashable, Sendable, Identifiable {
 
     public var isActive: Bool { status == "running" || status == "waiting" }
 
+    /// A local build, `artifacts.<application>.build`: its output is in
+    /// the build's insights report, not in the step's log.
+    public var isBuild: Bool {
+        let parts = key.split(separator: ".", omittingEmptySubsequences: false)
+        return parts.count == 3 && parts[0] == "artifacts" && !parts[1].isEmpty && parts[2] == "build"
+    }
+
     /// A skipped TLS checkpoint: the certificate waits for the domain to
     /// point here, a warning rather than an omission.
     public var isDeferredTLS: Bool { key.hasPrefix("tls:") && status == "skipped" }
@@ -186,6 +193,66 @@ public struct LogPage: Codable, Hashable, Sendable {
     public init(logs: [LogEntry], next: String?) {
         self.logs = logs
         self.next = next
+    }
+}
+
+/// The report a build uploads once it ended: how long it took, which of
+/// its steps were cached, and the builder's redacted output.
+public struct BuildInsights: Codable, Hashable, Sendable {
+    /// `succeeded` or `failed`.
+    public let outcome: String
+    public let engine: String
+    public let platform: String
+    public let startedAt: Date
+    public let finishedAt: Date
+    /// Why the build failed.
+    public let error: String?
+    /// The builder's steps in the order they started.
+    public let steps: [BuildInsightsStep]
+    /// A log over the bound keeps its start and end (`logTruncated`).
+    public let log: String
+    public let logLines: Int
+    public let logTruncated: Bool
+
+    public init(
+        outcome: String, engine: String, platform: String, startedAt: Date, finishedAt: Date, error: String? = nil,
+        steps: [BuildInsightsStep], log: String, logLines: Int, logTruncated: Bool = false
+    ) {
+        self.outcome = outcome
+        self.engine = engine
+        self.platform = platform
+        self.startedAt = startedAt
+        self.finishedAt = finishedAt
+        self.error = error
+        self.steps = steps
+        self.log = log
+        self.logLines = logLines
+        self.logTruncated = logTruncated
+    }
+
+    public var duration: TimeInterval { finishedAt.timeIntervalSince(startedAt) }
+
+    public var cachedSteps: Int { steps.count { $0.status == "cached" } }
+
+    /// The timed steps, slowest first.
+    public func slowestSteps(_ count: Int = 5) -> [BuildInsightsStep] {
+        Array(steps.filter { ($0.seconds ?? 0) > 0 }.sorted { ($0.seconds ?? 0) > ($1.seconds ?? 0) }.prefix(count))
+    }
+}
+
+/// One builder step: a Dockerfile instruction, a context transfer, the
+/// export.
+public struct BuildInsightsStep: Codable, Hashable, Sendable {
+    public let name: String
+    /// `done`, `cached`, `error`, `canceled` or `incomplete`.
+    public let status: String
+    /// Absent for cached and incomplete steps.
+    public let seconds: Double?
+
+    public init(name: String, status: String, seconds: Double? = nil) {
+        self.name = name
+        self.status = status
+        self.seconds = seconds
     }
 }
 

@@ -489,6 +489,10 @@ extension DemoCluster {
         AsyncThrowingStream { _ in }
     }
 
+    public func buildInsights(stepID: String) async throws -> BuildInsights? {
+        DemoActivity.buildInsights(stepID: stepID)
+    }
+
     public func userDirectory() async throws -> [DirectoryUser] {
         [Self.user, Self.member].map { DirectoryUser(id: $0.id, email: $0.email, name: $0.name) }
     }

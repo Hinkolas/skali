@@ -337,7 +337,9 @@ type fakeInstall struct {
 	// steps and revisions are keyed by run id and environment id.
 	steps     map[string][]client.Step
 	revisions map[string][]client.RevisionSummary
-	posts     []string
+	// insights are the build insights reports, by step id.
+	insights map[string]build.Insights
+	posts    []string
 	// held is the incomplete restore holding an environment, by its id.
 	held map[string]*client.IncompleteRestore
 	// reauthRequired makes every gated write answer reauth_required until
@@ -357,6 +359,7 @@ func newFakeInstall(t *testing.T) *fakeInstall {
 		runs:      map[string]client.Run{},
 		steps:     map[string][]client.Step{},
 		revisions: map[string][]client.RevisionSummary{},
+		insights:  map[string]build.Insights{},
 		held:      map[string]*client.IncompleteRestore{},
 	}
 	writeError := func(w http.ResponseWriter, status int, code, message string) {
@@ -524,6 +527,22 @@ func newFakeInstall(t *testing.T) *fakeInstall {
 			steps = []client.Step{}
 		}
 		_ = json.NewEncoder(w).Encode(client.RunTree{Run: run, Steps: steps})
+	})
+	mux.HandleFunc("/v1/steps/", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		id, ok := strings.CutSuffix(strings.TrimPrefix(r.URL.Path, "/v1/steps/"), "/build-insights")
+		report, found := f.insights[id]
+		switch {
+		case ok && found && r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(report)
+		case ok && r.Method == http.MethodGet:
+			writeError(w, http.StatusNotFound, "not_found", "no insights were recorded for this build")
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/logs"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"logs": []any{}})
+		default:
+			writeError(w, http.StatusNotFound, "not_found", "not found")
+		}
 	})
 	mux.HandleFunc("/v1/environments/", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
@@ -1228,61 +1247,175 @@ func TestCheckDeployPolicy(t *testing.T) {
 	require.True(t, consumed)
 }
 
-// The build engine's output feeds the step log sink; a slow journal must
-// not hold up the engine, and every line still arrives, in order.
-func TestStepLogSinkShipsBesideTheEngine(t *testing.T) {
-	gate := make(chan struct{})
-	release := sync.OnceFunc(func() { close(gate) })
-	var mu sync.Mutex
-	var batches [][]string
+// scriptedEngine prints its lines into the build's sink and then
+// succeeds, or fails with err.
+type scriptedEngine struct {
+	lines []string
+	err   error
+}
+
+func (e scriptedEngine) Build(_ context.Context, _ build.BuildRequest, sink build.ProgressSink) (build.Built, error) {
+	for _, line := range e.lines {
+		sink.Line("info", line)
+	}
+	if e.err != nil {
+		return nil, e.err
+	}
+	return scriptedBuilt{}, nil
+}
+
+type scriptedBuilt struct{}
+
+func (scriptedBuilt) Push(context.Context, build.ProgressSink) (build.Result, error) {
+	return build.Result{}, nil
+}
+
+func (scriptedBuilt) Close() error { return nil }
+
+// insightsServer records the requests of one build in order and the
+// insights report it received; the report's upload waits for gate.
+type insightsServer struct {
+	gate     chan struct{}
+	status   int
+	mu       sync.Mutex
+	requests []string
+	report   *build.Insights
+}
+
+func newInsightsServer(t *testing.T) (*insightsServer, *client.Client) {
+	t.Helper()
+	f := &insightsServer{gate: make(chan struct{}), status: http.StatusNoContent}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		<-gate
-		var body struct {
-			Lines []client.LogLine `json:"lines"`
+		request := r.Method + " " + r.URL.Path
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/runs/r1/steps":
+			var body struct{ Key string }
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			_ = json.NewEncoder(w).Encode(client.Step{ID: "build", Key: body.Key})
+		case r.Method == http.MethodPatch:
+			var body struct{ Status string }
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			request += " " + body.Status
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/steps/build/build-insights":
+			<-f.gate
+			var report build.Insights
+			if err := json.NewDecoder(r.Body).Decode(&report); err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			f.mu.Lock()
+			f.report = &report
+			f.mu.Unlock()
+			if f.status == http.StatusNotFound {
+				writeTestAPIError(w, http.StatusNotFound, "not_found")
+				return
+			}
+			w.WriteHeader(f.status)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/deployments/d1/fail":
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Errorf("unexpected request %s", request)
+			w.WriteHeader(http.StatusNotFound)
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		batch := make([]string, len(body.Lines))
-		for index, line := range body.Lines {
-			batch[index] = line.Message
-		}
-		mu.Lock()
-		batches = append(batches, batch)
-		mu.Unlock()
-		w.WriteHeader(http.StatusNoContent)
+		f.mu.Lock()
+		f.requests = append(f.requests, request)
+		f.mu.Unlock()
 	}))
-	defer srv.Close()
-	defer release()
-	api := client.New(srv.URL, "token", client.Caller{UserAgent: "test"})
+	t.Cleanup(srv.Close)
+	return f, client.New(srv.URL, "token", client.Caller{UserAgent: "test"})
+}
 
-	sink := newStepLogSink(context.Background(), api, "s1")
-	wrote := make(chan struct{})
-	go func() {
-		for index := range 60 {
-			sink.Line("info", fmt.Sprintf("line %d", index))
-		}
-		close(wrote)
-	}()
-	select {
-	case <-wrote:
-	case <-time.After(2 * time.Second):
-		t.Fatal("Line waited on the journal")
-	}
-	release()
-	sink.Flush()
+func writeTestAPIError(w http.ResponseWriter, status int, code string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"code": code, "message": code}})
+}
 
-	var got []string
-	for _, batch := range batches {
-		require.LessOrEqual(t, len(batch), stepLogBatch)
-		got = append(got, batch...)
+// buildkitLines is plain BuildKit progress with one cached and one built
+// step and noisy compiler output in between.
+func buildkitLines(noise int) []string {
+	lines := []string{
+		"#0 building with \"desktop-linux\" instance using docker driver",
+		"#1 [builder 1/2] COPY package.json .",
+		"#1 CACHED",
+		"#2 [builder 2/2] RUN bun run build",
 	}
-	want := make([]string, 60)
-	for index := range want {
-		want[index] = fmt.Sprintf("line %d", index)
+	for index := range noise {
+		lines = append(lines, fmt.Sprintf("#2 2.%03d warning %d", index%1000, index))
 	}
-	require.Equal(t, want, got)
+	return append(lines, "#2 DONE 17.6s")
+}
+
+// A build's output reaches the server once, as the insights report, and
+// the build does not wait for it: the report uploads beside the image.
+func TestBuildUploadsInsightsBesideTheImage(t *testing.T) {
+	f, api := newInsightsServer(t)
+	opened, project, contexts := buildWindow(t, "exit 1\n")
+	var out syncBuffer
+	tasks := clirender.NewTasks(&out)
+
+	built, upload, err := buildAction(context.Background(), api, tasks, scriptedEngine{lines: buildkitLines(3000)},
+		opened, project, contexts, opened.Actions[0], false)
+	require.NoError(t, err)
+	require.NotNil(t, built)
+	f.mu.Lock()
+	require.Equal(t, []string{"POST /v1/runs/r1/steps", "PATCH /v1/steps/build running",
+		"PATCH /v1/steps/build succeeded"}, f.requests, "the step settles while the report is still uploading")
+	f.mu.Unlock()
+	require.Contains(t, out.String(), "1 of 2 steps cached")
+
+	close(f.gate)
+	upload.wait(tasks)
+	require.NotNil(t, f.report)
+	require.Equal(t, build.InsightsSucceeded, f.report.Outcome)
+	require.Equal(t, "linux/arm64", f.report.Platform)
+	require.Equal(t, 3005, f.report.LogLines)
+	require.False(t, f.report.LogTruncated)
+	require.Equal(t, []build.InsightsStep{
+		{Name: "[builder 1/2] COPY package.json .", Status: build.StepCached},
+		{Name: "[builder 2/2] RUN bun run build", Status: build.StepDone, Seconds: 17.6},
+	}, f.report.Steps)
+	require.NotContains(t, out.String(), "Build insights for web")
+}
+
+// A failed build uploads its report before the deployment fails, so the
+// output that explains the failure is kept.
+func TestFailedBuildUploadsInsightsFirst(t *testing.T) {
+	f, api := newInsightsServer(t)
+	close(f.gate)
+	opened, project, contexts := buildWindow(t, "exit 1\n")
+	var out syncBuffer
+	engine := scriptedEngine{lines: []string{"#1 [builder 1/1] RUN false", "#1 ERROR: exit code: 1"},
+		err: errors.New("build: buildx build failed: exit status 1")}
+
+	_, upload, err := buildAction(context.Background(), api, clirender.NewTasks(&out), engine,
+		opened, project, contexts, opened.Actions[0], false)
+	require.ErrorContains(t, err, "build for web failed")
+	require.Nil(t, upload)
+	require.Equal(t, []string{"POST /v1/runs/r1/steps", "PATCH /v1/steps/build running",
+		"PUT /v1/steps/build/build-insights", "PATCH /v1/steps/build failed", "POST /v1/deployments/d1/fail"}, f.requests)
+	require.Equal(t, build.InsightsFailed, f.report.Outcome)
+	require.Equal(t, "build: buildx build failed: exit status 1", f.report.Error)
+	require.Equal(t, []build.InsightsStep{{Name: "[builder 1/1] RUN false", Status: build.StepError}}, f.report.Steps)
+}
+
+// A server from before build insights costs the report, not the
+// deployment.
+func TestInsightsUploadToAnOlderServer(t *testing.T) {
+	f, api := newInsightsServer(t)
+	f.status = http.StatusNotFound
+	close(f.gate)
+	opened, project, contexts := buildWindow(t, "exit 1\n")
+	var out syncBuffer
+	tasks := clirender.NewTasks(&out)
+
+	_, upload, err := buildAction(context.Background(), api, tasks, scriptedEngine{lines: buildkitLines(1)},
+		opened, project, contexts, opened.Actions[0], false)
+	require.NoError(t, err)
+	upload.wait(tasks)
+	require.Contains(t, out.String(), "Build insights for web")
+	require.Contains(t, out.String(), "not saved: the server does not keep build insights")
 }
 
 // Each application's artifacts step starts with its children and ends with

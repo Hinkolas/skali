@@ -207,20 +207,60 @@ func TestDeploymentFlowEndToEnd(t *testing.T) {
 		"key": "artifacts.web", "title": "web", "parent_key": "artifacts",
 	})
 	require.Equal(t, http.StatusOK, status, "%v", body)
+	artifactStepID := body["id"].(string)
 	status, body = a.do("POST", "/v1/runs/"+runID+"/steps", token, map[string]any{
 		"key": "artifacts.web.build", "title": "Build locally", "parent_key": "artifacts.web",
 	})
 	require.Equal(t, http.StatusOK, status, "%v", body)
 	buildStepID := body["id"].(string)
-	status, body = a.do("POST", "/v1/steps/"+buildStepID+"/logs", token, map[string]any{
-		"lines": []map[string]string{{"level": "info", "message": "#1 building"}},
-	})
+	status, body = a.do("PATCH", "/v1/steps/"+buildStepID, token, map[string]any{"status": "running"})
 	require.Equal(t, http.StatusOK, status, "%v", body)
 	status, body = a.do("POST", "/v1/builds/"+buildID+"/heartbeat", token, nil)
 	require.Equal(t, http.StatusOK, status)
 	require.True(t, body["alive"].(bool))
 	status, body = a.do("PATCH", "/v1/steps/"+buildStepID, token, map[string]any{"status": "succeeded"})
 	require.Equal(t, http.StatusOK, status, "%v", body)
+
+	// The build's output arrives once, after the build, as its insights
+	// report; it passes the run's redaction and never enters the journal.
+	status, body = a.do("GET", "/v1/steps/"+buildStepID+"/build-insights", token, nil)
+	require.Equal(t, http.StatusNotFound, status)
+	require.Equal(t, "not_found", errCode(body))
+	report := map[string]any{
+		"outcome": "succeeded", "engine": "docker-buildx", "platform": "linux/amd64",
+		"started_at": "2026-10-27T09:55:25Z", "finished_at": "2026-10-27T09:55:47Z",
+		"steps": []map[string]any{
+			{"name": "[builder 1/2] COPY . .", "status": "cached"},
+			{"name": "[builder 2/2] RUN echo flow-plant-value", "status": "done", "seconds": 17.6},
+		},
+		"log":       "#1 [builder 1/2] COPY . .\n#2 printed flow-plant-value",
+		"log_lines": 2, "log_truncated": false,
+	}
+	status, body = a.do("PUT", "/v1/steps/"+buildStepID+"/build-insights", token, report)
+	require.Equal(t, http.StatusNoContent, status, "%v", body)
+	status, body = a.do("GET", "/v1/steps/"+buildStepID+"/build-insights", token, nil)
+	require.Equal(t, http.StatusOK, status, "%v", body)
+	require.Equal(t, "succeeded", body["outcome"])
+	require.Equal(t, "#1 [builder 1/2] COPY . .\n#2 printed [redacted:SESSION_SECRET]", body["log"])
+	require.Equal(t, []any{
+		map[string]any{"name": "[builder 1/2] COPY . .", "status": "cached"},
+		map[string]any{"name": "[builder 2/2] RUN echo [redacted:SESSION_SECRET]", "status": "done", "seconds": 17.6},
+	}, body["steps"])
+	require.EqualValues(t, 2, body["log_lines"])
+	status, body = a.do("GET", "/v1/steps/"+buildStepID+"/logs", token, nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Empty(t, body["logs"])
+	// Only a build step takes a report, and only a well-formed one.
+	status, body = a.do("PUT", "/v1/steps/"+artifactStepID+"/build-insights", token, report)
+	require.Equal(t, http.StatusConflict, status, "%v", body)
+	report["outcome"] = "maybe"
+	status, body = a.do("PUT", "/v1/steps/"+buildStepID+"/build-insights", token, report)
+	require.Equal(t, http.StatusBadRequest, status, "%v", body)
+	// Build output is no longer appended line by line.
+	status, _ = a.do("POST", "/v1/steps/"+buildStepID+"/logs", token, map[string]any{
+		"lines": []map[string]string{{"level": "info", "message": "#1 building"}},
+	})
+	require.Equal(t, http.StatusMethodNotAllowed, status)
 
 	// The client's steps are the application's work; the server's opening
 	// steps are the environment's.
@@ -872,12 +912,32 @@ func TestClientStepAuthorization(t *testing.T) {
 	})
 	require.Equal(t, http.StatusForbidden, status, "%v", body)
 
+	// Another actor cannot upload the build's insights either.
+	status, body = a.do("POST", "/v1/runs/"+runID+"/steps", owner, map[string]any{
+		"key": "artifacts.web", "title": "web", "parent_key": "artifacts",
+	})
+	require.Equal(t, http.StatusOK, status, "%v", body)
+	status, body = a.do("POST", "/v1/runs/"+runID+"/steps", owner, map[string]any{
+		"key": "artifacts.web.build", "title": "Build locally", "parent_key": "artifacts.web",
+	})
+	require.Equal(t, http.StatusOK, status, "%v", body)
+	buildStepID := body["id"].(string)
+	report := map[string]any{
+		"outcome": "failed", "engine": "docker-buildx", "platform": "linux/amd64",
+		"started_at": "2026-10-27T09:55:25Z", "finished_at": "2026-10-27T09:55:26Z",
+		"error": "exit status 1", "steps": []any{}, "log": "", "log_lines": 0, "log_truncated": false,
+	}
+	status, body = a.do("PUT", "/v1/steps/"+buildStepID+"/build-insights", intruder, report)
+	require.Equal(t, http.StatusForbidden, status, "%v", body)
+
 	// Once the run settles, even the owner's writes are refused.
 	status, _ = a.do("POST", "/v1/runs/"+runID+"/cancel", owner, nil)
 	require.Equal(t, http.StatusOK, status)
 	status, body = a.do("POST", "/v1/runs/"+runID+"/steps", owner, map[string]any{
 		"key": "artifacts.web", "title": "web", "parent_key": "artifacts",
 	})
+	require.Equal(t, http.StatusConflict, status, "%v", body)
+	status, body = a.do("PUT", "/v1/steps/"+buildStepID+"/build-insights", owner, report)
 	require.Equal(t, http.StatusConflict, status, "%v", body)
 }
 

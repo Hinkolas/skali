@@ -312,6 +312,7 @@ func TestCancelInterruptedDeploymentOutcomes(t *testing.T) {
 type fakeWindowAPI struct {
 	mu        sync.Mutex
 	statuses  map[string]string
+	insights  []string
 	fails     []string
 	completes []string
 	cancels   []string
@@ -333,7 +334,9 @@ func newFakeWindowAPI(t *testing.T) (*fakeWindowAPI, *client.Client) {
 			var body struct{ Status string }
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			f.statuses[strings.TrimPrefix(path, "/v1/steps/")] = body.Status
-		case strings.HasSuffix(path, "/logs"):
+		case r.Method == http.MethodPut && strings.HasSuffix(path, "/build-insights"):
+			f.insights = append(f.insights, path)
+			w.WriteHeader(http.StatusNoContent)
 		case strings.HasSuffix(path, "/heartbeat"):
 			_ = json.NewEncoder(w).Encode(map[string]bool{"alive": true})
 		case strings.HasSuffix(path, "/fail"):
@@ -392,6 +395,7 @@ func (f *fakeWindowAPI) requireCancelledNotFailed(t *testing.T) {
 	require.Equal(t, []string{"r1"}, f.cancels)
 	require.Empty(t, f.fails)
 	require.Empty(t, f.completes)
+	require.Empty(t, f.insights, "an interrupted build has no insights report")
 	for step, status := range f.statuses {
 		require.NotEqual(t, "failed", status, "step %s", step)
 	}

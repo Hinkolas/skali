@@ -8,25 +8,31 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/Hinkolas/skali/internal/build"
+	"github.com/Hinkolas/skali/internal/buildstore"
 	"github.com/Hinkolas/skali/internal/journal"
+	"github.com/Hinkolas/skali/internal/redact"
 	"github.com/Hinkolas/skali/internal/store"
 	"github.com/Hinkolas/skali/internal/valuestore"
 )
 
 // clientStepsHandlers is the scoped write surface for run clients: the CLI
-// streams its local build and import progress into the deployment run it
-// opened. Writes are confined to the artifacts subtree of a running run
-// owned by the same actor; the server-owned steps (validate, values,
-// revision, promote, rollout) are out of reach. All log lines pass the
-// same redaction as server-side writers.
+// journals its local builds, uploads, and imports as steps of the
+// deployment run it opened, and uploads each build's insights report.
+// Writes are confined to the artifacts subtree of a running run owned by
+// the same actor; the server-owned steps (validate, values, revision,
+// promote, rollout) are out of reach. Uploaded text passes the same
+// redaction as server-side writers.
 type clientStepsHandlers struct {
 	st      *store.Store
 	journal *journal.Service
 	values  *valuestore.Service
+	builds  *buildstore.Service
 }
 
-// maxLogLines bounds one append request.
-const maxLogLines = 500
+// maxInsightsBodyBytes bounds one insights upload: the log bound with
+// room for JSON escaping and the step list.
+const maxInsightsBodyBytes = 3*build.MaxInsightsLogBytes + 1<<20
 
 // authorizeRun admits the run's own actor while it is running.
 func (h *clientStepsHandlers) authorizeRun(w http.ResponseWriter, r *http.Request, runID uuid.UUID) (*store.Run, bool) {
@@ -53,6 +59,13 @@ func (h *clientStepsHandlers) authorizeRun(w http.ResponseWriter, r *http.Reques
 
 func clientStepKey(key string) bool {
 	return strings.HasPrefix(key, "artifacts.")
+}
+
+// buildStepKey matches the build step of an application's artifact,
+// artifacts.<application>.build.
+func buildStepKey(key string) bool {
+	parts := strings.Split(key, ".")
+	return len(parts) == 3 && parts[0] == "artifacts" && parts[1] != "" && parts[2] == "build"
 }
 
 // clientStepService is the service a client step belongs to, which the
@@ -180,28 +193,26 @@ func (h *clientStepsHandlers) setStepStatus(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, stepIdentityPayload(&refreshed))
 }
 
-// POST /v1/steps/{id}/logs
-func (h *clientStepsHandlers) appendLogs(w http.ResponseWriter, r *http.Request) {
+// PUT /v1/steps/{id}/build-insights
+//
+// The insights report of a local build, uploaded once after the build
+// ended. The report passes the same redaction as journal writes.
+func (h *clientStepsHandlers) putBuildInsights(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
 	if !ok {
 		return
 	}
-	var req struct {
-		Lines []struct {
-			Level   string `json:"level"`
-			Message string `json:"message"`
-		} `json:"lines"`
-	}
-	if err := decodeJSON(w, r, &req); err != nil {
+	var report build.Insights
+	if err := decodeJSONLimit(w, r, &report, maxInsightsBodyBytes); err != nil {
 		writeError(w, http.StatusBadRequest, codeBadRequest, err.Error())
-		return
-	}
-	if len(req.Lines) == 0 || len(req.Lines) > maxLogLines {
-		writeError(w, http.StatusBadRequest, codeBadRequest, "lines must carry between 1 and 500 entries")
 		return
 	}
 	step, ok := h.authorizeStep(w, r, id)
 	if !ok {
+		return
+	}
+	if !buildStepKey(step.Key) {
+		writeError(w, http.StatusConflict, codeConflict, "the step is not a build step")
 		return
 	}
 	run, err := h.journal.Run(r.Context(), step.RunID)
@@ -209,33 +220,25 @@ func (h *clientStepsHandlers) appendLogs(w http.ResponseWriter, r *http.Request)
 		writeInternalError(r.Context(), w, "get run", err)
 		return
 	}
-
-	// Logs imply liveness: a pending or waiting step starts running, and
-	// the append lands in its running attempt.
-	if step.Status == string(journal.StepPending) || step.Status == string(journal.StepWaiting) {
-		if err := h.journal.SetStepStatus(r.Context(), step.ID, journal.StepRunning); err != nil {
-			writeInternalError(r.Context(), w, "start step", err)
-			return
-		}
-	}
-	attempt, err := h.st.GetRunningAttemptByStep(r.Context(), step.ID)
+	redactor, err := h.runRedactor(r, run)
 	if err != nil {
-		if !errors.Is(err, pgx.ErrNoRows) {
-			writeInternalError(r.Context(), w, "get attempt", err)
-			return
-		}
-		started, err := h.journal.StartAttempt(r.Context(), step.ID)
-		if errors.Is(err, journal.ErrRunFinished) {
-			writeError(w, http.StatusConflict, codeConflict, "the run has finished")
-			return
-		}
-		if err != nil {
-			writeInternalError(r.Context(), w, "start attempt", err)
-			return
-		}
-		attempt = *started
+		writeInternalError(r.Context(), w, "build redactor", err)
+		return
 	}
+	if err := h.builds.PutInsights(r.Context(), step.ID, redactor, report); err != nil {
+		if errors.Is(err, buildstore.ErrInvalidInsights) {
+			writeError(w, http.StatusBadRequest, codeBadRequest, err.Error())
+			return
+		}
+		writeInternalError(r.Context(), w, "put build insights", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
 
+// runRedactor is the redactor of the environment and candidate a run
+// deploys, which every client-written text passes.
+func (h *clientStepsHandlers) runRedactor(r *http.Request, run *store.Run) (*redact.Redactor, error) {
 	environmentID := uuid.Nil
 	if run.EnvironmentID != nil {
 		environmentID = *run.EnvironmentID
@@ -244,29 +247,7 @@ func (h *clientStepsHandlers) appendLogs(w http.ResponseWriter, r *http.Request)
 	if deployment, err := h.st.GetDeploymentByRunID(r.Context(), &run.ID); err == nil && deployment.CandidateID != nil {
 		candidateID = *deployment.CandidateID
 	}
-	redactor, err := h.values.Redactor(r.Context(), environmentID, candidateID)
-	if err != nil {
-		writeInternalError(r.Context(), w, "build redactor", err)
-		return
-	}
-	writer := h.journal.Writer(attempt.ID, redactor)
-	for _, line := range req.Lines {
-		level := line.Level
-		switch level {
-		case "debug", "info", "warn", "error":
-		default:
-			level = "info"
-		}
-		if err := writer.Log(r.Context(), level, line.Message, nil); err != nil {
-			if errors.Is(err, journal.ErrAttemptTerminal) {
-				writeError(w, http.StatusConflict, codeConflict, "the attempt is terminal")
-				return
-			}
-			writeInternalError(r.Context(), w, "append log", err)
-			return
-		}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"appended": len(req.Lines)})
+	return h.values.Redactor(r.Context(), environmentID, candidateID)
 }
 
 // authorizeStep resolves the step and applies the run authorization plus
