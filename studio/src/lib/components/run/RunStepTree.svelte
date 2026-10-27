@@ -56,6 +56,7 @@
 							live={step.status === 'running' ||
 								step.status === 'waiting' ||
 								step.status === 'pending'}
+							finishedAt={step.finished_at}
 						/>
 					{:else}
 						<StepLogView

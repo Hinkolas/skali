@@ -1,38 +1,66 @@
 <script lang="ts">
 	import { api, ApiError } from '$lib/api/client';
-	import { slowestBuildSteps, type BuildInsights } from '$lib/types/runs';
+	import {
+		INSIGHTS_RETRY_MS,
+		reportMayArrive,
+		slowestBuildSteps,
+		type BuildInsights
+	} from '$lib/types/runs';
 	import { formatCount, formatMillis } from '$lib/format';
 
 	// A build step's insights: the report the client uploads once the build
 	// ended. Build output never streams into the step's log, so a running
-	// build has nothing to show yet.
-	let { stepId, live = false }: { stepId: string; live?: boolean } = $props();
+	// build has nothing to show yet. The client settles the step before its
+	// report lands, so a report missing just after the build finished is
+	// asked for again for a while.
+	let {
+		stepId,
+		live = false,
+		finishedAt = null
+	}: { stepId: string; live?: boolean; finishedAt?: string | null } = $props();
 
 	let insights = $state<BuildInsights | null>(null);
 	let missing = $state(false);
+	let pending = $state(false);
 	let failed = $state(false);
 	let reload = $state(0);
 
 	$effect(() => {
 		const id = stepId;
+		const finished = finishedAt;
 		void reload;
 		insights = null;
 		missing = false;
+		pending = false;
 		failed = false;
 		if (live) return;
 		let closed = false;
-		void api
-			.get<BuildInsights>(`/v1/steps/${id}/build-insights`)
-			.then((report) => {
-				if (!closed) insights = report;
-			})
-			.catch((error) => {
-				if (closed) return;
-				if (error instanceof ApiError && error.status === 404) missing = true;
-				else failed = true;
-			});
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const fetchReport = () => {
+			void api
+				.get<BuildInsights>(`/v1/steps/${id}/build-insights`)
+				.then((report) => {
+					if (closed) return;
+					pending = false;
+					insights = report;
+				})
+				.catch((error) => {
+					if (closed) return;
+					pending = false;
+					if (!(error instanceof ApiError && error.status === 404)) {
+						failed = true;
+					} else if (reportMayArrive(finished, Date.now())) {
+						pending = true;
+						timer = setTimeout(fetchReport, INSIGHTS_RETRY_MS);
+					} else {
+						missing = true;
+					}
+				});
+		};
+		fetchReport();
 		return () => {
 			closed = true;
+			clearTimeout(timer);
 		};
 	});
 
@@ -59,6 +87,8 @@
 			onclick={() => reload++}>Retry</button
 		>
 	</div>
+{:else if pending}
+	<div class="text-text-faint py-1 text-md">Waiting for the build's insights…</div>
 {:else if missing}
 	<div class="text-text-faint py-1 text-md">No insights available for this build.</div>
 {:else if insights}

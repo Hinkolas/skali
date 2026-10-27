@@ -1400,6 +1400,37 @@ func TestFailedBuildUploadsInsightsFirst(t *testing.T) {
 	require.Equal(t, []build.InsightsStep{{Name: "[builder 1/1] RUN false", Status: build.StepError}}, f.report.Steps)
 }
 
+// failingBuilt is a build whose push the registry refuses.
+type failingBuilt struct{ scriptedBuilt }
+
+func (failingBuilt) Push(context.Context, build.ProgressSink) (build.Result, error) {
+	return build.Result{}, errors.New("registry refused the manifest")
+}
+
+// A failed push fails the deployment only after the build's report landed;
+// a finished run would refuse it.
+func TestFailedPushWaitsForTheBuildsInsights(t *testing.T) {
+	f, api := newInsightsServer(t)
+	opened, _, _ := buildWindow(t, "exit 1\n")
+	var out syncBuffer
+	tasks := clirender.NewTasks(&out)
+	upload := startInsightsUpload(context.Background(), api, "build", "web",
+		build.Insights{Outcome: build.InsightsSucceeded})
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		close(f.gate)
+	}()
+
+	_, err := uploadAction(context.Background(), api, tasks, opened, opened.Actions[0], failingBuilt{}, upload)
+	require.ErrorContains(t, err, "upload for web failed")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	put := slices.Index(f.requests, "PUT /v1/steps/build/build-insights")
+	fail := slices.Index(f.requests, "POST /v1/deployments/d1/fail")
+	require.NotEqual(t, -1, put)
+	require.Less(t, put, fail, "%v", f.requests)
+}
+
 // A server from before build insights costs the report, not the
 // deployment.
 func TestInsightsUploadToAnOlderServer(t *testing.T) {

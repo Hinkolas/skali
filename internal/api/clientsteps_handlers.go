@@ -30,10 +30,6 @@ type clientStepsHandlers struct {
 	builds  *buildstore.Service
 }
 
-// maxInsightsBodyBytes bounds one insights upload: the log bound with
-// room for JSON escaping and the step list.
-const maxInsightsBodyBytes = 3*build.MaxInsightsLogBytes + 1<<20
-
 // authorizeRun admits the run's own actor while it is running.
 func (h *clientStepsHandlers) authorizeRun(w http.ResponseWriter, r *http.Request, runID uuid.UUID) (*store.Run, bool) {
 	run, err := h.journal.Run(r.Context(), runID)
@@ -203,7 +199,7 @@ func (h *clientStepsHandlers) putBuildInsights(w http.ResponseWriter, r *http.Re
 		return
 	}
 	var report build.Insights
-	if err := decodeJSONLimit(w, r, &report, maxInsightsBodyBytes); err != nil {
+	if err := decodeJSONLimit(w, r, &report, build.MaxInsightsJSONBytes); err != nil {
 		writeError(w, http.StatusBadRequest, codeBadRequest, err.Error())
 		return
 	}

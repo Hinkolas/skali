@@ -33,7 +33,9 @@ struct RunDetailView: View {
             .toolbar { menu }
             .navigationDestination(for: RunStep.self) { step in
                 if step.isBuild {
-                    BuildInsightsView(step: step, api: model.api)
+                    // The latest snapshot, so the screen follows the build
+                    // to its end while the run streams.
+                    BuildInsightsView(step: tree?.step(id: step.id) ?? step, api: model.api)
                 } else {
                     StepLogView(step: step, api: model.api)
                 }

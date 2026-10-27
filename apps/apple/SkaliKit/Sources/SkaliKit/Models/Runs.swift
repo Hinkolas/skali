@@ -112,6 +112,18 @@ public struct RunTree: Codable, Hashable, Sendable {
         self.run = run
         self.steps = steps
     }
+
+    /// The step with this id anywhere in the tree.
+    public func step(id: String) -> RunStep? {
+        func find(_ steps: [RunStep]) -> RunStep? {
+            for step in steps {
+                if step.id == id { return step }
+                if let found = find(step.children ?? []) { return found }
+            }
+            return nil
+        }
+        return find(steps)
+    }
 }
 
 public struct RunStep: Codable, Hashable, Sendable, Identifiable {
@@ -158,6 +170,14 @@ public struct RunStep: Codable, Hashable, Sendable, Identifiable {
     public var isBuild: Bool {
         let parts = key.split(separator: ".", omittingEmptySubsequences: false)
         return parts.count == 3 && parts[0] == "artifacts" && !parts[1].isEmpty && parts[2] == "build"
+    }
+
+    /// Whether a build's missing insights report may still arrive at
+    /// `now`: the CLI settles the step first and uploads the report beside
+    /// the image push, for up to 30 seconds.
+    public func insightsMayArrive(at now: Date) -> Bool {
+        guard let finishedAt else { return false }
+        return now.timeIntervalSince(finishedAt) < 45
     }
 
     /// A skipped TLS checkpoint: the certificate waits for the domain to

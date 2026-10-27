@@ -32,11 +32,11 @@ var defaultReadRetry = readRetry{first: 250 * time.Millisecond, max: 4 * time.Se
 // slow server) returns at once. Cancelling ctx ends the wait immediately,
 // and no wait runs past ctx's deadline: the read gives up early with the
 // last failure instead.
-func (c *Client) read(ctx context.Context, path string, out any) error {
+func (c *Client) read(ctx context.Context, path string, out any, limit int64) error {
 	started := time.Now()
 	delay := c.reads.first
 	for attempt := 1; ; attempt++ {
-		transient, err := c.send(ctx, http.MethodGet, path, nil, out)
+		transient, err := c.send(ctx, http.MethodGet, path, nil, out, limit)
 		if err == nil || !transient {
 			return err
 		}

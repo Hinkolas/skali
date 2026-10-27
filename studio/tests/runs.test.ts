@@ -3,6 +3,7 @@ import {
 	activeRun,
 	followRun,
 	isBuildStep,
+	reportMayArrive,
 	slowestBuildSteps,
 	type BuildInsights,
 	type Run
@@ -86,4 +87,11 @@ test('slowestBuildSteps orders the timed steps slowest first', () => {
 		'RUN bun run build',
 		'RUN bun install'
 	]);
+});
+
+test('reportMayArrive waits only shortly after the build finished', () => {
+	const finished = Date.parse('2026-10-27T09:55:47Z');
+	expect(reportMayArrive('2026-10-27T09:55:47Z', finished + 5_000)).toBe(true);
+	expect(reportMayArrive('2026-10-27T09:55:47Z', finished + 60_000)).toBe(false);
+	expect(reportMayArrive(null, finished)).toBe(false);
 });

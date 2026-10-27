@@ -1196,9 +1196,8 @@ func executeActions(ctx context.Context, out io.Writer, api *client.Client,
 					stopHeartbeat()
 					return err
 				}
-				digest, err := uploadAction(ctx, api, tasks, opened, action, built)
+				digest, err := uploadAction(ctx, api, tasks, opened, action, built, insights)
 				_ = built.Close()
-				insights.wait(tasks)
 				stopHeartbeat()
 				if err != nil {
 					return err
@@ -1296,9 +1295,10 @@ func buildAction(ctx context.Context, api *client.Client, tasks *clirender.Tasks
 
 // uploadAction journals the push of a local build to the managed registry
 // as its own step and returns the pushed digest. The step succeeds only
-// once the registry accepted the manifest.
+// once the registry accepted the manifest. It settles the build's pending
+// insights upload once the push returned.
 func uploadAction(ctx context.Context, api *client.Client, tasks *clirender.Tasks,
-	opened *client.OpenedDeployment, action client.ArtifactAction, built build.Built) (string, error) {
+	opened *client.OpenedDeployment, action client.ArtifactAction, built build.Built, insights *insightsUpload) (string, error) {
 	registry := build.RegistryOf(action.PushRef)
 	step, err := api.EnsureStep(ctx, opened.Deployment.RunID, action.StepKey+".upload",
 		"Upload to "+registry, action.StepKey)
@@ -1311,6 +1311,9 @@ func uploadAction(ctx context.Context, api *client.Client, tasks *clirender.Task
 	task := tasks.Start("Upload " + action.Application + " to " + registry)
 	upload := newUploadSink(task)
 	result, err := built.Push(ctx, upload)
+	// The build's report uploads beside the push; it lands before a
+	// failed push fails the deployment, which would refuse it.
+	insights.wait(tasks)
 	if err != nil && ctx.Err() != nil {
 		task.Cancel()
 		return "", ctx.Err()

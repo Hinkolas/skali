@@ -250,6 +250,14 @@ func TestDeploymentFlowEndToEnd(t *testing.T) {
 	status, body = a.do("GET", "/v1/steps/"+buildStepID+"/logs", token, nil)
 	require.Equal(t, http.StatusOK, status)
 	require.Empty(t, body["logs"])
+	// A log at its bound uploads even when JSON escapes every byte of it.
+	escaped := strings.Repeat("<", 2<<20)
+	report["log"] = escaped
+	status, body = a.do("PUT", "/v1/steps/"+buildStepID+"/build-insights", token, report)
+	require.Equal(t, http.StatusNoContent, status, "%v", body)
+	status, body = a.do("GET", "/v1/steps/"+buildStepID+"/build-insights", token, nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, escaped, body["log"])
 	// Only a build step takes a report, and only a well-formed one.
 	status, body = a.do("PUT", "/v1/steps/"+artifactStepID+"/build-insights", token, report)
 	require.Equal(t, http.StatusConflict, status, "%v", body)

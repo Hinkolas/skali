@@ -220,6 +220,17 @@ struct RunAndBackupTests {
         #expect(insights.logTruncated)
     }
 
+    @Test func aMissingReportMayArriveOnlyShortlyAfterTheBuild() {
+        let finished = Date(timeIntervalSince1970: 1_793_000_000)
+        let step = RunStep(id: "b", key: "artifacts.web.build", title: "Build", status: "succeeded", finishedAt: finished)
+        #expect(step.insightsMayArrive(at: finished.addingTimeInterval(5)))
+        #expect(!step.insightsMayArrive(at: finished.addingTimeInterval(60)))
+        let tree = RunTree(run: try! JSONCoding.decoder.decode(Run.self, from: Data(#"{"id":"r","kind":"deployment","status":"running","actor":"u","created_at":"2026-10-27T09:55:25Z"}"#.utf8)),
+                           steps: [RunStep(id: "a", key: "artifacts", title: "Artifacts", status: "running", children: [step])])
+        #expect(tree.step(id: "b")?.key == "artifacts.web.build")
+        #expect(tree.step(id: "missing") == nil)
+    }
+
     @Test func onlyAnApplicationBuildStepHasInsights() async throws {
         func step(_ key: String) -> RunStep { RunStep(id: key, key: key, title: key, status: "succeeded") }
         #expect(step("artifacts.web.build").isBuild)

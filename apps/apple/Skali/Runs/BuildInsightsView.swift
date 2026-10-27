@@ -3,7 +3,9 @@ import SwiftUI
 
 /// A build step's insights: the report the CLI uploads once the build
 /// ended. Build output never streams into the step's log, so a running
-/// build has nothing to show yet.
+/// build has nothing to show yet. The CLI settles the step before its
+/// report lands, so a report missing just after the build finished is
+/// asked for again for a while.
 struct BuildInsightsView: View {
     let step: RunStep
     let api: any ClusterAPI
@@ -89,7 +91,11 @@ struct BuildInsightsView: View {
     private func load() async {
         guard !step.isActive else { return }
         do {
-            insights = try await api.buildInsights(stepID: step.id)
+            while true {
+                insights = try await api.buildInsights(stepID: step.id)
+                guard insights == nil, step.insightsMayArrive(at: .now) else { break }
+                try await Task.sleep(for: .seconds(2))
+            }
         } catch is CancellationError {
             return
         } catch {

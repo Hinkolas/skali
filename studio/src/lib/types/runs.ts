@@ -141,6 +141,17 @@ export function isBuildStep(key: string): boolean {
 	return parts.length === 3 && parts[0] === 'artifacts' && parts[1] !== '' && parts[2] === 'build';
 }
 
+/** How long after a build finished its report may still be on its way:
+ * the CLI uploads it beside the image push, for up to 30 seconds. */
+export const INSIGHTS_ARRIVAL_MS = 45_000;
+export const INSIGHTS_RETRY_MS = 2_000;
+
+/** Whether a report missing at `now` may still arrive. */
+export function reportMayArrive(finishedAt: string | null, now: number): boolean {
+	if (!finishedAt) return false;
+	return now - new Date(finishedAt).getTime() < INSIGHTS_ARRIVAL_MS;
+}
+
 /** The build's slowest steps, slowest first. */
 export function slowestBuildSteps(insights: BuildInsights, count = 5): BuildInsightsStep[] {
 	return insights.steps

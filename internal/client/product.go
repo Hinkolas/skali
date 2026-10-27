@@ -744,6 +744,10 @@ func (c *Client) SetStepStatus(ctx context.Context, stepID, status string) error
 	return c.do(ctx, http.MethodPatch, "/v1/steps/"+stepID, map[string]string{"status": status}, nil)
 }
 
+// maxInsightsResponseBytes bounds a downloaded insights report: its
+// encoded bound, with room for redaction lengthening its texts.
+const maxInsightsResponseBytes = 4 * build.MaxInsightsJSONBytes
+
 // PutBuildInsights uploads the insights report of the build a step ran.
 func (c *Client) PutBuildInsights(ctx context.Context, stepID string, report build.Insights) error {
 	return c.do(ctx, http.MethodPut, "/v1/steps/"+stepID+"/build-insights", report, nil)
@@ -753,7 +757,7 @@ func (c *Client) PutBuildInsights(ctx context.Context, stepID string, report bui
 // IsNotFound reports that none was uploaded.
 func (c *Client) BuildInsights(ctx context.Context, stepID string) (*build.Insights, error) {
 	var report build.Insights
-	if err := c.do(ctx, http.MethodGet, "/v1/steps/"+stepID+"/build-insights", nil, &report); err != nil {
+	if err := c.read(ctx, "/v1/steps/"+stepID+"/build-insights", &report, maxInsightsResponseBytes); err != nil {
 		return nil, err
 	}
 	return &report, nil

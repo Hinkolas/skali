@@ -72,6 +72,11 @@ const (
 	// maxInsightsMarkerBytes is the room the omission marker takes beyond
 	// the log bound.
 	maxInsightsMarkerBytes = 64
+	// MaxInsightsJSONBytes bounds a report's JSON encoding: every bounded
+	// text at its worst-case escaping (six bytes per byte, as in \u003c),
+	// plus room for the rest.
+	MaxInsightsJSONBytes = 6*(MaxInsightsLogBytes+maxInsightsMarkerBytes+MaxInsightsSteps*maxInsightsNameBytes+
+		maxInsightsTextBytes+2*maxInsightsTagBytes) + 1<<20
 )
 
 // Validate checks a report against the insights bounds.
@@ -130,7 +135,11 @@ type InsightsRecorder struct {
 	mu        sync.Mutex
 	head      []string
 	headBytes int
+	// tail[tailStart:] is the kept tail; dropped lines are compacted away
+	// only once they fill half the slice, so a long log costs amortized
+	// constant work per line.
 	tail      []string
+	tailStart int
 	tailBytes int
 	lines     int
 	omitted   int
@@ -185,7 +194,7 @@ func cleanInsightsLine(message string) string {
 // dropping the tail's oldest lines beyond the bound.
 func (r *InsightsRecorder) keep(line string) {
 	size := len(line) + 1
-	if r.omitted == 0 && len(r.tail) == 0 && r.headBytes+size <= maxInsightsHeadBytes {
+	if r.omitted == 0 && len(r.tail) == r.tailStart && r.headBytes+size <= maxInsightsHeadBytes {
 		r.head = append(r.head, line)
 		r.headBytes += size
 		return
@@ -193,14 +202,15 @@ func (r *InsightsRecorder) keep(line string) {
 	r.tail = append(r.tail, line)
 	r.tailBytes += size
 	budget := MaxInsightsLogBytes - r.headBytes
-	drop := 0
-	for r.tailBytes > budget && drop < len(r.tail) {
-		r.tailBytes -= len(r.tail[drop]) + 1
-		drop++
+	for r.tailBytes > budget && r.tailStart < len(r.tail) {
+		r.tailBytes -= len(r.tail[r.tailStart]) + 1
+		r.tail[r.tailStart] = ""
+		r.tailStart++
+		r.omitted++
 	}
-	if drop > 0 {
-		r.omitted += drop
-		r.tail = append(r.tail[:0:0], r.tail[drop:]...)
+	if r.tailStart > len(r.tail)/2 {
+		r.tail = append(r.tail[:0], r.tail[r.tailStart:]...)
+		r.tailStart = 0
 	}
 }
 
@@ -282,7 +292,7 @@ func (r *InsightsRecorder) Finish(err error) Insights {
 		insights.LogTruncated = true
 		lines = append(lines, omissionMarker(r.omitted))
 	}
-	lines = append(lines, r.tail...)
+	lines = append(lines, r.tail[r.tailStart:]...)
 	insights.Log = strings.Join(lines, "\n")
 	return insights
 }
