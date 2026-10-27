@@ -18,6 +18,3 @@ ON CONFLICT (step_id) DO UPDATE SET
 
 -- name: GetBuildInsights :one
 SELECT * FROM build_insights WHERE step_id = $1;
-
--- name: DeleteBuildInsights :exec
-DELETE FROM build_insights WHERE step_id = $1;

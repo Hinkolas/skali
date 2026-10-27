@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -190,6 +191,10 @@ func (h *clientStepsHandlers) setStepStatus(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, stepIdentityPayload(&refreshed))
 }
 
+// errDeploymentClosed refuses a build insights report whose deployment
+// closed while the report was stored.
+var errDeploymentClosed = errors.New("the deployment closed while the report was stored")
+
 // PUT /v1/steps/{id}/build-insights
 //
 // The insights report of a local build, uploaded once after the build
@@ -222,36 +227,41 @@ func (h *clientStepsHandlers) putBuildInsights(w http.ResponseWriter, r *http.Re
 		writeInternalError(r.Context(), w, "build redactor", err)
 		return
 	}
-	if err := h.builds.PutInsights(r.Context(), step.ID, redactor, report); err != nil {
-		if errors.Is(err, buildstore.ErrInvalidInsights) {
-			writeError(w, http.StatusBadRequest, codeBadRequest, err.Error())
-			return
-		}
-		writeInternalError(r.Context(), w, "put build insights", err)
-		return
-	}
 	// Closing a deployment settles its status first and only then discards
 	// the staged secrets the redactor read. A deployment still preparing
-	// now kept them through redaction; one that closed meanwhile may not
-	// have, so its report is withdrawn.
-	deployment, err := h.st.GetDeploymentByRunID(r.Context(), &run.ID)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		writeInternalError(r.Context(), w, "get deployment", err)
-		return
-	}
-	if err == nil && deployment.Status != string(deploy.DeploymentPreparing) {
-		if err := h.builds.DeleteInsights(r.Context(), step.ID); err != nil {
-			writeInternalError(r.Context(), w, "withdraw build insights", err)
-			return
+	// when the report is written kept them through redaction; one that
+	// closed meanwhile may not have, so its report rolls back unseen.
+	guard := func(q *store.Queries) error {
+		deployment, err := q.GetDeploymentByRunID(r.Context(), &run.ID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
 		}
-		writeError(w, http.StatusConflict, codeConflict, "the deployment closed while the report was stored")
+		if err != nil {
+			return fmt.Errorf("get deployment: %w", err)
+		}
+		if deployment.Status != string(deploy.DeploymentPreparing) {
+			return errDeploymentClosed
+		}
+		return nil
+	}
+	if err := h.builds.PutInsights(r.Context(), step.ID, redactor, report, guard); err != nil {
+		switch {
+		case errors.Is(err, buildstore.ErrInvalidInsights):
+			writeError(w, http.StatusBadRequest, codeBadRequest, err.Error())
+		case errors.Is(err, errDeploymentClosed):
+			writeError(w, http.StatusConflict, codeConflict, err.Error())
+		default:
+			writeInternalError(r.Context(), w, "put build insights", err)
+		}
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
 // runRedactor is the redactor of the environment and candidate a run
-// deploys, which every client-written text passes.
+// deploys, which every client-written text passes. A build's output was
+// written over the whole build, so it also knows the versions retired
+// since.
 func (h *clientStepsHandlers) runRedactor(r *http.Request, run *store.Run) (*redact.Redactor, error) {
 	environmentID := uuid.Nil
 	if run.EnvironmentID != nil {
@@ -261,7 +271,7 @@ func (h *clientStepsHandlers) runRedactor(r *http.Request, run *store.Run) (*red
 	if deployment, err := h.st.GetDeploymentByRunID(r.Context(), &run.ID); err == nil && deployment.CandidateID != nil {
 		candidateID = *deployment.CandidateID
 	}
-	return h.values.Redactor(r.Context(), environmentID, candidateID)
+	return h.values.RetainedRedactor(r.Context(), environmentID, candidateID)
 }
 
 // authorizeStep resolves the step and applies the run authorization plus

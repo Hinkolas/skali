@@ -17,15 +17,17 @@ import (
 	"github.com/Hinkolas/skali/internal/store"
 )
 
-
 // ErrInvalidInsights: the report is malformed or exceeds its bounds.
 var ErrInvalidInsights = errors.New("buildstore: invalid insights report")
 
 // PutInsights stores the insights report of the build a step ran,
 // replacing an earlier upload. The report is sealed first: everything the
 // builder printed passes the redactor before anything is cut to its
-// stored bound. The log is kept compressed.
-func (s *Service) PutInsights(ctx context.Context, stepID uuid.UUID, redactor *redact.Redactor, report build.Insights) error {
+// stored bound. The log is kept compressed. guard runs in the storing
+// transaction after the write; its error rolls the report back, so no
+// reader ever sees a report it refused.
+func (s *Service) PutInsights(ctx context.Context, stepID uuid.UUID, redactor *redact.Redactor, report build.Insights,
+	guard func(q *store.Queries) error) error {
 	if err := report.Validate(); err != nil {
 		return fmt.Errorf("%w: %w", ErrInvalidInsights, err)
 	}
@@ -42,31 +44,27 @@ func (s *Service) PutInsights(ctx context.Context, stepID uuid.UUID, redactor *r
 	if err := writer.Close(); err != nil {
 		return fmt.Errorf("buildstore: compress insights log: %w", err)
 	}
-	err = s.st.PutBuildInsights(ctx, store.PutBuildInsightsParams{
-		StepID:       stepID,
-		Outcome:      report.Outcome,
-		Engine:       report.Engine,
-		Platform:     report.Platform,
-		StartedAt:    report.StartedAt,
-		FinishedAt:   report.FinishedAt,
-		Error:        report.Error,
-		Steps:        encodedSteps,
-		LogGzip:      compressed.Bytes(),
-		LogLines:     int32(report.LogLines),
-		LogTruncated: report.LogTruncated,
+	return s.st.WithTx(ctx, func(q *store.Queries) error {
+		if err := q.PutBuildInsights(ctx, store.PutBuildInsightsParams{
+			StepID:       stepID,
+			Outcome:      report.Outcome,
+			Engine:       report.Engine,
+			Platform:     report.Platform,
+			StartedAt:    report.StartedAt,
+			FinishedAt:   report.FinishedAt,
+			Error:        report.Error,
+			Steps:        encodedSteps,
+			LogGzip:      compressed.Bytes(),
+			LogLines:     int32(report.LogLines),
+			LogTruncated: report.LogTruncated,
+		}); err != nil {
+			return fmt.Errorf("buildstore: put insights: %w", err)
+		}
+		if guard == nil {
+			return nil
+		}
+		return guard(q)
 	})
-	if err != nil {
-		return fmt.Errorf("buildstore: put insights: %w", err)
-	}
-	return nil
-}
-
-// DeleteInsights withdraws a step's report; none is not an error.
-func (s *Service) DeleteInsights(ctx context.Context, stepID uuid.UUID) error {
-	if err := s.st.DeleteBuildInsights(ctx, stepID); err != nil {
-		return fmt.Errorf("buildstore: delete insights: %w", err)
-	}
-	return nil
 }
 
 // GetInsights reads the insights report of a step's build; ErrNotFound

@@ -2,6 +2,7 @@ package buildstore
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -49,7 +50,7 @@ func TestInsightsRoundTrip(t *testing.T) {
 		LogLines: 2001, LogTruncated: true,
 	}
 	redactor := redact.New(map[string]string{"hunter2-secret": "API_KEY"})
-	require.NoError(t, svc.PutInsights(ctx, step.ID, redactor, report))
+	require.NoError(t, svc.PutInsights(ctx, step.ID, redactor, report, nil))
 
 	got, err := svc.GetInsights(ctx, step.ID)
 	require.NoError(t, err)
@@ -70,15 +71,23 @@ func TestInsightsRoundTrip(t *testing.T) {
 
 	// A repeated upload replaces the report.
 	report.Outcome, report.Error, report.Log = build.InsightsSucceeded, "", "done"
-	require.NoError(t, svc.PutInsights(ctx, step.ID, redactor, report))
+	require.NoError(t, svc.PutInsights(ctx, step.ID, redactor, report, nil))
 	got, err = svc.GetInsights(ctx, step.ID)
 	require.NoError(t, err)
 	require.Equal(t, build.InsightsSucceeded, got.Outcome)
 	require.Equal(t, "done", got.Log)
 
+	// A guard that refuses rolls the report back: the earlier one stays.
+	refused := errors.New("refused")
+	report.Log = "never stored"
+	require.ErrorIs(t, svc.PutInsights(ctx, step.ID, redactor, report, func(*store.Queries) error { return refused }), refused)
+	got, err = svc.GetInsights(ctx, step.ID)
+	require.NoError(t, err)
+	require.Equal(t, "done", got.Log)
+
 	// A malformed report is refused.
 	report.Outcome = "cancelled"
-	require.ErrorIs(t, svc.PutInsights(ctx, step.ID, redactor, report), ErrInvalidInsights)
+	require.ErrorIs(t, svc.PutInsights(ctx, step.ID, redactor, report, nil), ErrInvalidInsights)
 
 	// The report leaves with its run.
 	_, err = pool.Exec(ctx, "DELETE FROM runs WHERE id = $1", run.ID)

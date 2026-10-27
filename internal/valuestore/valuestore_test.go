@@ -306,6 +306,37 @@ func TestPlaintextsResolvesPinnedVersions(t *testing.T) {
 // Unset tombstones the current generation: it disappears from listings, old
 // pinned versions keep resolving, and a later stage continues the version
 // sequence.
+// Output written over a span of time may hold a value that was rotated or
+// unset since; the retained redactor still knows it.
+func TestRetainedRedactorCoversRetiredValues(t *testing.T) {
+	t.Parallel()
+	svc, st, envID := newTestEnvironment(t)
+	ctx := context.Background()
+
+	promote := func(values map[string]string) {
+		candidate, err := svc.Stage(ctx, envID, values)
+		require.NoError(t, err)
+		require.NoError(t, st.WithTx(ctx, func(q *store.Queries) error {
+			return svc.PromoteTx(ctx, q, envID, candidate.ID)
+		}))
+	}
+	promote(map[string]string{"SESSION_SECRET": "rotated-plant-value", "REMOVED": "unset-plant-value"})
+	promote(map[string]string{"SESSION_SECRET": "current-plant-value", "REMOVED": "unset-plant-value"})
+	_, err := svc.Unset(ctx, envID, []string{"REMOVED"})
+	require.NoError(t, err)
+	staged, err := svc.Stage(ctx, envID, map[string]string{"SESSION_SECRET": "staged-plant-value"})
+	require.NoError(t, err)
+
+	output := "rotated-plant-value unset-plant-value current-plant-value staged-plant-value"
+	plain, err := svc.Redactor(ctx, envID, staged.ID)
+	require.NoError(t, err)
+	require.Contains(t, plain.Redact(output), "rotated-plant-value", "the plain redactor knows live values only")
+	retained, err := svc.RetainedRedactor(ctx, envID, staged.ID)
+	require.NoError(t, err)
+	require.Equal(t, "[redacted:SESSION_SECRET] [redacted:REMOVED] [redacted:SESSION_SECRET] [redacted:SESSION_SECRET]",
+		retained.Redact(output))
+}
+
 func TestUnsetTombstonesCurrent(t *testing.T) {
 	t.Parallel()
 	svc, st, envID := newTestEnvironment(t)
