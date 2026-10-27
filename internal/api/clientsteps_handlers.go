@@ -268,8 +268,13 @@ func (h *clientStepsHandlers) runRedactor(r *http.Request, run *store.Run) (*red
 		environmentID = *run.EnvironmentID
 	}
 	candidateID := uuid.Nil
-	if deployment, err := h.st.GetDeploymentByRunID(r.Context(), &run.ID); err == nil && deployment.CandidateID != nil {
+	deployment, err := h.st.GetDeploymentByRunID(r.Context(), &run.ID)
+	switch {
+	case err == nil && deployment.CandidateID != nil:
 		candidateID = *deployment.CandidateID
+	case err != nil && !errors.Is(err, pgx.ErrNoRows):
+		// Without the candidate the redactor would miss its staged secrets.
+		return nil, fmt.Errorf("get deployment: %w", err)
 	}
 	return h.values.RetainedRedactor(r.Context(), environmentID, candidateID)
 }
