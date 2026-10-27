@@ -6,6 +6,7 @@ package redact
 
 import (
 	"maps"
+	"slices"
 	"strings"
 )
 
@@ -30,13 +31,26 @@ func New(byPlaintext map[string]string) *Redactor {
 	return r
 }
 
+// build orders the plaintexts longest first: at one position the replacer
+// takes the first pair that matches, so a secret that is a prefix of
+// another (a retired version of a rotated value) must not cut the longer
+// one short and leave its rest in the text.
 func (r *Redactor) build() {
-	pairs := make([]string, 0, 2*len(r.byPlaintext))
-	for plaintext, name := range r.byPlaintext {
-		if len(plaintext) < minLength {
-			continue
+	plaintexts := make([]string, 0, len(r.byPlaintext))
+	for plaintext := range r.byPlaintext {
+		if len(plaintext) >= minLength {
+			plaintexts = append(plaintexts, plaintext)
 		}
-		pairs = append(pairs, plaintext, "[redacted:"+name+"]")
+	}
+	slices.SortFunc(plaintexts, func(a, b string) int {
+		if diff := len(b) - len(a); diff != 0 {
+			return diff
+		}
+		return strings.Compare(a, b)
+	})
+	pairs := make([]string, 0, 2*len(plaintexts))
+	for _, plaintext := range plaintexts {
+		pairs = append(pairs, plaintext, "[redacted:"+r.byPlaintext[plaintext]+"]")
 	}
 	r.replacer = strings.NewReplacer(pairs...)
 }

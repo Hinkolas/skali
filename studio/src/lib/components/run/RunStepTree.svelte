@@ -1,9 +1,10 @@
 <script lang="ts">
-	import type { Step } from '$lib/types/runs';
 	import { formatDuration } from '$lib/format';
 	import { clock } from '$lib/stores/clock.svelte';
 	import RunStepTree from './RunStepTree.svelte';
 	import StepLogView from './StepLogView.svelte';
+	import BuildInsightsView from './BuildInsightsView.svelte';
+	import { isBuildStep, type Step } from '$lib/types/runs';
 	import { deferredTLS, STEP_META } from './stepmeta';
 
 	let { steps, depth = 0 }: { steps: Step[]; depth?: number } = $props();
@@ -49,11 +50,21 @@
 			</button>
 			{#if isExpanded}
 				<div class="mb-1.5 ml-6.5">
-					<StepLogView
-						stepId={step.id}
-						live={step.status === 'running' || step.status === 'waiting'}
-						{tls}
-					/>
+					{#if isBuildStep(step.key)}
+						<BuildInsightsView
+							stepId={step.id}
+							live={step.status === 'running' ||
+								step.status === 'waiting' ||
+								step.status === 'pending'}
+							finishedAt={step.finished_at}
+						/>
+					{:else}
+						<StepLogView
+							stepId={step.id}
+							live={step.status === 'running' || step.status === 'waiting'}
+							{tls}
+						/>
+					{/if}
 				</div>
 			{/if}
 			{#if step.children?.length}

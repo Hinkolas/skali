@@ -59,3 +59,13 @@ func TestWithoutExemptsNamedSecrets(t *testing.T) {
 		"the original redactor is untouched")
 	require.Same(t, r, r.Without(nil))
 }
+
+// A secret that is a prefix of another never cuts the longer one short,
+// whatever order the map hands them over in.
+func TestRedactPrefersTheLongestSecret(t *testing.T) {
+	for range 50 {
+		r := New(map[string]string{"build-key": "API_KEY", "build-key-private-replacement": "API_KEY"})
+		require.Equal(t, "use [redacted:API_KEY] or [redacted:API_KEY]",
+			r.Redact("use build-key-private-replacement or build-key"))
+	}
+}

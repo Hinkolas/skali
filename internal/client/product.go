@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"github.com/Hinkolas/skali/internal/build"
 	"github.com/Hinkolas/skali/internal/diagnostic"
 	"net/http"
 	"net/url"
@@ -743,13 +744,23 @@ func (c *Client) SetStepStatus(ctx context.Context, stepID, status string) error
 	return c.do(ctx, http.MethodPatch, "/v1/steps/"+stepID, map[string]string{"status": status}, nil)
 }
 
-type LogLine struct {
-	Level   string `json:"level"`
-	Message string `json:"message"`
+// maxInsightsResponseBytes bounds a downloaded insights report: its
+// encoded bound, with room for redaction lengthening its texts.
+const maxInsightsResponseBytes = 4 * build.MaxInsightsJSONBytes
+
+// PutBuildInsights uploads the insights report of the build a step ran.
+func (c *Client) PutBuildInsights(ctx context.Context, stepID string, report build.Insights) error {
+	return c.do(ctx, http.MethodPut, "/v1/steps/"+stepID+"/build-insights", report, nil)
 }
 
-func (c *Client) AppendStepLogs(ctx context.Context, stepID string, lines []LogLine) error {
-	return c.do(ctx, http.MethodPost, "/v1/steps/"+stepID+"/logs", map[string]any{"lines": lines}, nil)
+// BuildInsights reads the insights report of the build a step ran;
+// IsNotFound reports that none was uploaded.
+func (c *Client) BuildInsights(ctx context.Context, stepID string) (*build.Insights, error) {
+	var report build.Insights
+	if err := c.read(ctx, "/v1/steps/"+stepID+"/build-insights", &report, maxInsightsResponseBytes); err != nil {
+		return nil, err
+	}
+	return &report, nil
 }
 
 func (c *Client) StepLogs(ctx context.Context, stepID, after string, limit int) ([]LogEntry, string, error) {

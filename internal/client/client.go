@@ -428,16 +428,20 @@ func (c *Client) Health(ctx context.Context) error {
 // once, so a mutation is never replayed.
 func (c *Client) do(ctx context.Context, method, path string, body, out any) error {
 	if method == http.MethodGet && body == nil {
-		return c.read(ctx, path, out)
+		return c.read(ctx, path, out, maxResponseBytes)
 	}
-	_, err := c.send(ctx, method, path, body, out)
+	_, err := c.send(ctx, method, path, body, out, maxResponseBytes)
 	return err
 }
+
+// maxResponseBytes bounds a response body; the few larger documents read
+// with their own bound.
+const maxResponseBytes = 1 << 20
 
 // send makes one attempt at a JSON request. transient reports a failure
 // that repeating the same request may get past: a broken connection or a
 // gateway error the edge answered while skalid was away.
-func (c *Client) send(ctx context.Context, method, path string, body, out any) (transient bool, err error) {
+func (c *Client) send(ctx context.Context, method, path string, body, out any, limit int64) (transient bool, err error) {
 	var reqBody io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -465,7 +469,7 @@ func (c *Client) send(ctx context.Context, method, path string, body, out any) (
 		return false, err
 	}
 
-	raw, err := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+	raw, err := io.ReadAll(io.LimitReader(res.Body, limit))
 	if err != nil {
 		return c.transientTransport(ctx, err), fmt.Errorf("client: read response: %w", err)
 	}

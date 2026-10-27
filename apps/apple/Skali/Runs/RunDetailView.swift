@@ -5,7 +5,8 @@ import UIKit
 /// One run as a page: its status under the title, where it stands (live
 /// while it runs, the failure once it failed), who started it and when,
 /// what it changed, and its work, per service the way the CLI lists a
-/// deploy or as the full step tree. Steps open to their logs.
+/// deploy or as the full step tree. Steps open to their logs, builds to
+/// their insights.
 struct RunDetailView: View {
     let runID: String
     let model: ProjectModel
@@ -30,7 +31,13 @@ struct RunDetailView: View {
             .navigationBarTitleDisplayMode(.large)
             .largeSubtitle(subtitle, dot: tree.map { RunStatusStyle.tint(status($0.run)) }, monospaced: true)
             .toolbar { menu }
-            .navigationDestination(for: RunStep.self) { StepLogView(step: $0, api: model.api) }
+            .navigationDestination(for: RunStep.self) { step in
+                if step.isBuild {
+                    BuildInsightsView(step: tree?.step(id: step.id) ?? step, runID: runID, api: model.api)
+                } else {
+                    StepLogView(step: step, api: model.api)
+                }
+            }
             .navigationDestination(for: ServiceProgressLink.self) { link in
                 ServiceStepsView(progress: tree?.serviceProgress?.first { $0.id == link.id })
             }

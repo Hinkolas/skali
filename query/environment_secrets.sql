@@ -29,6 +29,14 @@ SELECT name, ciphertext FROM environment_secrets
 WHERE environment_id = $1 AND candidate_id = $2 AND state = 'staged'
 ORDER BY name;
 
+-- Redaction of output recorded over a span of time (a build's insights
+-- report): every retained version, so a value rotated or unset while the
+-- output was written is still recognized.
+-- name: ListRetainedEnvironmentSecretCiphertexts :many
+SELECT name, ciphertext FROM environment_secrets
+WHERE environment_id = $1 AND state IN ('current', 'superseded')
+ORDER BY name, version;
+
 -- Resolution path only: decrypting the exact versions a revision pinned,
 -- names[i] at versions[i]. Superseded rows are retained precisely so this
 -- keeps resolving.

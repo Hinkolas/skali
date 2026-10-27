@@ -188,6 +188,7 @@ each link opens only that command's reference. Global flags are above.
 - [`skali run`](cli/run.md): List, inspect, attach to, or cancel runs
 - [`skali run attach`](cli/run/attach.md): Attach the terminal to a run until it settles
 - [`skali run cancel`](cli/run/cancel.md): Cancel a run
+- [`skali run insights`](cli/run/insights.md): Print the insights of a run's builds
 - [`skali run list`](cli/run/list.md): List the environment's runs
 - [`skali run logs`](cli/run/logs.md): Print the logs of one step
 - [`skali run show`](cli/run/show.md): Print a run's step tree

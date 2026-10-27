@@ -202,6 +202,59 @@ struct RunAndBackupTests {
         #expect(try await demo.run(id: restore).run.kind == "restore")
     }
 
+    @Test func buildInsightsDecodeAsTheDaemonWritesThem() throws {
+        let insights = try JSONCoding.decoder.decode(BuildInsights.self, from: Data("""
+        {"outcome":"failed","engine":"docker-buildx","platform":"linux/arm64",
+         "started_at":"2026-10-27T09:55:25Z","finished_at":"2026-10-27T09:55:47.1Z",
+         "error":"build: buildx build failed: exit status 1",
+         "steps":[{"name":"COPY package.json .","status":"cached"},
+                  {"name":"RUN bun install","status":"done","seconds":2.4},
+                  {"name":"RUN bun run build","status":"error","seconds":17.6}],
+         "log":"#1 building","log_lines":2741,"log_truncated":true}
+        """.utf8))
+        #expect(insights.outcome == "failed")
+        #expect(abs(insights.duration - 22.1) < 0.001)
+        #expect(insights.cachedSteps == 1)
+        #expect(insights.slowestSteps(1).map(\.name) == ["RUN bun run build"])
+        #expect(insights.logLines == 2741)
+        #expect(insights.logTruncated)
+    }
+
+    @Test func aMissingReportMayArriveOnlyShortlyAfterTheBuild() {
+        let finished = Date(timeIntervalSince1970: 1_793_000_000)
+        let step = RunStep(id: "b", key: "artifacts.web.build", title: "Build", status: "succeeded", finishedAt: finished)
+        #expect(step.insightsMayArrive(at: finished.addingTimeInterval(5)))
+        #expect(!step.insightsMayArrive(at: finished.addingTimeInterval(60)))
+        let tree = RunTree(run: try! JSONCoding.decoder.decode(Run.self, from: Data(#"{"id":"r","kind":"deployment","status":"running","actor":"u","created_at":"2026-10-27T09:55:25Z"}"#.utf8)),
+                           steps: [RunStep(id: "a", key: "artifacts", title: "Artifacts", status: "running", children: [step])])
+        #expect(tree.step(id: "b")?.key == "artifacts.web.build")
+        #expect(tree.step(id: "missing") == nil)
+    }
+
+    @Test func onlyAnApplicationBuildStepHasInsights() async throws {
+        func step(_ key: String) -> RunStep { RunStep(id: key, key: key, title: key, status: "succeeded") }
+        #expect(step("artifacts.web.build").isBuild)
+        #expect(!step("artifacts.web").isBuild)
+        #expect(!step("artifacts.web.verify").isBuild)
+        #expect(!step("artifacts..build").isBuild)
+
+        // A demo deployment that built locally shows its build's report.
+        func flattened(_ steps: [RunStep]) -> [RunStep] { steps.flatMap { [$0] + flattened($0.children ?? []) } }
+        let demo = DemoCluster()
+        var build: RunStep?
+        search: for project in DemoCluster.projects {
+            for environment in try await demo.environments(projectID: project.id) {
+                for run in try await demo.runs(environmentID: environment.id) where run.kind == "deployment" {
+                    build = flattened(try await demo.run(id: run.id).steps).first { $0.isBuild }
+                    if build != nil { break search }
+                }
+            }
+        }
+        let step = try #require(build)
+        #expect(try await demo.buildInsights(stepID: step.id)?.outcome == "succeeded")
+        #expect(try await demo.buildInsights(stepID: step.id.replacingOccurrences(of: ".build", with: ".verify")) == nil)
+    }
+
     @Test func theDemoFailedDeploymentFailsAtItsReleaseCommand() async throws {
         let demo = DemoCluster()
         let project = try #require(DemoCluster.projects.first { $0.name == "birefnet-proxy" })

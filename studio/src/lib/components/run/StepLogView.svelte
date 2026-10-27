@@ -8,11 +8,14 @@
 	// One step's structured log: a REST seed page establishes the cursor,
 	// then (while the step is running) the step-log SSE stream appends live
 	// entries, resuming from the seed's cursor.
+	// quiet shows nothing for an empty log, where the caller already said
+	// why there is nothing to show.
 	let {
 		stepId,
 		live = false,
-		tls = false
-	}: { stepId: string; live?: boolean; tls?: boolean } = $props();
+		tls = false,
+		quiet = false
+	}: { stepId: string; live?: boolean; tls?: boolean; quiet?: boolean } = $props();
 
 	let entries = $state<LogEntry[]>([]);
 	let failed = $state(false);
@@ -119,7 +122,9 @@
 		{/if}
 	</div>
 {/snippet}
-{#if tls}
+{#if quiet && entries.length === 0}
+	<!-- Nothing recorded, and the caller said so. -->
+{:else if tls}
 	<details>
 		<summary class="text-text-secondary cursor-pointer py-1 text-md">Issuance history</summary>
 		{@render logLines()}

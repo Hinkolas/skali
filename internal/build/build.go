@@ -53,8 +53,8 @@ type Result struct {
 }
 
 // ProgressSink receives the engine's line-wise build and push progress;
-// callers forward it into the journal. Sinks that also implement
-// UploadObserver follow pushes structurally.
+// callers show it live and record a build's lines in its Insights. Sinks
+// that also implement UploadObserver follow pushes structurally.
 type ProgressSink interface {
 	Line(level, message string)
 }

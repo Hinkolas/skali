@@ -479,15 +479,15 @@ public final class DemoActivity: Sendable {
             builder.step("values", "Prepare environment values")
             builder.group("artifacts", "Prepare artifacts") { builder in
                 for application in fixture.applications {
-                    builder.group("artifacts:\(application.key)", application.key, service: "applications.\(application.key)") { builder in
+                    builder.group("artifacts.\(application.key)", application.key, service: "applications.\(application.key)") { builder in
                         if startedHere {
-                            builder.step("artifacts:\(application.key):reuse", "Reuse \(Self.shortRevision(run))", seconds: 1)
+                            builder.step("artifacts.\(application.key).reuse", "Reuse \(Self.shortRevision(run))", seconds: 1)
                         } else if let image = application.image {
-                            builder.step("artifacts:\(application.key):pull", "Pull \(image)", seconds: 6)
+                            builder.step("artifacts.\(application.key).import", "Import \(image)", seconds: 6)
                         } else {
-                            builder.step("artifacts:\(application.key):build", "Build locally (linux/arm64)", seconds: 11)
+                            builder.step("artifacts.\(application.key).build", "Build locally (linux/arm64)", seconds: 11)
                         }
-                        builder.step("artifacts:\(application.key):verify", "Verify ee1214381996", seconds: 2)
+                        builder.step("artifacts.\(application.key).verify", "Verify ee1214381996", seconds: 2)
                     }
                 }
             }
@@ -652,9 +652,6 @@ public final class DemoActivity: Sendable {
     static func logs(stepID: String) -> [LogEntry] {
         let key = stepID.split(separator: "/", maxSplits: 1).last.map(String.init) ?? stepID
         let lines: [(String, String)] = switch key {
-        case let key where key.hasSuffix(":build"):
-            [("info", "building linux/arm64 from ./Dockerfile"), ("info", "#8 [build 3/6] RUN go build -o /out/app ./cmd/app"),
-             ("info", "#12 exporting layers 0.9s done"), ("info", "pushed ee1214381996 (41.2 MiB)")]
         case let key where key.hasPrefix("release:"):
             [("info", "running release command: bin/migrate"), ("info", "applying 2 migrations"),
              ("error", "migration 0007_jobs_index: relation \"jobs_status_idx\" already exists"),
@@ -674,6 +671,36 @@ public final class DemoActivity: Sendable {
             LogEntry(attempt: 1, seq: Int64(index + 1), ts: start.addingTimeInterval(Double(index) * 3),
                      level: line.0, message: line.1)
         }
+    }
+
+    /// The report of a demo build, for a build step; nil for any other.
+    static func buildInsights(stepID: String) -> BuildInsights? {
+        let key = stepID.split(separator: "/", maxSplits: 1).last.map(String.init) ?? stepID
+        guard key.hasPrefix("artifacts."), key.hasSuffix(".build") else { return nil }
+        let finished = Date.now.addingTimeInterval(-60)
+        let steps = [
+            BuildInsightsStep(name: "[internal] load build definition from Dockerfile", status: "done"),
+            BuildInsightsStep(name: "[build 1/6] FROM golang:1.26-alpine", status: "cached"),
+            BuildInsightsStep(name: "[build 2/6] COPY go.mod go.sum ./", status: "cached"),
+            BuildInsightsStep(name: "[build 3/6] RUN go mod download", status: "cached"),
+            BuildInsightsStep(name: "[build 4/6] COPY . .", status: "done", seconds: 0.4),
+            BuildInsightsStep(name: "[build 5/6] RUN go build -o /out/app ./cmd/app", status: "done", seconds: 8.6),
+            BuildInsightsStep(name: "exporting to oci image format", status: "done", seconds: 1.2),
+        ]
+        let log = [
+            "#0 building with \"desktop-linux\" instance using docker driver",
+            "#1 [internal] load build definition from Dockerfile",
+            "#1 DONE 0.0s",
+            "#5 [build 4/6] COPY . .",
+            "#5 DONE 0.4s",
+            "#6 [build 5/6] RUN go build -o /out/app ./cmd/app",
+            "#6 DONE 8.6s",
+            "#7 exporting to oci image format",
+            "#7 DONE 1.2s",
+        ].joined(separator: "\n")
+        return BuildInsights(
+            outcome: "succeeded", engine: "docker-buildx", platform: "linux/arm64",
+            startedAt: finished.addingTimeInterval(-11), finishedAt: finished, steps: steps, log: log, logLines: 9)
     }
 
     // MARK: Ids

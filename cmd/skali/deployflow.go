@@ -987,134 +987,101 @@ func confirmPlan(ctx context.Context, out io.Writer, opts *deployOptions,
 	return nil
 }
 
-// stepLogBatch is how many engine lines one journal append carries.
-const stepLogBatch = 25
-
-// stepLogLinger is how long lines wait for a batch to fill before they
-// ship anyway, so sparse output (upload progress) reaches the journal
-// while the step runs.
-var stepLogLinger = 2 * time.Second
-
-// stepLogSink batches engine progress into the journal's client surface.
-// The appends run on the sink's own goroutine, so the build engine's
-// output streams, and the live task display they feed, never wait on the
-// server; lines still arrive in order. The lock serializes the engine's
-// stdout and stderr streams.
-type stepLogSink struct {
-	ctx    context.Context
-	api    *client.Client
-	stepID string
-
-	mu      sync.Mutex
-	buffer  []client.LogLine
-	flushed bool
-
-	wake    chan struct{}
-	shipped chan struct{}
+// taskSink mirrors engine progress into the live task display. Engine
+// output stays on this machine: a build's lines reach the server only in
+// its insights report, uploaded once the build ended.
+type taskSink struct {
+	task *clirender.Task
 }
 
-func newStepLogSink(ctx context.Context, api *client.Client, stepID string) *stepLogSink {
-	sink := &stepLogSink{ctx: ctx, api: api, stepID: stepID,
-		wake: make(chan struct{}, 1), shipped: make(chan struct{})}
-	go sink.ship()
-	return sink
+func (s *taskSink) Line(_, message string) {
+	s.task.Note(message)
 }
 
-func (s *stepLogSink) Line(level, message string) {
-	s.mu.Lock()
-	if s.flushed {
-		s.mu.Unlock()
+// insightsSink shows a build's progress live and records it for the
+// build's insights report.
+type insightsSink struct {
+	taskSink
+	recorder *build.InsightsRecorder
+}
+
+func (s *insightsSink) Line(level, message string) {
+	s.recorder.Line(level, message)
+	s.taskSink.Line(level, message)
+}
+
+// insightsUploadTimeout bounds the upload of one insights report; a slow
+// server costs the report, never the deployment.
+var insightsUploadTimeout = 30 * time.Second
+
+// insightsUpload is one build's insights report on its way to the server,
+// in parallel with the image upload.
+type insightsUpload struct {
+	application string
+	done        chan struct{}
+	err         error
+}
+
+// startInsightsUpload uploads report into the build step in the
+// background.
+func startInsightsUpload(ctx context.Context, api *client.Client, stepID, application string,
+	report build.Insights) *insightsUpload {
+	upload := &insightsUpload{application: application, done: make(chan struct{})}
+	go func() {
+		defer close(upload.done)
+		ctx, cancel := context.WithTimeout(ctx, insightsUploadTimeout)
+		defer cancel()
+		upload.err = api.PutBuildInsights(ctx, stepID, report)
+	}()
+	return upload
+}
+
+// wait settles the upload; a report the server did not take is noted as
+// a skipped task and never fails the deployment.
+func (u *insightsUpload) wait(tasks *clirender.Tasks) {
+	if u == nil {
 		return
 	}
-	s.buffer = append(s.buffer, client.LogLine{Level: level, Message: message})
-	full := len(s.buffer) >= stepLogBatch
-	s.mu.Unlock()
-	if full {
-		s.signal()
+	<-u.done
+	if u.err == nil || errors.Is(u.err, context.Canceled) {
+		// An interrupted deployment says so itself.
+		return
 	}
-}
-
-// Flush sends the remaining lines and waits until every append has
-// returned; the sink takes no lines afterwards.
-func (s *stepLogSink) Flush() {
-	s.mu.Lock()
-	s.flushed = true
-	s.mu.Unlock()
-	s.signal()
-	<-s.shipped
-}
-
-func (s *stepLogSink) signal() {
-	select {
-	case s.wake <- struct{}{}:
-	default: // the shipper is already due to look
+	reason := u.err.Error()
+	if client.IsNotFound(u.err) {
+		// A server from before build insights.
+		reason = "the server does not keep build insights"
 	}
+	tasks.Start("Build insights for " + u.application).Skip("not saved: " + reason)
 }
 
-func (s *stepLogSink) ship() {
-	defer close(s.shipped)
-	linger := time.NewTicker(stepLogLinger)
-	defer linger.Stop()
-	for {
-		partial := false
-		select {
-		case <-s.wake:
-		case <-linger.C:
-			partial = true
-		}
-		for {
-			batch, done := s.next(partial)
-			if done {
-				return
-			}
-			if len(batch) == 0 {
-				break
-			}
-			_ = s.api.AppendStepLogs(s.ctx, s.stepID, batch)
+// insightsSummary is the settled build task's detail.
+func insightsSummary(report build.Insights) string {
+	cached := 0
+	for _, step := range report.Steps {
+		if step.Status == build.StepCached {
+			cached++
 		}
 	}
-}
-
-// next takes the next batch to send: a full one, or after Flush or when
-// partial batches may go, whatever remains. done reports that the sink is
-// flushed and empty.
-func (s *stepLogSink) next(partial bool) (batch []client.LogLine, done bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if len(s.buffer) < stepLogBatch && !s.flushed && !partial {
-		return nil, false
+	if cached == 0 {
+		return ""
 	}
-	count := min(len(s.buffer), stepLogBatch)
-	batch = slices.Clone(s.buffer[:count])
-	s.buffer = s.buffer[count:]
-	return batch, s.flushed && count == 0
+	return fmt.Sprintf("%d of %d steps cached", cached, len(report.Steps))
 }
 
-// teeSink forwards journal lines to the server and mirrors them into the
-// live task display, so builds and pulls show their progress locally.
-type teeSink struct {
-	inner *stepLogSink
-	task  *clirender.Task
-}
-
-func (t *teeSink) Line(level, message string) {
-	t.inner.Line(level, message)
-	t.task.Note(message)
-}
-
-// uploadSink journals a registry push and follows it in its live task:
-// snapshots drive the progress bar, and the push's rate-limited lines are
-// narrated on plain output.
+// uploadSink follows a registry push in its live task: snapshots drive
+// the progress bar, and the push's rate-limited lines are narrated on
+// plain output.
 type uploadSink struct {
-	*teeSink
+	taskSink
 
 	mu   sync.Mutex
 	last build.UploadStatus
 }
 
-func newUploadSink(sink *stepLogSink, task *clirender.Task) *uploadSink {
+func newUploadSink(task *clirender.Task) *uploadSink {
 	task.Narrate()
-	return &uploadSink{teeSink: &teeSink{inner: sink, task: task}}
+	return &uploadSink{taskSink: taskSink{task: task}}
 }
 
 func (s *uploadSink) UploadProgress(status build.UploadStatus) {
@@ -1224,12 +1191,12 @@ func executeActions(ctx context.Context, out io.Writer, api *client.Client,
 		case "build":
 			err := artifactStep(ctx, api, runID, action, func() error {
 				stopHeartbeat := startHeartbeat(ctx, api, action.BuildID)
-				built, err := buildAction(ctx, api, tasks, engine, opened, project, contexts, action, rebuild)
+				built, insights, err := buildAction(ctx, api, tasks, engine, opened, project, contexts, action, rebuild)
 				if err != nil {
 					stopHeartbeat()
 					return err
 				}
-				digest, err := uploadAction(ctx, api, tasks, opened, action, built)
+				digest, err := uploadAction(ctx, api, tasks, opened, action, built, insights)
 				_ = built.Close()
 				stopHeartbeat()
 				if err != nil {
@@ -1251,11 +1218,9 @@ func executeActions(ctx context.Context, out io.Writer, api *client.Client,
 					return err
 				}
 				task := tasks.Start("Import " + action.Upstream)
-				sink := newStepLogSink(ctx, api, importStep.ID)
-				upload := newUploadSink(sink, task)
+				upload := newUploadSink(task)
 				result, err := build.Import(ctx, action.Upstream, action.PushRef,
 					build.ImportOptions{TargetAuth: registryAuth}, upload)
-				sink.Flush()
 				if err != nil && ctx.Err() != nil {
 					task.Cancel()
 					return ctx.Err()
@@ -1280,22 +1245,24 @@ func executeActions(ctx context.Context, out io.Writer, api *client.Client,
 }
 
 // buildAction journals the local build of one action and returns its
-// export, which the caller uploads and closes.
+// export, which the caller uploads and closes, and the upload of its
+// insights report, which the caller waits for. A failed build uploads its
+// report before it fails the deployment; an interrupted one has none.
 func buildAction(ctx context.Context, api *client.Client, tasks *clirender.Tasks, engine build.Engine,
 	opened *client.OpenedDeployment, project *localProject, contexts map[string]*build.Context,
-	action client.ArtifactAction, rebuild bool) (build.Built, error) {
+	action client.ArtifactAction, rebuild bool) (build.Built, *insightsUpload, error) {
 	application := project.Result.Definition.Applications[action.Application]
 	spec := application.Source.Build
 	step, err := api.EnsureStep(ctx, opened.Deployment.RunID, action.StepKey+".build",
 		"Build locally ("+action.Platform+")", action.StepKey)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := api.SetStepStatus(ctx, step.ID, "running"); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	task := tasks.Start(fmt.Sprintf("Build %s (%s)", action.Application, action.Platform))
-	sink := newStepLogSink(ctx, api, step.ID)
+	recorder := build.NewInsightsRecorder(build.EngineDockerBuildx, action.Platform)
 	built, err := engine.Build(ctx, build.BuildRequest{
 		ContextDir: contexts[action.Application].Dir,
 		Dockerfile: filepath.Join(project.Root, spec.Dockerfile),
@@ -1304,32 +1271,34 @@ func buildAction(ctx context.Context, api *client.Client, tasks *clirender.Tasks
 		Platform:   action.Platform,
 		PushRef:    action.PushRef,
 		Rebuild:    rebuild,
-	}, &teeSink{inner: sink, task: task})
-	sink.Flush()
+	}, &insightsSink{taskSink: taskSink{task: task}, recorder: recorder})
 	if err != nil && endsWithin(ctx, buildInterruptGrace) {
 		// Interrupted, not failed: whoever ended the context closes the
 		// window.
 		task.Cancel()
-		return nil, ctx.Err()
+		return nil, nil, ctx.Err()
 	}
+	report := recorder.Finish(err)
 	if err != nil {
 		task.Fail()
+		startInsightsUpload(ctx, api, step.ID, action.Application, report).wait(tasks)
 		_ = api.SetStepStatus(ctx, step.ID, "failed")
-		return nil, failDeployment(ctx, api, opened, fmt.Errorf("build for %s failed: %w", action.Application, err))
+		return nil, nil, failDeployment(ctx, api, opened, fmt.Errorf("build for %s failed: %w", action.Application, err))
 	}
-	task.Done("")
+	task.Done(insightsSummary(report))
 	if err := api.SetStepStatus(ctx, step.ID, "succeeded"); err != nil {
 		_ = built.Close()
-		return nil, err
+		return nil, nil, err
 	}
-	return built, nil
+	return built, startInsightsUpload(ctx, api, step.ID, action.Application, report), nil
 }
 
 // uploadAction journals the push of a local build to the managed registry
 // as its own step and returns the pushed digest. The step succeeds only
-// once the registry accepted the manifest.
+// once the registry accepted the manifest. It settles the build's pending
+// insights upload once the push returned.
 func uploadAction(ctx context.Context, api *client.Client, tasks *clirender.Tasks,
-	opened *client.OpenedDeployment, action client.ArtifactAction, built build.Built) (string, error) {
+	opened *client.OpenedDeployment, action client.ArtifactAction, built build.Built, insights *insightsUpload) (string, error) {
 	registry := build.RegistryOf(action.PushRef)
 	step, err := api.EnsureStep(ctx, opened.Deployment.RunID, action.StepKey+".upload",
 		"Upload to "+registry, action.StepKey)
@@ -1340,10 +1309,11 @@ func uploadAction(ctx context.Context, api *client.Client, tasks *clirender.Task
 		return "", err
 	}
 	task := tasks.Start("Upload " + action.Application + " to " + registry)
-	sink := newStepLogSink(ctx, api, step.ID)
-	upload := newUploadSink(sink, task)
+	upload := newUploadSink(task)
 	result, err := built.Push(ctx, upload)
-	sink.Flush()
+	// The build's report uploads beside the push; it lands before a
+	// failed push fails the deployment, which would refuse it.
+	insights.wait(tasks)
 	if err != nil && ctx.Err() != nil {
 		task.Cancel()
 		return "", ctx.Err()

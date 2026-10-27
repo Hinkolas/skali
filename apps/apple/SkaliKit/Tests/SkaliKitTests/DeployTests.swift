@@ -189,7 +189,7 @@ struct DeployTests {
         }
         let tree = try await demo.run(id: runID)
         #expect(tree.run.deployment?.fromEnvironment == "staging")
-        #expect(tree.steps.flattenedKeys.contains("artifacts:api:reuse"))
+        #expect(tree.steps.flattenedKeys.contains("artifacts.api.reuse"))
         let stagingStatus = try await demo.environmentStatus(environmentID: staging.id)
         #expect(try await demo.environmentStatus(environmentID: production.id).activeRevision?.checksum
             == stagingStatus.activeRevision?.checksum)

@@ -244,12 +244,35 @@ func (s *Service) UnsetTx(ctx context.Context, q *store.Queries, environmentID u
 // matcher the journal writer uses. The map is keyed by plaintext, so a
 // current and a staged version of the same name are both redacted.
 func (s *Service) Redactor(ctx context.Context, environmentID, candidateID uuid.UUID) (*redact.Redactor, error) {
-	byPlaintext := make(map[string]string)
 	current, err := s.st.ListCurrentEnvironmentSecretCiphertexts(ctx, environmentID)
 	if err != nil {
 		return nil, fmt.Errorf("valuestore: list current values: %w", err)
 	}
-	for _, row := range current {
+	rows := make([]store.ListRetainedEnvironmentSecretCiphertextsRow, len(current))
+	for i, row := range current {
+		rows[i] = store.ListRetainedEnvironmentSecretCiphertextsRow{Name: row.Name, Ciphertext: row.Ciphertext}
+	}
+	return s.redactor(ctx, environmentID, candidateID, rows)
+}
+
+// RetainedRedactor is Redactor for output written over a span of time,
+// such as a build's insights report: it also knows every superseded
+// version, so a value rotated or unset while the output was written is
+// still redacted. Redacting a retired value is harmless.
+func (s *Service) RetainedRedactor(ctx context.Context, environmentID, candidateID uuid.UUID) (*redact.Redactor, error) {
+	retained, err := s.st.ListRetainedEnvironmentSecretCiphertexts(ctx, environmentID)
+	if err != nil {
+		return nil, fmt.Errorf("valuestore: list retained values: %w", err)
+	}
+	return s.redactor(ctx, environmentID, candidateID, retained)
+}
+
+// redactor knows the plaintexts of rows and of the candidate's staged
+// values.
+func (s *Service) redactor(ctx context.Context, environmentID, candidateID uuid.UUID,
+	rows []store.ListRetainedEnvironmentSecretCiphertextsRow) (*redact.Redactor, error) {
+	byPlaintext := make(map[string]string)
+	for _, row := range rows {
 		plaintext, err := crypt.Decrypt(s.key, row.Ciphertext)
 		if err != nil {
 			return nil, fmt.Errorf("valuestore: decrypt %s: %w", row.Name, err)

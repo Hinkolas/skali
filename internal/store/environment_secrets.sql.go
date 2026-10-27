@@ -137,6 +137,40 @@ func (q *Queries) ListPinnedEnvironmentSecretCiphertexts(ctx context.Context, ar
 	return items, nil
 }
 
+const listRetainedEnvironmentSecretCiphertexts = `-- name: ListRetainedEnvironmentSecretCiphertexts :many
+SELECT name, ciphertext FROM environment_secrets
+WHERE environment_id = $1 AND state IN ('current', 'superseded')
+ORDER BY name, version
+`
+
+type ListRetainedEnvironmentSecretCiphertextsRow struct {
+	Name       string
+	Ciphertext []byte
+}
+
+// Redaction of output recorded over a span of time (a build's insights
+// report): every retained version, so a value rotated or unset while the
+// output was written is still recognized.
+func (q *Queries) ListRetainedEnvironmentSecretCiphertexts(ctx context.Context, environmentID uuid.UUID) ([]ListRetainedEnvironmentSecretCiphertextsRow, error) {
+	rows, err := q.db.Query(ctx, listRetainedEnvironmentSecretCiphertexts, environmentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListRetainedEnvironmentSecretCiphertextsRow
+	for rows.Next() {
+		var i ListRetainedEnvironmentSecretCiphertextsRow
+		if err := rows.Scan(&i.Name, &i.Ciphertext); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listStagedEnvironmentSecretCiphertexts = `-- name: ListStagedEnvironmentSecretCiphertexts :many
 SELECT name, ciphertext FROM environment_secrets
 WHERE environment_id = $1 AND candidate_id = $2 AND state = 'staged'

@@ -85,7 +85,7 @@ func (b *dockerBuilt) Push(ctx context.Context, sink ProgressSink) (Result, erro
 		return Result{}, err
 	}
 	provenance, err := json.Marshal(map[string]string{
-		"engine":    "docker-buildx",
+		"engine":    EngineDockerBuildx,
 		"reference": b.req.PushRef,
 		"platform":  b.req.Platform,
 		"export":    b.export,

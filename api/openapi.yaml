@@ -1778,39 +1778,51 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
-    post:
-      operationId: appendStepLogs
-      summary: Append client step logs
+
+  /v1/steps/{id}/build-insights:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: getBuildInsights
+      summary: Read build insights
       description: |
-        The scoped client log surface: the actor of a running deployment
-        run appends its local build and import progress into steps of the
-        artifacts subtree. Lines pass the same redaction and bounds as
-        server-side writers. Writes outside the artifacts subtree, by
-        another actor, or into a settled run are refused.
+        The insights report of the build a step ran: the builder's
+        redacted output and how long each of its steps took. 404 when
+        no report was uploaded, for example for an interrupted build.
+      tags: [runs]
+      responses:
+        "200":
+          description: The build's insights report.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BuildInsights" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      operationId: putBuildInsights
+      summary: Upload build insights
+      description: |
+        The actor of a running deployment run uploads the insights report
+        of a local build once the build ended, into the build step of the
+        artifacts subtree (`artifacts.<application>.build`). The report
+        passes the same redaction as journal writes; a repeated upload
+        replaces the earlier one. Build output is never streamed into the
+        step's log.
       tags: [deployments]
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              type: object
-              required: [lines]
-              properties:
-                lines:
-                  type: array
-                  maxItems: 500
-                  items:
-                    type: object
-                    required: [message]
-                    properties:
-                      level:
-                        type: string
-                        enum: [debug, info, warn, error]
-                      message:
-                        type: string
+            schema: { $ref: "#/components/schemas/BuildInsights" }
       responses:
-        "200":
-          description: The lines were appended.
+        "204":
+          description: The report was stored.
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -5246,6 +5258,57 @@ components:
         finished_at:
           type: [string, "null"]
           format: date-time
+
+    BuildInsights:
+      type: object
+      description: |
+        The insights report of one finished build. The log keeps at most
+        2 MiB: a longer log keeps its head and tail around an omission
+        line, and `log_truncated` says so. The server redacts the report
+        before it cuts anything: stored step names keep 512 bytes, the
+        error 8 KiB, and each log line 8 KiB.
+      required: [outcome, engine, platform, started_at, finished_at, steps, log, log_lines, log_truncated]
+      properties:
+        outcome:
+          type: string
+          enum: [succeeded, failed]
+        engine:
+          type: string
+          description: The builder, for example `docker-buildx`.
+        platform:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: string
+          format: date-time
+        error:
+          type: string
+          description: Why the build failed; absent when it succeeded.
+        steps:
+          type: array
+          maxItems: 1000
+          description: The builder's steps in the order they started.
+          items:
+            type: object
+            required: [name, status]
+            properties:
+              name:
+                type: string
+              status:
+                type: string
+                enum: [done, cached, error, canceled, incomplete]
+              seconds:
+                type: number
+                description: The step's duration; absent for cached and incomplete steps.
+        log:
+          type: string
+        log_lines:
+          type: integer
+          description: How many lines the builder printed, omitted ones included.
+        log_truncated:
+          type: boolean
 
     LogEntry:
       type: object

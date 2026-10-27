@@ -7,9 +7,12 @@ import (
 	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/Hinkolas/skali/internal/build"
 )
 
 func TestLoginDecodesSessionAndSendsHeaders(t *testing.T) {
@@ -232,4 +235,20 @@ func TestCallerRootCAsVerifyThePrivateEdge(t *testing.T) {
 
 	require.Nil(t, tlsConfigWithRoots(nil), "no extra roots keeps the system defaults")
 	require.Nil(t, tlsConfigWithRoots([]byte("not pem")), "garbage never yields a config that trusts nothing")
+}
+
+// A build's insights report is larger than other documents; it reads
+// whole, while other reads keep the default bound.
+func TestBuildInsightsReadsAReportLargerThanOtherResponses(t *testing.T) {
+	log := strings.Repeat("#3 2.825 <warning> & more\n", 70_000)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(build.Insights{Outcome: build.InsightsSucceeded, Log: log})
+	}))
+	defer srv.Close()
+	api := New(srv.URL, "token", Caller{UserAgent: "test"})
+	report, err := api.BuildInsights(context.Background(), "s1")
+	require.NoError(t, err)
+	require.Equal(t, log, report.Log)
+	require.Greater(t, len(report.Log), maxResponseBytes)
 }

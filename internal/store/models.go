@@ -163,6 +163,21 @@ type Build struct {
 	FinishedAt     *time.Time
 }
 
+type BuildInsight struct {
+	StepID       uuid.UUID
+	Outcome      string
+	Engine       string
+	Platform     string
+	StartedAt    time.Time
+	FinishedAt   time.Time
+	Error        string
+	Steps        []byte
+	LogGzip      []byte
+	LogLines     int32
+	LogTruncated bool
+	CreatedAt    time.Time
+}
+
 type DatabaseClaim struct {
 	ID            uuid.UUID
 	OwnerKind     string

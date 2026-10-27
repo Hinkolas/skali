@@ -12,15 +12,18 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/Hinkolas/skali/internal/buildstore"
 	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/store"
 )
 
 // runsHandlers is the read surface over the run journal: run lists, nested
-// run trees, and step logs (paged and streamed). The journal explains
-// reconciliation but never drives it, so this surface is read-only.
+// run trees, step logs (paged and streamed), and the insights of the
+// builds steps ran. The journal explains reconciliation but never drives
+// it, so this surface is read-only.
 type runsHandlers struct {
 	journal *journal.Service
+	builds  *buildstore.Service
 }
 
 type runPayload struct {
@@ -282,6 +285,27 @@ func (h *runsHandlers) stepLogs(w http.ResponseWriter, r *http.Request) {
 		Logs []logPayload `json:"logs"`
 		Next string       `json:"next,omitempty"`
 	}{payload, next})
+}
+
+// GET /v1/steps/{id}/build-insights
+//
+// The insights report of the build a step ran; 404 when none was
+// uploaded (a skipped or interrupted build, or a client that kept it).
+func (h *runsHandlers) buildInsights(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	report, err := h.builds.GetInsights(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, buildstore.ErrNotFound) {
+			writeError(w, http.StatusNotFound, codeNotFound, "no insights were recorded for this build")
+			return
+		}
+		writeInternalError(r.Context(), w, "get build insights", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, report)
 }
 
 // GET /v1/runs/{id}/stream (SSE)
