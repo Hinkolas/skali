@@ -17,7 +17,7 @@ const inventory = JSON.parse(execFileSync('go', ['run', 'scripts/audit-images.go
 for (const ref of (process.env.AUDIT_EXTRA_IMAGES || '').split(',').filter(Boolean)) {
 	inventory.push({ ref, scopes: ['candidate'], source: 'AUDIT_EXTRA_IMAGES' });
 }
-const scopes = (process.env.AUDIT_SCOPES || 'runtime,longhorn,build,examples,candidate').split(',');
+const scopes = (process.env.AUDIT_SCOPES || 'runtime,build,examples,candidate').split(',');
 const selected = inventory.filter((image) => image.scopes.some((scope) => scopes.includes(scope)));
 if (!selected.length || platforms.some((platform) => !/^linux\/(amd64|arm64)$/.test(platform))) {
 	throw new Error('Select at least one inventory scope and linux/amd64 and/or linux/arm64');

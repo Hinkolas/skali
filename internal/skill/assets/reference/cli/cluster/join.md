@@ -27,5 +27,3 @@ Join this host to an existing cluster
 | `--token` | `string` | `""` | join token (defaults to SKALI_JOIN_TOKEN or saved enrollment) |
 | `--token-file` | `string` | `""` | path to a join token file, or - for stdin |
 | `--verbose` | `bool` | `false` | show every recorded detail under live steps (TLS issuance fields, health snapshots) and dev proxy relay diagnostics (inherited) |
-| `--vm` | `string` | `skali` | name of the Lima VM hosting the skali node (macOS only) (inherited) |
-| `--yes` | `bool` | `false` | provision missing Mac dependencies without confirmation (macOS only) |

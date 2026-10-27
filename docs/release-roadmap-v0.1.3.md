@@ -1,9 +1,71 @@
 # v0.1.3 release roadmap
 
-Local working checklist for moving from the current release candidates to
-`v0.1.3` on the stable channel. **Keep this file uncommitted unless explicitly
-requested otherwise.** Update it as implementation commits and verification
-results accumulate.
+Release checklist and historical verification record for moving from the
+release candidates to `v0.1.3` on the stable channel. The current scope and
+remaining steps below supersede the older candidate schedules. Update this
+record as verification results accumulate.
+
+## Scope update — 2026-10-27
+
+Longhorn and macOS-hosted clusters are removed from v0.1.3. They were unused
+and will be reconsidered only when needed. The retained scope is managed
+Linux clusters using local-path storage, the Linux/macOS CLI, and
+Docker-based local development. Longhorn D5 and the Lima/socket_vmnet parts
+of D7 no longer gate the release; their historical results below remain as
+evidence for the earlier candidates. Rehearse the supported Linux upgrade
+and local development paths after this removal. The Linux installer still
+uses optional Lima VMs as developer test infrastructure.
+
+Local verification on `chore/remove-unused-cluster-backends` (based on
+`3c0913d5ca721ae69d32da91e64e1bae354688cc`): the Go suite with the development
+Postgres passed except `TestAttachViewStaysLiveWhileTheServerStalls/a_stalled_poll`,
+which also failed in an untouched archive of that baseline. The affected
+installer, bundle, and CLI suites passed with that known failure excluded.
+Go vet, module tidiness, generated-file checks, release configuration, Linux
+amd64/arm64 builds, and the macOS amd64 CLI build passed. The local development
+bundle still matches its frozen output and hash. No live installation, upgrade,
+or restore rehearsal was performed for this removal.
+
+## Remaining steps after the backend-removal PR
+
+The latest published candidate is `v0.1.3-rc.10` as of 2026-10-27. Its release
+notes report rc.9 production use but still identify the direct v0.1.2 upgrade
+as untested. Production use does not replace that rehearsal.
+
+- [ ] Freeze the merged scope. Require green CI and a clean snapshot rehearsal
+  (`scripts/check-release-snapshot.sh`), and resolve or explicitly explain the
+  known attach-view timing failure. Refresh the source, npm, downloaded-tool,
+  and runtime image review for the retained dependencies; record fixes or
+  bounded dispositions for remaining findings.
+- [ ] Publish one candidate containing the removal and changes since rc.10;
+  `v0.1.3-rc.11` is next if still unused. Verify its metadata, checksums, Linux
+  image architectures, and CLI assets. Scan the published images and confirm
+  that the RC has not changed stable/latest.
+- [ ] Rehearse with released binaries on disposable fixtures: a fresh Linux
+  install, populated v0.1.2 and current-RC Linux upgrades, and a released-binary
+  `skali dev upgrade` on macOS. Verify database rows, bucket objects, volume
+  files, registry images, users, values, routes, and history survive. Cover
+  both CLI and Studio upgrade entry points; verify any PostgreSQL, registry,
+  or operator version transition the old fixture exercises.
+- [ ] Complete the relevant deployment and recovery cases below on that
+  candidate: deploy/redeploy/rollback, migration failure, SQL/exec, routes/TLS,
+  a slow authenticated registry push, backup/restore of pre-upgrade data, and
+  interrupted update/restore recovery. Include scheduled backups and inspect
+  the new backup, node, and build-report UI. Record exact results and skips.
+- [ ] Use the candidate for 24–48 hours, including a scheduled-backup cycle
+  and a restart. Fix only demonstrated release blockers; substantive fixes
+  require another candidate and affected retesting. Finalize notes for the
+  whole v0.1.2 → v0.1.3 change, including removed support, local-volume limits,
+  upgrade/recovery instructions, and accepted dependency findings.
+- [ ] With the evidence complete and explicit release authorization, tag
+  `v0.1.3` from the clean, synchronized, verified main commit. Verify the release
+  workflow, stable/latest selection, checksums, metadata, both image
+  architectures, installer/CLI dispatch, and website/schema selection.
+
+Keep #257 (system PostgreSQL consolidation), #242 (S3 registry), #263 (faster
+local recovery after a node-IP change), #271 (managed cloud builds), the
+SvelteKit 3 migration, and reintroducing removed backends outside this release.
+Only a newly demonstrated blocker in supported behavior reopens the freeze.
 
 ## Recommendation and scope
 

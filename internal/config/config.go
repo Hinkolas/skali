@@ -161,12 +161,6 @@ type API struct {
 	// labels.
 	ManagedCluster bool `env:"SKALI_MANAGED_CLUSTER,default=false"`
 
-	// StorageClass names the storage class application volume claims
-	// request. The bundle sets it to skali-app when the cluster runs the
-	// longhorn storage driver; empty keeps claims on the cluster default
-	// (local-path), which is both the dev shape and the local driver.
-	StorageClass string `env:"SKALI_STORAGE_CLASS,default="`
-
 	// PlatformPreference is the cluster's ordered build platform
 	// preference for mixed-architecture clusters, separated by semicolons.
 	// The CLI reads it from the environment status and builds each

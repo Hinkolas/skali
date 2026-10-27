@@ -40,9 +40,6 @@ func newClusterUninstallCommand() *cobra.Command {
 // runUninstallFlow guards, scopes, confirms, and executes a removal. The
 // menu path enters with empty scope/confirm; the flag path skips prompts.
 func runUninstallFlow(ctx context.Context, out *os.File, reader *bufio.Reader, scope, confirmName string) error {
-	if _, err := darwinPrelude(ctx, out, vmPolicyMaintain, ""); err != nil {
-		return err
-	}
 	detected, err := installer.Detect(ctx, runner())
 	if err != nil {
 		return err
@@ -209,11 +206,7 @@ func uninstallNode(ctx context.Context, out *os.File, reader *bufio.Reader,
 		fmt.Fprintf(out, "Removing this node destroys the cluster %q completely:\n", record.Cluster)
 		fmt.Fprintln(out, "  - every project namespace, database, bucket, and all registry contents")
 	}
-	if darwinInfo != nil {
-		fmt.Fprintf(out, "  - the Lima VM %s and every trace of skali on this Mac\n", darwinInfo.Instance)
-	} else {
-		fmt.Fprintln(out, "  - k3s itself and "+installer.StateDir)
-	}
+	fmt.Fprintln(out, "  - k3s itself and "+installer.StateDir)
 	if mayLeaveStaleMembership {
 		fmt.Fprintln(out, "  - the cluster API is unreachable; local cleanup may leave stale node or etcd membership")
 	}
@@ -233,10 +226,6 @@ func uninstallNode(ctx context.Context, out *os.File, reader *bufio.Reader,
 		if err != nil {
 			return err
 		}
-	}
-
-	if darwinInfo != nil {
-		return uninstallDarwinNode(ctx, out, record)
 	}
 
 	tasks := clirender.NewTasks(out)

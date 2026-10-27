@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/Hinkolas/skali/internal/bundle"
@@ -25,6 +24,9 @@ func LiveProfile(ctx context.Context, client *kube.Client, runner host.Runner, r
 	var profile bundle.Profile
 	if record == nil {
 		return profile, layout.Layout{}, errors.New("no installation record")
+	}
+	if err := record.validateStorage(); err != nil {
+		return profile, layout.Layout{}, err
 	}
 	if record.Endpoints == nil || record.Endpoints.API == "" || record.Endpoints.Registry == "" ||
 		record.TLS == nil || record.TLS.IssuerEmail == "" {
@@ -83,12 +85,6 @@ func LiveProfile(ctx context.Context, client *kube.Client, runner host.Runner, r
 	live := LayoutFromNodes(nodeList.Items, record.Cluster)
 	topology := live.Topology()
 
-	storageDriver := record.AppStorageDriver()
-	registryStorageClass, err := liveRegistryStorageClass(ctx, client, storageDriver)
-	if err != nil {
-		return profile, layout.Layout{}, err
-	}
-
 	canonical, err := record.CanonicalYAML()
 	if err != nil {
 		return profile, layout.Layout{}, err
@@ -113,40 +109,9 @@ func LiveProfile(ctx context.Context, client *kube.Client, runner host.Runner, r
 			DatabaseStorage:    DefaultDatabaseStorage,
 			RegistryStorage:    DefaultRegistryStorage,
 			RegistryNode:       record.RegistryNode,
-			StorageDriver:      storageDriver,
 			PlatformPreference: record.PlatformPreference,
-			// Derived from the live topology exactly like Init, so the
-			// hash-match invariant holds by construction.
-			StorageReplicas:      layout.StorageReplicas(topology.Capable[layout.CapabilityApplication]),
-			RegistryStorageClass: registryStorageClass,
-			InstallationRecord:   canonical,
+			InstallationRecord: canonical,
 		},
 	}
 	return profile, live, nil
-}
-
-// liveRegistryStorageClass reads the registry claim's storage class so the
-// profile always renders the shape the cluster already has: the class is
-// immutable on an existing claim, and rendering anything else would wedge
-// every future converge on a rejected apply. The storage-migrate command
-// is the only sanctioned switch. Under the longhorn driver an absent claim
-// reads as the Longhorn class (a fresh converge creates it there); under
-// the local driver, and for any other live class, it reads as the legacy
-// local-path shape.
-func liveRegistryStorageClass(ctx context.Context, client *kube.Client, storageDriver string) (string, error) {
-	if storageDriver != bundle.StorageDriverLonghorn {
-		return "", nil
-	}
-	claim, err := client.Clientset.CoreV1().PersistentVolumeClaims(bundle.Namespace).
-		Get(ctx, "skali-registry-data", metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
-		return bundle.StorageClassName, nil
-	}
-	if err != nil {
-		return "", fmt.Errorf("read registry volume claim: %w", err)
-	}
-	if claim.Spec.StorageClassName != nil && *claim.Spec.StorageClassName == bundle.StorageClassName {
-		return bundle.StorageClassName, nil
-	}
-	return "", nil
 }

@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"runtime"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -11,7 +10,6 @@ import (
 	"github.com/Hinkolas/skali/internal/cliprompt"
 	"github.com/Hinkolas/skali/internal/clirender"
 	"github.com/Hinkolas/skali/internal/installer"
-	"github.com/Hinkolas/skali/internal/installer/limavm"
 )
 
 func newClusterInstallCommand() *cobra.Command {
@@ -26,7 +24,6 @@ func newClusterCreateCommand() *cobra.Command {
 
 func clusterInstallCommand(use, short string, seedOnly bool) *cobra.Command {
 	var configPath string
-	var assumeYes bool
 	command := &cobra.Command{
 		Use:   use,
 		Short: short,
@@ -40,17 +37,6 @@ func clusterInstallCommand(use, short string, seedOnly bool) *cobra.Command {
 					return fmt.Errorf("non-interactive run requires --config")
 				}
 				banner(out)
-				present, err := darwinPrelude(ctx, out, vmPolicyInstall, "")
-				if err != nil {
-					return err
-				}
-				if !present {
-					printDarwinFreshHeader(out)
-					if seedOnly {
-						return runInteractiveCreateFlow(ctx, out)
-					}
-					return runInteractiveFreshFlow(ctx, out)
-				}
 				detected, err := installer.Detect(ctx, runner())
 				if err != nil {
 					return err
@@ -88,32 +74,8 @@ func clusterInstallCommand(use, short string, seedOnly bool) *cobra.Command {
 			if seedOnly && config.Join != nil {
 				return fmt.Errorf("cluster create accepts only a seed-server config; use cluster join for enrollment")
 			}
-			if config.VM != nil && runtime.GOOS != "darwin" {
-				return fmt.Errorf("node config: the vm block applies only to macOS hosts")
-			}
-			configVMName := ""
-			if config.VM != nil {
-				configVMName = config.VM.Name
-			}
-			if _, err := darwinPrelude(ctx, out, vmPolicyInstall, configVMName); err != nil {
-				return err
-			}
-			// Mac dependency provisioning is the one thing outside the
-			// config's consent: it confirms (or takes --yes) and must run
-			// before the task printer starts, because sudo may prompt.
-			network := limavm.NetworkBridged
-			if config.VM != nil && config.VM.Network != "" {
-				network = limavm.Network(config.VM.Network)
-			}
-			if err := ensureDarwinDeps(ctx, out, nil, network, assumeYes); err != nil {
-				return err
-			}
 			tasks := clirender.NewTasks(out)
 			progress := newTaskProgress(tasks)
-			if err := ensureDarwinVM(ctx, progress, config.VM); err != nil {
-				progress.Abort()
-				return err
-			}
 			opts := installer.InstallOptions{
 				Cluster:      config.Cluster,
 				Role:         config.Role,
@@ -160,10 +122,6 @@ func clusterInstallCommand(use, short string, seedOnly bool) *cobra.Command {
 					return err
 				}
 			}
-			if err := applyDarwinInstallOptions(ctx, &opts); err != nil {
-				progress.Abort()
-				return err
-			}
 			record, err := installer.Install(ctx, runner(), opts)
 			if err != nil {
 				progress.Abort()
@@ -177,13 +135,10 @@ func clusterInstallCommand(use, short string, seedOnly bool) *cobra.Command {
 				}
 				progress.Done("")
 			}
-			warnings := finishDarwinInstall(ctx, progress)
 			progress.Done("")
-			printWarnings(out, warnings)
 			return nil
 		},
 	}
 	command.Flags().StringVar(&configPath, "config", "", "non-interactive node configuration (node.yaml)")
-	command.Flags().BoolVar(&assumeYes, "yes", false, "provision missing Mac dependencies without confirmation (macOS only)")
 	return command
 }

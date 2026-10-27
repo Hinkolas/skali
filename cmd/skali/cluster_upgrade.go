@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -79,7 +80,7 @@ func newClusterUpgradeCommand() *cobra.Command {
 // the bundle; agents run no bundle, so only k3s moves there. Both the
 // command and the menu's upgrade entry land here.
 func runUpgradeFlow(ctx context.Context, out *os.File, reader *bufio.Reader, yes bool) error {
-	if _, err := darwinPrelude(ctx, out, vmPolicyMaintain, ""); err != nil {
+	if err := requireClusterHost(runtime.GOOS); err != nil {
 		return err
 	}
 	status, err := installer.GatherStatus(ctx, runner())

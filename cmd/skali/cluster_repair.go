@@ -40,9 +40,6 @@ func newClusterRepairCommand() *cobra.Command {
 // re-diagnose. Both the command and the menu's repair entry land here. A
 // clean diagnosis performs no mutation.
 func runRepairFlow(ctx context.Context, out *os.File, reader *bufio.Reader, yes bool) error {
-	if _, err := darwinPrelude(ctx, out, vmPolicyMaintain, ""); err != nil {
-		return err
-	}
 	status, err := installer.GatherStatus(ctx, runner())
 	if err != nil {
 		return err

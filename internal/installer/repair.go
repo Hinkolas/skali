@@ -244,20 +244,6 @@ func PlanRepairs(diag *Diagnosis, deps RepairDeps) (actions []RepairAction, refu
 		})
 	}
 
-	// Fires on the fail (open-iscsi missing) and the warn (multipathd
-	// without the blacklist) alike; the ensure step is idempotent.
-	if unhealthy["storage prerequisites"] {
-		actions = append(actions, RepairAction{
-			ID:    "storage-prereqs",
-			Title: "Install storage prerequisites",
-			Confirm: "Install open-iscsi, enable iscsid, and blacklist Longhorn volume devices from " +
-				"multipathd where it runs. Continue? [y/N] ",
-			Run: func(ctx context.Context) error {
-				return EnsureStoragePrerequisites(ctx, deps.Runner, progress)
-			},
-		})
-	}
-
 	needsConverge := deps.StampMissing
 	if failed["registry mirror"] {
 		if role == layout.RoleServer {
@@ -280,8 +266,7 @@ func PlanRepairs(diag *Diagnosis, deps RepairDeps) (actions []RepairAction, refu
 	}
 
 	if role == layout.RoleServer &&
-		(needsConverge || failed["bootstrap database"] || failed["managed registry"] || failed["skalid"] ||
-			failed["storage system"] || failed["storage provisioner"]) {
+		(needsConverge || failed["bootstrap database"] || failed["managed registry"] || failed["skalid"]) {
 		actions = append(actions, RepairAction{
 			ID:    "reconverge",
 			Title: "Reconverge the bundle",

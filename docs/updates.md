@@ -12,6 +12,21 @@ installation, enrollment, and updates even when the platform is restarting.
 Kubernetes changes only when the selected release changes its pinned version;
 an ordinary Skali update does not unnecessarily restart Kubernetes.
 
+## v0.1.3 support scope
+
+Managed cluster hosts run Linux (Debian or Ubuntu), with local-path storage
+for application volumes and the registry. Longhorn and Skali-managed macOS
+cluster VMs have been removed. The macOS CLI, remote cluster updates, and
+Docker-based `skali dev` remain supported.
+
+Older local-storage records and `storage.driver: local` init files remain
+readable. `--storage-driver`, `cluster storage-migrate`, `--vm`, and node
+configuration `vm` blocks are no longer accepted. There is no automatic
+migration of Longhorn volumes or managed macOS cluster VMs. These removed
+configurations must not upgrade to this release; use the previous release
+to export data and retire them explicitly. Linux local-storage upgrades
+keep their existing claims and registry placement.
+
 ## Normal operation
 
 On a managed installation, select and authenticate the intended remote with

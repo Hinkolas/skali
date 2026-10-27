@@ -26,7 +26,6 @@ func NodeConfigSchema() (*jsonschema.Schema, error) {
 	yamldoc.StampSchema(schema, NodeSchemaID, "Skali installer node configuration",
 		"Per-host install configuration consumed by skali cluster install --config.")
 	layout.ApplyNodeGrammar(schema)
-	schema.Properties["vm"].Properties["network"].Enum = utils.AnySlice("bridged", "shared", "user-v2")
 	bind := schema.Properties["network"].Properties["coordinatorBind"]
 	bind.Items = &jsonschema.Schema{
 		Type: "string", Enum: utils.AnySlice(NetworkScopeCluster, NetworkScopePublic),
@@ -43,6 +42,7 @@ func InitConfigSchema() (*jsonschema.Schema, error) {
 	}
 	yamldoc.StampSchema(schema, InitSchemaID, "Skali installer init configuration",
 		"Cluster initialization configuration consumed by skali cluster init --config.")
+	schema.Properties["storage"].Properties["driver"].Enum = utils.AnySlice("", "local")
 	preference := schema.Properties["platforms"].Properties["preference"]
 	preference.Items = &jsonschema.Schema{
 		Type: "string", Enum: utils.AnySlice(manifest.PlatformAMD64, manifest.PlatformARM64),

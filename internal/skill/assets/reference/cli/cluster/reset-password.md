@@ -23,4 +23,3 @@ access and needs no working login. Every session of the user is revoked;
 | `--image-tar` | `string` | `""` | docker-save tar of the skalid image, imported into the node during init (source installs) (inherited) |
 | `--password-stdin` | `bool` | `false` | read the new password from stdin instead of prompting |
 | `--verbose` | `bool` | `false` | show every recorded detail under live steps (TLS issuance fields, health snapshots) and dev proxy relay diagnostics (inherited) |
-| `--vm` | `string` | `skali` | name of the Lima VM hosting the skali node (macOS only) (inherited) |

@@ -154,7 +154,8 @@ a cluster or Docker on the laptop. See
 ### 3. Set up a server
 
 You need a Debian or Ubuntu server (amd64 or arm64) with ports 80 and 443
-reachable. A Mac runs Skali inside a managed Lima VM. Point DNS at the server
+reachable. Cluster hosts run Linux; the macOS CLI supports remote operations
+and Docker-based local development. Point DNS at the server
 first: an A record for the platform domain (for example `skali.example.com`),
 one for the registry (`cr.skali.example.com`), and one per application
 domain.
@@ -357,7 +358,7 @@ and installs and maintains the servers. `skalid` is the control plane on the
 cluster: it stores what you declared, compiles it into Kubernetes objects, and
 reports status back. Skali Studio is a web app served on the platform domain.
 k3s and a small set of operators (CloudNativePG, Traefik, cert-manager,
-SeaweedFS, optionally Longhorn) do the generic orchestration. Skali owns the
+SeaweedFS) do the generic orchestration. Skali owns the
 hosts it runs on and never adopts a cluster it did not install.
 
 ## Contributing

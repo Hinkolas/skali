@@ -6,13 +6,11 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"regexp"
 	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/Hinkolas/skali/internal/bundle"
 	"github.com/Hinkolas/skali/internal/layout"
 	"github.com/Hinkolas/skali/internal/manifest"
 )
@@ -41,9 +39,6 @@ type NodeConfig struct {
 	// an additional server; required for agents, absent for the first
 	// server.
 	Join *JoinConfig `yaml:"join,omitempty" json:"join,omitempty" jsonschema:"Join an existing cluster instead of creating one."`
-	// VM shapes the Lima VM that hosts this node on a macOS machine.
-	// Linux installs refuse it.
-	VM *VMConfig `yaml:"vm,omitempty" json:"vm,omitempty" jsonschema:"macOS only: the Lima VM hosting this node."`
 }
 
 // NetworkConfig declares the addresses of one host and what each is for.
@@ -78,17 +73,6 @@ type JoinConfig struct {
 	TokenFile string `yaml:"tokenFile" json:"tokenFile" jsonschema:"Path to a file holding the join token."`
 }
 
-// VMConfig shapes the Lima VM that hosts a node on macOS, where Kubernetes
-// nodes are Linux-only. Every field is optional; the defaults size the VM
-// for a dedicated fleet Mac.
-type VMConfig struct {
-	Name    string `yaml:"name,omitempty" json:"name,omitempty" jsonschema:"Lima instance name. Defaults to skali."`
-	Network string `yaml:"network,omitempty" json:"network,omitempty" jsonschema:"VM network mode: bridged, shared, or user-v2. Defaults to bridged."`
-	CPUs    int    `yaml:"cpus,omitempty" json:"cpus,omitempty" jsonschema:"CPU cores allocated to the VM. Defaults to all host cores minus one."`
-	Memory  string `yaml:"memory,omitempty" json:"memory,omitempty" jsonschema:"VM memory such as 12GiB. Defaults to host memory minus 4GiB."`
-	Disk    string `yaml:"disk,omitempty" json:"disk,omitempty" jsonschema:"VM disk size such as 100GiB. Defaults to 100GiB."`
-}
-
 // InitConfig is the cluster initialization configuration (init.yaml)
 // consumed by `skali cluster init --config`.
 type InitConfig struct {
@@ -98,15 +82,6 @@ type InitConfig struct {
 	Skalid    SkalidConfig         `yaml:"skalid" json:"skalid"`
 	Storage   *StorageInitConfig   `yaml:"storage,omitempty" json:"storage,omitempty"`
 	Platforms *PlatformsInitConfig `yaml:"platforms,omitempty" json:"platforms,omitempty"`
-}
-
-// StorageDriver folds the optional storage block: empty keeps the
-// recorded driver.
-func (c *InitConfig) StorageDriver() string {
-	if c.Storage != nil {
-		return c.Storage.Driver
-	}
-	return ""
 }
 
 // PlatformPreference folds the optional platforms block: empty keeps the
@@ -128,11 +103,9 @@ type PlatformsInitConfig struct {
 	Preference []string `yaml:"preference,omitempty" json:"preference,omitempty" jsonschema:"Ordered build platform preference for mixed-architecture clusters: the first entry an application supports wins its single-arch build. Entries are linux/amd64 or linux/arm64. Empty keeps the recorded choice, multi-arch builds on a fresh installation."`
 }
 
-// StorageInitConfig selects the application storage layer.
+// StorageInitConfig accepts the local choice in older init files.
 type StorageInitConfig struct {
-	// Driver is local or longhorn. Empty keeps the cluster's recorded
-	// driver, local on a fresh installation.
-	Driver string `yaml:"driver,omitempty" json:"driver,omitempty" jsonschema:"Application storage driver: local (default, k3s local-path, no replication or size enforcement) or longhorn (replicated block storage with enforced volume sizes). Empty keeps the recorded choice."`
+	Driver string `yaml:"driver,omitempty" json:"driver,omitempty" jsonschema:"Deprecated: local storage is the only supported driver. Omit this block in new configurations."`
 }
 
 // EndpointsConfig declares the public domains.
@@ -212,40 +185,7 @@ func ParseNodeConfig(data []byte) (*NodeConfig, error) {
 			return nil, errors.New("node config: join.tokenFile is required")
 		}
 	}
-	if config.VM != nil {
-		if err := config.VM.Validate(); err != nil {
-			return nil, fmt.Errorf("node config: %w", err)
-		}
-	}
 	return &config, nil
-}
-
-var (
-	vmSizePattern = regexp.MustCompile(`^[1-9][0-9]*(GiB|MiB)$`)
-	vmNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
-)
-
-// Validate checks shape only; whether a vm block is allowed at all is a
-// platform decision the command layer makes.
-func (vm *VMConfig) Validate() error {
-	switch vm.Network {
-	case "", "bridged", "shared", "user-v2":
-	default:
-		return fmt.Errorf("vm.network must be bridged, shared, or user-v2, got %q", vm.Network)
-	}
-	if vm.CPUs < 0 {
-		return errors.New("vm.cpus must be a positive count")
-	}
-	if vm.Memory != "" && !vmSizePattern.MatchString(vm.Memory) {
-		return fmt.Errorf("vm.memory %q is not a size like 12GiB", vm.Memory)
-	}
-	if vm.Disk != "" && !vmSizePattern.MatchString(vm.Disk) {
-		return fmt.Errorf("vm.disk %q is not a size like 100GiB", vm.Disk)
-	}
-	if vm.Name != "" && !vmNamePattern.MatchString(vm.Name) {
-		return fmt.Errorf("vm.name %q is not a valid Lima instance name", vm.Name)
-	}
-	return nil
 }
 
 // ParseInitConfig strictly parses one init.yaml document.
@@ -274,10 +214,9 @@ func ParseInitConfig(data []byte) (*InitConfig, error) {
 	}
 	if config.Storage != nil {
 		switch config.Storage.Driver {
-		case "", bundle.StorageDriverLocal, bundle.StorageDriverLonghorn:
+		case "", "local":
 		default:
-			return nil, fmt.Errorf("init config: storage.driver must be %s or %s, got %q",
-				bundle.StorageDriverLocal, bundle.StorageDriverLonghorn, config.Storage.Driver)
+			return nil, fmt.Errorf("init config: storage.driver must be local; %q is no longer supported", config.Storage.Driver)
 		}
 	}
 	if config.Platforms != nil {

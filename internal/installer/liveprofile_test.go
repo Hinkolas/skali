@@ -28,10 +28,9 @@ func liveProfileRecord() *Record {
 			Name: "cp-1", Role: layout.RoleServer,
 			Capabilities: layout.Capabilities,
 		},
-		Endpoints:     &Endpoints{API: "skali.e2e.test", Registry: "registry.skali.e2e.test"},
-		TLS:           &TLSConfig{IssuerEmail: "e2e@skali.e2e.test", ACMEServer: "https://acme.test/directory"},
-		StorageDriver: bundle.StorageDriverLonghorn,
-		Versions:      Versions{Installer: "v0.0.0-dev", K3s: K3sVersion, Bundle: "0.0.0-dev"},
+		Endpoints: &Endpoints{API: "skali.e2e.test", Registry: "registry.skali.e2e.test"},
+		TLS:       &TLSConfig{IssuerEmail: "e2e@skali.e2e.test", ACMEServer: "https://acme.test/directory"},
+		Versions:  Versions{Installer: "v0.0.0-dev", K3s: K3sVersion, Bundle: "0.0.0-dev"},
 	}
 }
 
@@ -111,74 +110,24 @@ func TestLiveProfileHashStability(t *testing.T) {
 		AuthSecret:    "auth-secret-value",
 		RegistryHost:  bundle.RegistryInternalHost,
 		Production: &bundle.Production{
-			ClusterName:     record.Cluster,
-			IngressHost:     record.Endpoints.API,
-			RegistryDomain:  record.Endpoints.Registry,
-			TokenKeyPEM:     "key-pem",
-			TokenCertPEM:    "cert-pem",
-			NodePullSecret:  "pull-secret-value",
-			ACMEEmail:       record.TLS.IssuerEmail,
-			ACMEServer:      record.TLS.ACMEServer,
-			Capabilities:    layout.UnionCapabilities(expectedLayout.Nodes),
-			DatabaseTier:    topology.DatabaseTier,
-			DatabaseStorage: DefaultDatabaseStorage,
-			RegistryStorage: DefaultRegistryStorage,
-			StorageDriver:   bundle.StorageDriverLonghorn,
-			StorageReplicas: layout.StorageReplicas(topology.Capable[layout.CapabilityApplication]),
-			// No registry claim exists in the fake, so the profile selects
-			// the Longhorn shape, exactly like a fresh Init.
-			RegistryStorageClass: bundle.StorageClassName,
-
+			ClusterName:        record.Cluster,
+			IngressHost:        record.Endpoints.API,
+			RegistryDomain:     record.Endpoints.Registry,
+			TokenKeyPEM:        "key-pem",
+			TokenCertPEM:       "cert-pem",
+			NodePullSecret:     "pull-secret-value",
+			ACMEEmail:          record.TLS.IssuerEmail,
+			ACMEServer:         record.TLS.ACMEServer,
+			Capabilities:       layout.UnionCapabilities(expectedLayout.Nodes),
+			DatabaseTier:       topology.DatabaseTier,
+			DatabaseStorage:    DefaultDatabaseStorage,
+			RegistryStorage:    DefaultRegistryStorage,
 			InstallationRecord: canonical,
 		},
 	}
 	require.Equal(t, expected, profile)
 	require.Equal(t, bundle.Hash(expected), bundle.Hash(profile))
 	require.Equal(t, topology.DatabaseTier, live.Topology().DatabaseTier)
-}
-
-// TestLiveProfileRegistryStorageClass pins the migration-safety contract:
-// the profile renders the registry shape the cluster already has, because
-// the class is immutable on an existing claim and a converge that renders
-// anything else would wedge forever.
-func TestLiveProfileRegistryStorageClass(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	fake := &host.Fake{FS: map[string][]byte{
-		K3sRegistriesPath: []byte(k3sRegistriesYAML("pull-secret-value")),
-	}}
-
-	legacyClass := "local-path"
-	legacyClaim := &corev1.PersistentVolumeClaim{
-		ObjectMeta: metav1.ObjectMeta{Name: "skali-registry-data", Namespace: bundle.Namespace},
-		Spec:       corev1.PersistentVolumeClaimSpec{StorageClassName: &legacyClass},
-	}
-	objects := append(liveProfileObjects(), legacyClaim)
-	profile, _, err := LiveProfile(ctx, fakeClientWith(objects...), fake, liveProfileRecord())
-	require.NoError(t, err)
-	require.Empty(t, profile.Production.RegistryStorageClass,
-		"a legacy local-path claim must keep the legacy registry shape")
-
-	migratedClass := bundle.StorageClassName
-	migratedClaim := &corev1.PersistentVolumeClaim{
-		ObjectMeta: metav1.ObjectMeta{Name: "skali-registry-data", Namespace: bundle.Namespace},
-		Spec:       corev1.PersistentVolumeClaimSpec{StorageClassName: &migratedClass},
-	}
-	objects = append(liveProfileObjects(), migratedClaim)
-	profile, _, err = LiveProfile(ctx, fakeClientWith(objects...), fake, liveProfileRecord())
-	require.NoError(t, err)
-	require.Equal(t, bundle.StorageClassName, profile.Production.RegistryStorageClass)
-
-	// A record without a storage driver reads as local: no skali-app
-	// registry shape even with the claim absent, and the profile carries
-	// the local driver.
-	legacyRecord := liveProfileRecord()
-	legacyRecord.StorageDriver = ""
-	profile, _, err = LiveProfile(ctx, fakeClientWith(liveProfileObjects()...), fake, legacyRecord)
-	require.NoError(t, err)
-	require.Equal(t, bundle.StorageDriverLocal, profile.Production.StorageDriver)
-	require.Empty(t, profile.Production.RegistryStorageClass,
-		"the local driver always keeps the legacy registry shape")
 }
 
 func TestLiveProfileRefusals(t *testing.T) {
@@ -215,5 +164,4 @@ func TestLiveProfileRefusals(t *testing.T) {
 	// The full profile reconstructs without a separate Studio deployment.
 	_, _, err = LiveProfile(ctx, fakeClientWith(liveProfileObjects()...), fake, liveProfileRecord())
 	require.NoError(t, err)
-
 }

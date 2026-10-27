@@ -21,7 +21,6 @@ Print the join command for this cluster
 | `--server` | `string` | `""` | advertised coordinator endpoint override (k3s endpoint for legacy clusters) |
 | `--ttl` | `duration` | `24h0m0s` | invitation lifetime for reconciled clusters |
 | `--verbose` | `bool` | `false` | show every recorded detail under live steps (TLS issuance fields, health snapshots) and dev proxy relay diagnostics (inherited) |
-| `--vm` | `string` | `skali` | name of the Lima VM hosting the skali node (macOS only) (inherited) |
 
 ## Subcommands
 

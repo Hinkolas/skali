@@ -29,7 +29,7 @@ a host, or tampers with builds, images, or the installer's trust
 (checksums, join tokens, mTLS between nodes).
 
 Out of scope: vulnerabilities in the operators Skali deploys (k3s,
-CloudNativePG, Traefik, cert-manager, SeaweedFS, Longhorn), which belong
+CloudNativePG, Traefik, cert-manager, SeaweedFS), which belong
 to their upstream projects, unless Skali's configuration of them is the
 cause.
 

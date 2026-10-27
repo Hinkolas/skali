@@ -1,9 +1,7 @@
 // Package host abstracts privileged execution on one target host. The
 // installer engine mutates hosts exclusively through Runner, so the same
 // engine runs directly on a Linux host (the binary runs under sudo),
-// against a scripted Fake in tests, and against a Lima-managed VM: Lima
-// wraps every call in `limactl shell <vm> sudo`, which makes a
-// macOS-managed VM a first-class install target rather than a test rig.
+// and against a scripted Fake in tests.
 package host
 
 import (
@@ -82,14 +80,6 @@ type Runner interface {
 	Remove(ctx context.Context, path string) error
 	Stat(ctx context.Context, path string) (Info, error)
 	ProbeHTTP(ctx context.Context, request HTTPRequest) (HTTPResponse, error)
-}
-
-// APIAddresser is implemented by runners whose target host is not this
-// machine. It reports the host:port on which this machine reaches the
-// guest's Kubernetes API server. Local deliberately does not implement it,
-// so the local kubeconfig is used byte for byte.
-type APIAddresser interface {
-	APIAddress(ctx context.Context) (string, error)
 }
 
 // Local runs directly on this host. It assumes the current process already

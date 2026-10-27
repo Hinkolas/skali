@@ -55,48 +55,14 @@ func TestSeedInitInputsMissingRegistryNonInteractive(t *testing.T) {
 
 func TestSeedInitInputsNilEndpointsPromptsAll(t *testing.T) {
 	// The oldest records carry no endpoints or tls blocks at all; every
-	// field is prompted in order, including the storage driver (empty
-	// keeps local).
+	// field is prompted in order.
 	record := &installer.Record{}
 	opts := installer.InitOptions{}
-	input := "skali.example.com\n\nops@example.com\nlonghorn\n"
+	input := "skali.example.com\n\nops@example.com\n"
 	require.NoError(t, seedInitInputs(inputReader(input), true, record, &opts))
 	require.Equal(t, "skali.example.com", opts.Endpoints.API)
 	require.Equal(t, "cr.skali.example.com", opts.Endpoints.Registry)
 	require.Equal(t, "ops@example.com", opts.TLS.IssuerEmail)
-	require.Equal(t, "longhorn", opts.StorageDriver)
-}
-
-func TestSeedInitInputsStorageDriver(t *testing.T) {
-	// Fresh initialization, empty answer: the default is local.
-	fresh := &installer.Record{}
-	opts := installer.InitOptions{}
-	input := "skali.example.com\n\nops@example.com\n\n"
-	require.NoError(t, seedInitInputs(inputReader(input), true, fresh, &opts))
-	require.Equal(t, "local", opts.StorageDriver)
-
-	// An invalid answer is refused.
-	opts = installer.InitOptions{}
-	input = "skali.example.com\n\nops@example.com\nzfs\n"
-	err := seedInitInputs(inputReader(input), true, fresh, &opts)
-	require.ErrorContains(t, err, "storage driver must be local or longhorn")
-
-	// An existing cluster is never re-asked: the recorded driver stands,
-	// and enabling longhorn goes through init --storage-driver.
-	recorded := &installer.Record{
-		Endpoints:     &installer.Endpoints{API: "skali.example.com", Registry: "cr.skali.example.com"},
-		TLS:           &installer.TLSConfig{IssuerEmail: "ops@example.com"},
-		StorageDriver: "local",
-	}
-	opts = installer.InitOptions{}
-	require.NoError(t, seedInitInputs(inputReader(""), true, recorded, &opts))
-	require.Empty(t, opts.StorageDriver, "empty keeps the recorded driver")
-
-	// A preset option (the --storage-driver flag) suppresses the prompt.
-	opts = installer.InitOptions{StorageDriver: "longhorn"}
-	input = "skali.example.com\n\n\nops@example.com\n"
-	require.NoError(t, seedInitInputs(inputReader(input), true, fresh, &opts))
-	require.Equal(t, "longhorn", opts.StorageDriver)
 }
 
 func TestPrintUpgradePlanVariants(t *testing.T) {

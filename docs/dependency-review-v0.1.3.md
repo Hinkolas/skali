@@ -1,5 +1,13 @@
 # v0.1.3 dependency review — 2026-10-22
 
+**Scope update — 2026-10-27:** Longhorn and macOS-hosted clusters have been
+removed from the next release. D5 is retired from that release's scope;
+the Lima/socket_vmnet parts of D7 are also retired. Their historical scans
+below describe earlier candidates, not current shipped dependencies. k3d
+and the remaining runtime/build dependencies still require release review.
+Lima remains an optional developer tool for the Linux installer test VMs.
+
+
 Review for [#184](https://github.com/Hinkolas/skali/issues/184), based on
 `2912a2b81730ea10b819f63aeb2c9167a1a3163d` plus the Vitest patch described
 below. **This is a completed inventory and risk assessment, not a clean
@@ -365,7 +373,7 @@ AUDIT_EXTRA_IMAGES=ghcr.io/hinkolas/skalid:<candidate> \
   node scripts/audit-images.mjs .cache/dependency-audit/candidate
 ```
 
-Image scope can be narrowed with `AUDIT_SCOPES=runtime,longhorn,build,examples,candidate`
+Image scope can be narrowed with `AUDIT_SCOPES=runtime,build,examples,candidate`
 and `AUDIT_PLATFORMS=linux/amd64,linux/arm64`. `AUDIT_IMAGE_SOURCE=docker`
 supports locally built candidate images. The defaults scan all scopes on both
 architectures directly from registries. The runner exits 1 for high/critical
@@ -388,9 +396,8 @@ npm audit --prefix website --package-lock-only --ignore-scripts --json
 /tmp/skali-audit-tools/govulncheck -mode=binary -json /path/to/verified/tool
 ```
 
-Re-download native tools from the exact pins in `internal/localdev/k3d.go`
-and `internal/installer/limavm/provision.go`, verify the repository checksums,
-and scan each host binary. Check upstream security/release notices as well as
+Re-download k3d from the exact pin in `internal/localdev/k3d.go`, verify the
+repository checksums, and scan each host binary. Check upstream security/release notices as well as
 automated results. Record fixed findings, remaining applicability decisions,
 new exact inputs and verification references in a dated review. Preserve raw
 reports with the final release evidence before local/CI retention expires.

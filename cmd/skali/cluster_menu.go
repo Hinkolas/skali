@@ -30,20 +30,6 @@ func runClusterRoot(command *cobra.Command) error {
 
 	banner(out)
 
-	present, err := darwinPrelude(ctx, out, vmPolicyStatus, "")
-	if err != nil {
-		return err
-	}
-	if !present {
-		printDarwinFreshHeader(out)
-		if !cliprompt.Interactive() {
-			fmt.Fprintln(out, "This host is not part of a Skali installation.")
-			fmt.Fprintln(out, "Non-interactive installs run: skali cluster install --config node.yaml")
-			return nil
-		}
-		return runInteractiveFreshFlow(ctx, out)
-	}
-
 	detected, err := installer.Detect(ctx, runner())
 	if err != nil {
 		return err
@@ -110,10 +96,6 @@ func printFreshHeader(out *os.File, detected *installer.Host) {
 	printStatusRow(out, style, "status", style.BrightYellow(string(detected.State)))
 	printStatusRow(out, style, "os",
 		fmt.Sprintf("%s (linux/%s)", orUnknown(detected.OS), goArch(detected.Arch)))
-	if darwinInfo != nil {
-		printStatusRow(out, style, "vm",
-			fmt.Sprintf("%s (Lima, network %s)", darwinInfo.Instance, darwinInfo.Network))
-	}
 	if detected.K3sVersion != "" {
 		printStatusRow(out, style, "k3s",
 			fmt.Sprintf("%s %s", detected.K3sVersion, style.BrightYellow("(unmanaged)")))
@@ -153,10 +135,6 @@ func printStatus(out *os.File, status *installer.Status, all ...bool) {
 		label = style.BrightGreen("healthy") + " · " + label
 	}
 	printStatusRow(out, style, "status", label)
-	if darwinInfo != nil {
-		printStatusRow(out, style, "vm",
-			fmt.Sprintf("%s (Lima, network %s)", darwinInfo.Instance, darwinInfo.Network))
-	}
 	if record != nil && record.Lifecycle != nil && !record.InstallComplete() {
 		printStatusRow(out, style, "install",
 			fmt.Sprintf("%s at phase %s", record.Lifecycle.Status, record.Lifecycle.Phase))
@@ -496,10 +474,6 @@ func runInteractiveResume(ctx context.Context, out *os.File, reader *bufio.Reade
 	tasks := clirender.NewTasks(out)
 	progress := newTaskProgress(tasks)
 	opts.Progress = progress
-	if err := applyDarwinInstallOptions(ctx, &opts); err != nil {
-		progress.Abort()
-		return err
-	}
 	_, err := installer.Install(ctx, runner(), opts)
 	if err != nil {
 		progress.Abort()

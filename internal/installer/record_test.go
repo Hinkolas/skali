@@ -113,17 +113,7 @@ func TestRecordCanonicalYAML(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, first, second)
 
-	// The storage driver is a bundle-hash input: absent on legacy records
-	// (reading as local), present once init records a choice.
-	require.NotContains(t, first, "storageDriver")
-	require.Equal(t, "local", record.AppStorageDriver())
-	record.StorageDriver = "longhorn"
-	require.Equal(t, "longhorn", record.AppStorageDriver())
-	stamped, err := record.CanonicalYAML()
-	require.NoError(t, err)
-	require.Contains(t, stamped, "storageDriver: longhorn")
-
-	// The platform preference behaves the same way: absent until chosen,
+	// The platform preference is absent until chosen,
 	// then a bundle-hash input in recorded order.
 	require.NotContains(t, first, "platformPreference")
 	record.PlatformPreference = []string{"linux/arm64", "linux/amd64"}

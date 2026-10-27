@@ -1,7 +1,6 @@
 package localdev
 
-// Managed k3d: skali dev owns its one hard dependency beyond docker the
-// same way skali cluster owns Lima (internal/installer/limavm): a pinned
+// Managed k3d: skali dev owns its one hard dependency beyond Docker with a pinned
 // release verified against the sha256 from its published checksums.txt,
 // downloaded rootless into the managed bin directory, and only used when
 // no k3d is on PATH. An existing k3d (brew or otherwise) always wins.

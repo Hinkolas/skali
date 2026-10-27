@@ -8,7 +8,6 @@ import (
 	"io"
 	"net"
 	"os"
-	"runtime"
 	"slices"
 	"strings"
 
@@ -22,21 +21,12 @@ const manualAddressValue = "manual"
 
 // promptNodeNetwork settles how this host is addressed. The cluster
 // address is chosen among the detected ones: a single-homed host has
-// nothing to decide, and a Mac-hosted node takes the managed VM's address.
+// nothing to decide.
 // The public addresses are always asked, because the addresses a router
 // maps onto this host (floating, NAT, port forwarding) are assigned to no
 // interface and can only be typed.
 func promptNodeNetwork(ctx context.Context, out *os.File, reader *bufio.Reader) (installer.NodeNetwork, error) {
 	session := promptSession(out, reader)
-	if runtime.GOOS == "darwin" {
-		// The Lima path pins the VM's own address on the network the fleet
-		// reaches it through; only the public declaration is left to ask.
-		public, err := promptTypedPublicIPs(ctx, session)
-		if err != nil {
-			return installer.NodeNetwork{}, err
-		}
-		return installer.NodeNetwork{PublicIPs: public}.Normalize(), nil
-	}
 	addresses, err := installer.DetectHostAddresses(ctx, runner())
 	if err != nil || len(addresses) == 0 {
 		// Address detection is a convenience. Without it the install keeps

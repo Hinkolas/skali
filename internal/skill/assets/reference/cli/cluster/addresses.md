@@ -21,5 +21,4 @@ Declare how this host is addressed inside and outside the cluster
 | `--public-ip` | `stringSlice` | `[]` | address reachable from outside the cluster network; repeatable |
 | `--tls-san` | `stringSlice` | `[]` | additional name or address for the kubernetes api certificate; repeatable |
 | `--verbose` | `bool` | `false` | show every recorded detail under live steps (TLS issuance fields, health snapshots) and dev proxy relay diagnostics (inherited) |
-| `--vm` | `string` | `skali` | name of the Lima VM hosting the skali node (macOS only) (inherited) |
 | `--yes` | `bool` | `false` | record the declaration without confirmation |

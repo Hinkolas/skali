@@ -6,10 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/Hinkolas/skali/internal/kube"
 	"github.com/Hinkolas/skali/internal/layout"
@@ -36,8 +34,8 @@ func (silentProgress) Skip(string)  {}
 func (silentProgress) Note(string)  {}
 
 // Converge applies the profile's bundle in dependency order with readiness
-// waits: namespace, blessed operators (CNPG and cert-manager, plus Longhorn
-// under that storage driver), the skali cluster issuer and strict-SNI edge
+// waits: namespace, blessed operators (CNPG and cert-manager), the skali
+// cluster issuer and strict-SNI edge
 // policy, the bootstrap database sized to its tier, the managed registry,
 // and skalid with the in-cluster installation record. It never applies the
 // bootstrap-user stage (see EnsureAdminUser) and never waits on TLS
@@ -77,22 +75,8 @@ func Converge(ctx context.Context, client *kube.Client, profile Profile, progres
 	if err := applier.ApplyManifest(ctx, CNPGManifest()); err != nil {
 		return err
 	}
-	longhorn := production != nil && production.StorageDriver == StorageDriverLonghorn
 	if err := applier.ApplyManifest(ctx, CertManagerManifest()); err != nil {
 		return err
-	}
-	if longhorn {
-		// Longhorn rides the operators stage. The disk labels precede the
-		// manifest so the first manager start already sees which nodes
-		// hold replica data (fresh nodes get the label at registration;
-		// this stamp covers nodes that joined before this bundle release
-		// and self-heals a stripped label).
-		if err := ensureLonghornDiskLabels(ctx, client); err != nil {
-			return err
-		}
-		if err := applier.ApplyManifest(ctx, LonghornManifest()); err != nil {
-			return err
-		}
 	}
 	if err := applier.WaitDeploymentReady(ctx, "cnpg-system", "cnpg-controller-manager"); err != nil {
 		return err
@@ -113,48 +97,7 @@ func Converge(ctx context.Context, client *kube.Client, profile Profile, progres
 		}
 	}
 	operators := cnpgDetail + ", cert-manager " + CertManagerVersion + ", Traefik (k3s)"
-	if longhorn {
-		// A first install pulls over a gigabyte of Longhorn images;
-		// narrate the wait so a quiet Studio is not mistaken for a hang.
-		progress.Note("waiting for Longhorn (a first install pulls its images)")
-		if err := applier.WaitDaemonSetReady(ctx, "longhorn-system", "longhorn-manager"); err != nil {
-			return err
-		}
-		if err := applier.WaitDeploymentReady(ctx, "longhorn-system", "longhorn-driver-deployer"); err != nil {
-			return err
-		}
-		// The CSI workloads are created at runtime by the driver deployer,
-		// not shipped in the manifest; the NotFound polling inside the
-		// waits covers the creation race. These two gate actual
-		// provisioning ability.
-		if err := applier.WaitDeploymentReady(ctx, "longhorn-system", "csi-provisioner"); err != nil {
-			return err
-		}
-		if err := applier.WaitDaemonSetReady(ctx, "longhorn-system", "longhorn-csi-plugin"); err != nil {
-			return err
-		}
-		operators = cnpgDetail + ", cert-manager " + CertManagerVersion + ", Longhorn " + LonghornVersion + ", Traefik (k3s)"
-	}
 	progress.Done(operators)
-
-	if longhorn {
-		progress.Start("Apply storage class")
-		err := applier.ApplyObjects(ctx, objects.Storage)
-		if err != nil && apierrors.IsInvalid(err) {
-			// StorageClass parameters are immutable: a replica-count
-			// change (the topology grew or shrank) means delete and
-			// re-apply. Deleting a class never touches bound claims;
-			// existing volumes keep their creation-time replica count.
-			if deleteErr := client.Clientset.StorageV1().StorageClasses().Delete(ctx, StorageClassName, metav1.DeleteOptions{}); deleteErr != nil && !apierrors.IsNotFound(deleteErr) {
-				return fmt.Errorf("bundle: replace storage class %s: %w", StorageClassName, deleteErr)
-			}
-			err = applier.ApplyObjects(ctx, objects.Storage)
-		}
-		if err != nil {
-			return err
-		}
-		progress.Done(fmt.Sprintf("%s, %d replica(s)", StorageClassName, production.StorageReplicas))
-	}
 
 	progress.Start("Apply cluster issuer")
 	if err := applier.ApplyObjectsRetry(ctx, objects.Issuer, 2*time.Minute); err != nil {
@@ -221,29 +164,6 @@ func Converge(ctx context.Context, client *kube.Client, profile Profile, progres
 	}
 	progress.Done(profile.SkalidImage)
 
-	return nil
-}
-
-// ensureLonghornDiskLabels stamps the Longhorn disk label onto every
-// application-capable node so replica data only lands there (the vendored
-// manifest is patched to create-default-disk-on-labeled-nodes). Idempotent;
-// nodes already carrying the label are left untouched.
-func ensureLonghornDiskLabels(ctx context.Context, client *kube.Client) error {
-	selector := layout.CapabilityLabel(layout.CapabilityApplication) + "=" + layout.CapabilityLabelValue
-	nodes, err := client.Clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{LabelSelector: selector})
-	if err != nil {
-		return fmt.Errorf("bundle: list application nodes: %w", err)
-	}
-	patch := fmt.Appendf(nil, `{"metadata":{"labels":{%q:%q}}}`,
-		layout.LonghornDiskLabel, layout.LonghornDiskLabelValue)
-	for _, node := range nodes.Items {
-		if node.Labels[layout.LonghornDiskLabel] == layout.LonghornDiskLabelValue {
-			continue
-		}
-		if _, err := client.Clientset.CoreV1().Nodes().Patch(ctx, node.Name, types.MergePatchType, patch, metav1.PatchOptions{}); err != nil {
-			return fmt.Errorf("bundle: label node %s for longhorn disks: %w", node.Name, err)
-		}
-	}
 	return nil
 }
 

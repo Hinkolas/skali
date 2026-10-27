@@ -254,7 +254,7 @@ The daemon's daily scan reads the GitHub releases API (`SKALI_UPDATE_SCAN`,
 with a kind (offline, not found, rate limited, unavailable, invalid) that the
 Software update page turns into a notice, and is retried hourly until the
 feed answers again; the last release found stays visible and updatable.
-Version pins for k3s, k3d, CNPG, cert-manager, Longhorn, and Lima live in
+Version pins for k3s, k3d, CNPG, cert-manager, and SeaweedFS live in
 their packages next to their checksums; bump them together. A PostgreSQL
 pool image bump moves existing pools too; follow
 [PostgreSQL patch updates](postgres-patch-updates.md).
@@ -262,7 +262,7 @@ pool image bump moves existing pools too; follow
 Before cutting a release, repeat the [dependency review](dependency-review-v0.1.3.md).
 The daily/manual `audit.yml` checks Go and npm advisories separately from
 release CI. Its manual `images=true` input also inventories and scans bundled,
-optional storage, build, and example images on both Linux architectures and
+build and example images on both Linux architectures and
 uploads dated reports. Review findings and record dispositions against the
 actual candidate; a green source scan does not assess third-party images.
 

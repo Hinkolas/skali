@@ -261,7 +261,7 @@ type fsStats struct {
 // parseStatsSummary reduces one kubelet summary. Claims whose reported
 // capacity equals the node filesystem's are dropped: hostPath-backed
 // provisioners (local-path) answer statfs of the whole disk for every
-// claim, and those numbers are noise, not usage. CSI volumes (Longhorn)
+// claim, and those numbers are noise, not usage. CSI volumes
 // report their own filesystem and pass.
 func parseStatsSummary(body []byte) (statsSummary, error) {
 	var document summaryDocument

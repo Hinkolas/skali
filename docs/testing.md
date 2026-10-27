@@ -15,7 +15,6 @@ cluster coverage**. It is not the default inner development loop.
 | Docker integrations | `task test:docker` | Docker/buildx and a throwaway registry. |
 | Development end to end | `task test:dev` | Real CLI workflow; creates and mutates its own `skali-dev-e2e` clusters. |
 | Linux installer end to end | `task lima:up`, then `task test:cluster` | Dedicated Lima server/agent VMs with real systemd. |
-| macOS installer end to end | `task test:cluster:darwin` | Creates/deletes its own VM; stop the Linux end-to-end VMs first. |
 | Studio | `cd studio && npm test && npm run check && npm run lint` | Frontend tests and static checks. |
 
 CI runs the Go suite with Postgres, vet/format/generated-file checks, applicable

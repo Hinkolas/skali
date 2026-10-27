@@ -57,6 +57,14 @@ shipped is in the [release notes](https://github.com/Hinkolas/skali/releases).
 - **Preview environments:** one environment per branch
 - **Autoscaling:** scale applications with their load
 
+## Reconsider when needed
+
+Replicated application-volume storage (previously Longhorn) and managed
+macOS cluster hosts have been removed to keep the supported system smaller.
+Reintroduce them only for a concrete workload that needs them, with their
+own design and verification scope. The macOS CLI and Docker-based local
+development remain supported.
+
 ## Tracking work
 
 The roadmap describes directions, not commitments. Open issues should name

@@ -277,8 +277,6 @@ admin:
   passwordFile: %s
 skalid:
   image: skalid:dev
-storage:
-  driver: longhorn
 `, passwordFile))
 	// The tar imports the daemon, including its Studio, into containerd.
 	initOut, code := h.vm("sudo", "/tmp/skali-a", "cluster", "init", "--config", initConfig,

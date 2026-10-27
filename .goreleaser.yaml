@@ -16,8 +16,8 @@ builds:
     main: ./cmd/skali
     binary: skali
     env: [CGO_ENABLED=0]
-    # darwin is a real target: `skali cluster` runs natively on the Mac and
-    # manages a Lima VM from there.
+    # macOS supports the CLI and Docker-based local development;
+    # managed cluster hosts run Linux.
     goos: [linux, darwin]
     goarch: [amd64, arm64]
     ldflags:

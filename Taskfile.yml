@@ -24,7 +24,7 @@ tasks:
       - go build -ldflags "{{.LDFLAGS}}" -o bin/skalid ./cmd/skalid
       - go build -ldflags "{{.LDFLAGS}}" -o bin/skali ./cmd/skali
       # hostd always runs inside the Linux managed host (directly or in
-      # Lima), even when the CLI itself is built on macOS.
+      # test VMs), even when the CLI itself is built on macOS.
       - GOOS=linux go build -ldflags "{{.LDFLAGS}}" -o bin/skali-hostd ./cmd/skali-hostd
 
   build:image:
@@ -53,13 +53,14 @@ tasks:
   install:server:
     desc: "Build everything from this checkout and run the interactive cluster installer (source install: no remote binaries or images; needs go, Node 22, and docker)"
     interactive: true
+    preconditions:
+      - sh: test "{{OS}}" = linux
+        msg: "Cluster hosts require Linux; use skali dev for local development on macOS."
     cmds:
       - task: build
       - task: build:image
-      # Linux installs this host (hence sudo); macOS manages a Lima VM
-      # rootless. The image tar is imported into the node during init instead of
-      # pulling from a registry.
-      - '{{if eq OS "linux"}}sudo {{end}}./bin/skali cluster --image-tar .cache/skalid-dev.tar'
+      # Install on this Linux host. Import the image tar during init.
+      - 'sudo ./bin/skali cluster --image-tar .cache/skalid-dev.tar'
 
   # --- Dev loop ---
 
@@ -294,11 +295,6 @@ tasks:
     desc: Run the skali cluster end-to-end suite in the Lima VM (task lima:up first)
     cmds:
       - TEST_SKALI_CLUSTER=1 go test -timeout 50m -count=1 -run 'TestClusterEndToEnd' ./cmd/skali/...
-
-  test:cluster:darwin:
-    desc: Run the darwin skali cluster end-to-end suite natively (creates and deletes its own small VM; stop the Linux e2e VMs first)
-    cmds:
-      - TEST_SKALI_CLUSTER_DARWIN=1 go test -timeout 40m -count=1 -run 'TestClusterDarwin' ./cmd/skali/...
 
   # --- Test infrastructure ---
 
