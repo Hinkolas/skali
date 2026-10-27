@@ -6,6 +6,9 @@ import SwiftUI
 struct StepLogView: View {
     let step: RunStep
     let api: any ClusterAPI
+    /// What an empty log says.
+    var emptyTitle = "No Log Output"
+    var emptyDescription: String?
 
     @State private var entries: [LogEntry] = []
     @State private var loaded = false
@@ -44,7 +47,8 @@ struct StepLogView: View {
             } else if !loaded {
                 ProgressView()
             } else if entries.isEmpty {
-                ContentUnavailableView("No Log Output", systemImage: "text.alignleft")
+                ContentUnavailableView(emptyTitle, systemImage: "text.alignleft",
+                                       description: emptyDescription.map { Text($0) })
             }
         }
         .navigationTitle(step.title)

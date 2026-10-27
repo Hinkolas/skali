@@ -61,6 +61,14 @@ func (s *Service) PutInsights(ctx context.Context, stepID uuid.UUID, redactor *r
 	return nil
 }
 
+// DeleteInsights withdraws a step's report; none is not an error.
+func (s *Service) DeleteInsights(ctx context.Context, stepID uuid.UUID) error {
+	if err := s.st.DeleteBuildInsights(ctx, stepID); err != nil {
+		return fmt.Errorf("buildstore: delete insights: %w", err)
+	}
+	return nil
+}
+
 // GetInsights reads the insights report of a step's build; ErrNotFound
 // when none was uploaded.
 func (s *Service) GetInsights(ctx context.Context, stepID uuid.UUID) (*build.Insights, error) {

@@ -888,6 +888,7 @@ func TestClientStepAuthorization(t *testing.T) {
 	})
 	require.Equal(t, http.StatusCreated, status, "%v", body)
 	runID := body["deployment"].(map[string]any)["run_id"].(string)
+	deploymentID := body["deployment"].(map[string]any)["id"].(string)
 
 	// Another actor, even a maintainer of the environment, is shut out of
 	// the run's client steps; a non-member does not see the run at all.
@@ -937,6 +938,19 @@ func TestClientStepAuthorization(t *testing.T) {
 	}
 	status, body = a.do("PUT", "/v1/steps/"+buildStepID+"/build-insights", intruder, report)
 	require.Equal(t, http.StatusForbidden, status, "%v", body)
+
+	// A deployment that closed while its report was stored (its status
+	// settles before its run, and its staged secrets go in between) gets
+	// no report: the redactor may have missed those secrets.
+	_, err = a.st.Pool.Exec(context.Background(), "UPDATE deployments SET status = 'cancelled' WHERE id = $1", deploymentID)
+	require.NoError(t, err)
+	status, body = a.do("PUT", "/v1/steps/"+buildStepID+"/build-insights", owner, report)
+	require.Equal(t, http.StatusConflict, status, "%v", body)
+	require.Contains(t, errMessage(body), "the deployment closed")
+	status, _ = a.do("GET", "/v1/steps/"+buildStepID+"/build-insights", owner, nil)
+	require.Equal(t, http.StatusNotFound, status)
+	_, err = a.st.Pool.Exec(context.Background(), "UPDATE deployments SET status = 'preparing' WHERE id = $1", deploymentID)
+	require.NoError(t, err)
 
 	// Once the run settles, even the owner's writes are refused.
 	status, _ = a.do("POST", "/v1/runs/"+runID+"/cancel", owner, nil)

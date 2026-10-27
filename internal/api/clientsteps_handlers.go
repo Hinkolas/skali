@@ -10,6 +10,7 @@ import (
 
 	"github.com/Hinkolas/skali/internal/build"
 	"github.com/Hinkolas/skali/internal/buildstore"
+	"github.com/Hinkolas/skali/internal/deploy"
 	"github.com/Hinkolas/skali/internal/journal"
 	"github.com/Hinkolas/skali/internal/redact"
 	"github.com/Hinkolas/skali/internal/store"
@@ -227,6 +228,23 @@ func (h *clientStepsHandlers) putBuildInsights(w http.ResponseWriter, r *http.Re
 			return
 		}
 		writeInternalError(r.Context(), w, "put build insights", err)
+		return
+	}
+	// Closing a deployment settles its status first and only then discards
+	// the staged secrets the redactor read. A deployment still preparing
+	// now kept them through redaction; one that closed meanwhile may not
+	// have, so its report is withdrawn.
+	deployment, err := h.st.GetDeploymentByRunID(r.Context(), &run.ID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		writeInternalError(r.Context(), w, "get deployment", err)
+		return
+	}
+	if err == nil && deployment.Status != string(deploy.DeploymentPreparing) {
+		if err := h.builds.DeleteInsights(r.Context(), step.ID); err != nil {
+			writeInternalError(r.Context(), w, "withdraw build insights", err)
+			return
+		}
+		writeError(w, http.StatusConflict, codeConflict, "the deployment closed while the report was stored")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

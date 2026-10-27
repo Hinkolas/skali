@@ -12,6 +12,15 @@ import (
 	"github.com/google/uuid"
 )
 
+const deleteBuildInsights = `-- name: DeleteBuildInsights :exec
+DELETE FROM build_insights WHERE step_id = $1
+`
+
+func (q *Queries) DeleteBuildInsights(ctx context.Context, stepID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteBuildInsights, stepID)
+	return err
+}
+
 const getBuildInsights = `-- name: GetBuildInsights :one
 SELECT step_id, outcome, engine, platform, started_at, finished_at, error, steps, log_gzip, log_lines, log_truncated, created_at FROM build_insights WHERE step_id = $1
 `

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { api, ApiError } from '$lib/api/client';
+	import StepLogView from './StepLogView.svelte';
 	import {
 		INSIGHTS_RETRY_MS,
 		reportMayArrive,
@@ -91,6 +92,8 @@
 	<div class="text-text-faint py-1 text-md">Waiting for the build's insights…</div>
 {:else if missing}
 	<div class="text-text-faint py-1 text-md">No insights available for this build.</div>
+	<!-- Builds from before insights kept their output in the step's log. -->
+	<StepLogView {stepId} quiet />
 {:else if insights}
 	<div class="flex flex-col gap-2 py-1">
 		<div class="text-text-secondary flex flex-wrap gap-x-4 gap-y-1 text-sm">

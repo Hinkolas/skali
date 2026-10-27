@@ -5,7 +5,8 @@ import SwiftUI
 /// ended. Build output never streams into the step's log, so a running
 /// build has nothing to show yet. The CLI settles the step before its
 /// report lands, so a report missing just after the build finished is
-/// asked for again for a while.
+/// asked for again for a while. A build without a report shows the log
+/// its step recorded, which builds from before insights still have.
 struct BuildInsightsView: View {
     let runID: String
     let api: any ClusterAPI
@@ -24,7 +25,20 @@ struct BuildInsightsView: View {
         _step = State(initialValue: step)
     }
 
+    /// A pending build has not started; neither it nor a running one has
+    /// a report yet.
+    private var unfinished: Bool { step.isActive || step.status == "pending" }
+
     var body: some View {
+        if loaded, insights == nil, error == nil, !unfinished {
+            StepLogView(step: step, api: api, emptyTitle: "No Insights",
+                        emptyDescription: "No insights available for this build.")
+        } else {
+            report
+        }
+    }
+
+    private var report: some View {
         List {
             if let insights {
                 Section {
@@ -80,7 +94,7 @@ struct BuildInsightsView: View {
             }
         }
         .overlay {
-            if step.isActive {
+            if unfinished {
                 ContentUnavailableView("Build Running", systemImage: "hammer",
                                        description: Text("The build's insights arrive once it ends."))
             } else if let error {
@@ -88,9 +102,6 @@ struct BuildInsightsView: View {
                                        description: Text(error))
             } else if !loaded {
                 ProgressView()
-            } else if insights == nil {
-                ContentUnavailableView("No Insights", systemImage: "hammer",
-                                       description: Text("No insights available for this build."))
             }
         }
         .navigationTitle(step.title)
@@ -98,23 +109,32 @@ struct BuildInsightsView: View {
         .task(id: step.id) { await follow() }
     }
 
-    /// Follows a running build to its end, then loads its report.
+    /// Follows an unfinished build to its end through the run's updates,
+    /// reconnecting after a dropped stream, then loads its report.
     private func follow() async {
-        if step.isActive {
+        while unfinished {
+            var settled = false
             do {
                 for try await tree in api.runUpdates(id: runID) {
                     if let latest = tree.step(id: step.id) { step = latest }
-                    if !step.isActive { break }
+                    settled = ["succeeded", "failed", "cancelled"].contains(tree.run.status)
+                    if !unfinished || settled { break }
                 }
+            } catch is CancellationError {
+                return
+            } catch {}
+            if !unfinished || settled { break }
+            do {
+                try await Task.sleep(for: .seconds(2))
             } catch {
-                if error is CancellationError { return }
+                return
             }
         }
         await load()
     }
 
     private func load() async {
-        guard !step.isActive else { return }
+        guard !unfinished else { return }
         do {
             while true {
                 insights = try await api.buildInsights(stepID: step.id)
