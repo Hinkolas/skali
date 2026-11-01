@@ -1,6 +1,6 @@
 ---
 name: skali
-description: Author Skali manifests, build and deploy applications, and operate Skali through its CLI. Use for skali.yaml or skali.yml, local development, environments and values, routes, managed PostgreSQL and S3, backups, access, cluster installation or maintenance, and troubleshooting Skali commands.
+description: Author Skali manifests, build and deploy applications, and operate Skali through its CLI. Use in any project with a skali.yaml or skali.yml, including whenever it is run, tested, or debugged locally or needs a local database, object storage, or dev environment (use skali dev, never a hand-built setup). Also use for environments and values, routes, managed PostgreSQL and S3, backups, access, cluster installation or maintenance, and troubleshooting Skali commands.
 ---
 
 <!-- Managed by "skali skill install"; local edits are overwritten on reinstall. -->
@@ -10,6 +10,36 @@ description: Author Skali manifests, build and deploy applications, and operate 
 Skali runs container applications with managed PostgreSQL and S3 storage,
 configured in a project manifest. Use the CLI to establish the release and
 read its exact grammar and platform behavior before designing or editing.
+
+## Develop locally with skali dev
+
+In a project with a Skali manifest, `skali dev` is the development
+environment. It runs the manifest's databases, buckets, routes, and
+applications on a local platform with the same resolved environment a
+deployment receives. Use it by default: the user does not have to ask, and it
+is not an option to offer. Use something else only when the user explicitly
+opts out for the task at hand.
+
+- Do not build a parallel setup. No `docker run` or compose services for
+  PostgreSQL, S3-compatible storage, or a proxy; no locally installed database;
+  no hand-written env files holding connection strings. Applications read the
+  variables the manifest provides.
+- When the project lacks something for local work (a database, a bucket, a
+  migration or seed command, a dev command for an application), add it to the
+  manifest and rerun `skali dev` rather than working around it.
+- Read `skali skill read cli workflows development` before the first dev
+  command. It covers running manifest commands or one-off commands (tests,
+  migrations, seeds) on this machine with an application's local environment,
+  SQL against local databases, shells in containers, logs, and the platform
+  lifecycle.
+- `skali dev` stays in the foreground following logs. Check `skali dev status`
+  first, since the user may already have a session running. Otherwise start it
+  as a background process whose output you can read and stop.
+- If `skali dev` fails, diagnose it from its output, `skali dev status`, and
+  the logs, then fix the manifest or report the problem. Do not fall back to a
+  hand-built setup without the user's agreement. Commands that discard local
+  data, such as resetting the platform (which affects every local project) or
+  purging a project, need the user's confirmation.
 
 ## Establish the target and read its references
 
