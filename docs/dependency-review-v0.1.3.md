@@ -7,6 +7,19 @@ below describe earlier candidates, not current shipped dependencies. k3d
 and the remaining runtime/build dependencies still require release review.
 Lima remains an optional developer tool for the Linux installer test VMs.
 
+**npm update — 2026-11-01:** Studio and website audits reported
+GHSA-g3hv-75wg-m249 in minimatch 10.2.5, reached only through eslint,
+`@eslint/config-array` and `@typescript-eslint/typescript-estree`. Both
+packages now override minimatch to 11.0.3; those callers use only
+`Minimatch#match`, `Minimatch#pattern` and `minimatch()`, which 11.x keeps.
+Check, lint, build and tests pass. Four low findings remain and are accepted
+for v0.1.3: GHSA-pfhg-q3qv-9q6r and GHSA-27mw-82g8-phjj, fixed only in
+SvelteKit 3 and not applicable (no `use:enhance`, no `setHeaders`
+`cache-control`), with `@sveltejs/adapter-static` reported through them; and
+GHSA-gcqx-w48m-w2h4 in deepmerge 4.3.1, which has no patched release and is
+reached only by `@sveltejs/vite-plugin-svelte` merging its own build-time
+configuration. The SvelteKit 3 upgrade follows in v0.1.4.
+
 
 Review for [#184](https://github.com/Hinkolas/skali/issues/184), based on
 `2912a2b81730ea10b819f63aeb2c9167a1a3163d` plus the Vitest patch described
