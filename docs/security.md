@@ -64,6 +64,17 @@ Trusted proxies must overwrite `X-Real-IP` or append the actual socket peer to
 `X-Forwarded-For`; the API walks the latter from right to left and stops at the
 first untrusted hop. Invalid addresses fall back to the socket peer.
 
+On the bundled k3s edge, Traefik itself does not see visitors' addresses.
+k3s's ServiceLB forwards ports 80 and 443 to the Traefik Service with
+`externalTrafficPolicy: Cluster`, which rewrites the source to a pod-network
+address before Traefik accepts the connection. The address the API resolves
+is therefore an internal `10.42.x.x` address shared by every client whose
+traffic enters through the same node; session lists show it in place of the
+real client. The per-IP login, 2FA, and device-flow limits group those
+clients into one bucket, while per-account limits are unaffected.
+Applications behind the edge receive the same address (see
+[known limitations](limitations.md#applications-do-not-see-client-addresses)).
+
 ## Browser sessions
 
 The embedded static Studio calls the Go API on the same origin. Login and

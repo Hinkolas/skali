@@ -30,6 +30,23 @@ Declared volume sizes are advisory on the supported local-path storage.
 Volumes are not replicated, and their workloads remain tied to the node
 holding the data. See [storage](storage.md).
 
+## Applications do not see client addresses
+
+The edge passes `X-Forwarded-For` and `X-Real-Ip` to every application and
+discards values a client sent, but the address in them is not the
+visitor's. k3s's bundled load balancer forwards traffic to Traefik with
+`externalTrafficPolicy: Cluster`, which rewrites the source to an internal
+pod-network address (`10.42.x.x`) shared by everyone entering through the
+same node. Consequences:
+
+- Rate limiting, abuse blocking, IP allowlists, geolocation, and audit logs
+  in an application cannot rely on the client IP; key them on an
+  authenticated identity instead.
+- The control plane is affected the same way: session lists show internal
+  addresses, and its per-IP login limits are shared (see
+  [security](security.md#reverse-proxies-and-client-addresses)).
+- Local development behaves the same, so testing locally does not reveal it.
+
 ## Environments cannot talk to each other
 
 Every environment namespace carries an ingress default-deny network policy.
