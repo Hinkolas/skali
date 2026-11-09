@@ -45,9 +45,9 @@ Traefik unchanged or announces the visitor itself:
   [security](security.md#reverse-proxies-and-client-addresses)).
 - A load balancer that terminates TLS itself is not supported: Traefik
   issues the route certificates and must receive the TLS connection.
-- Traffic sent to a node without the edge capability still reaches Traefik,
-  but with an internal `10.42.x.x` address shared by everyone entering
-  there. Point DNS or the balancer at edge nodes only.
+- Only edge nodes answer on ports 80 and 443; a node without the edge
+  capability refuses the connection. Point DNS or the balancer at edge
+  nodes only.
 - Local development reports an address on the local Docker network.
 
 The control plane resolves its session addresses and per-IP login limits

@@ -296,8 +296,8 @@ hostname. `X-Forwarded-For` and `X-Real-Ip` carry the visitor's IP
 address when the visitor connects to an edge node directly, or through a
 TCP load balancer the cluster operator has set up with PROXY protocol
 (`edge.proxyProtocol` at `skali cluster init`). They carry the balancer's
-address behind a balancer without it, and an internal `10.42.x.x` address
-for traffic that enters through a node without the edge capability.
+address behind a balancer without it. Only nodes with the edge
+capability serve routes.
 Local development reports an address on the local Docker network, not
 the browser's. Treat the address as a hint for rate limits and logs, and
 key anything that must hold (access control, account lockout) on an
