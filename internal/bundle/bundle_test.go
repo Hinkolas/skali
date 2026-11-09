@@ -104,6 +104,16 @@ func TestRenderBundleObjects(t *testing.T) {
 		"slow registry pushes outlast Traefik's 60-second default")
 	exposed, _, _ := unstructured.NestedBool(chartValues, "ports", "metrics", "expose", "default")
 	require.True(t, exposed)
+	// Visitors' addresses survive ServiceLB only where the receiving node
+	// runs Traefik itself; the local node carries no capability labels, so
+	// nothing pins the DaemonSet there, and no balancer sends PROXY headers.
+	kind, _, _ := unstructured.NestedString(chartValues, "deployment", "kind")
+	require.Equal(t, "DaemonSet", kind)
+	policy, _, _ := unstructured.NestedString(chartValues, "service", "spec", "externalTrafficPolicy")
+	require.Equal(t, "Local", policy)
+	_, hasSelector, _ := unstructured.NestedMap(chartValues, "nodeSelector")
+	require.False(t, hasSelector)
+	require.NotContains(t, traefikValues, "proxyProtocol")
 	require.Len(t, objects.BootstrapUser, 2)
 
 	// Everything namespaced sits in skali-system; the admin password only

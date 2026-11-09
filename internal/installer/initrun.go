@@ -27,6 +27,10 @@ import (
 )
 
 // Default installer-owned volume sizes for production installations.
+// edgeRolloutTimeout bounds init's wait for k3s's helm-controller to roll
+// the Traefik chart overlay out to every edge node.
+const edgeRolloutTimeout = 5 * time.Minute
+
 const (
 	DefaultDatabaseStorage = "10Gi"
 	DefaultRegistryStorage = "20Gi"
@@ -49,6 +53,11 @@ type InitOptions struct {
 	// preference (none on a fresh installation), so headless re-runs and
 	// upgrades never flip the choice.
 	PlatformPreference []string
+	// Edge replaces the recorded edge settings (the PROXY protocol load
+	// balancer) when non-nil; nil keeps the record's, so headless re-runs
+	// and upgrades never drop a configured balancer. A non-nil value that
+	// enables nothing turns the settings off.
+	Edge *EdgeConfig
 	// Layout optionally asserts the expected membership; init refuses when
 	// the joined nodes do not match it.
 	Layout *layout.Layout
@@ -192,6 +201,19 @@ func Init(ctx context.Context, runner host.Runner, record *Record, opts InitOpti
 		platformPreference = record.PlatformPreference
 	}
 
+	// The published record is the cluster-wide authority: a reconciled
+	// cluster may re-run init from a server whose local record never saw
+	// the edge settings, and keeping its empty copy would drop the
+	// balancer's trust while the balancer keeps sending PROXY headers.
+	published, err := InClusterRecord(ctx, client)
+	if err != nil {
+		return fail(err)
+	}
+	edgeConfig, err := resolveEdgeConfig(recordedEdge(record, published), opts.Edge)
+	if err != nil {
+		return fail(err)
+	}
+
 	// The record published in-cluster carries the initialization inputs;
 	// mutate the in-memory record first so the canonical text, the bundle
 	// hash, and the eventual on-disk record all agree.
@@ -199,6 +221,7 @@ func Init(ctx context.Context, runner host.Runner, record *Record, opts InitOpti
 	record.TLS = &TLSConfig{IssuerEmail: opts.TLS.IssuerEmail, ACMEServer: opts.TLS.ACMEServer}
 	record.RegistryNode = opts.RegistryNode
 	record.PlatformPreference = platformPreference
+	record.Edge = edgeConfig
 	record.Versions.Bundle = version.Version
 	record.Versions.Installer = version.Version
 	canonical, err := record.CanonicalYAML()
@@ -212,27 +235,34 @@ func Init(ctx context.Context, runner host.Runner, record *Record, opts InitOpti
 		AuthSecret:    authSecret,
 		RegistryHost:  bundle.RegistryInternalHost,
 		Production: &bundle.Production{
-			ClusterName:        record.Cluster,
-			IngressHost:        opts.Endpoints.API,
-			RegistryDomain:     opts.Endpoints.Registry,
-			TokenKeyPEM:        tokenKeyPEM,
-			TokenCertPEM:       tokenCertPEM,
-			NodePullSecret:     pullSecret,
-			ACMEEmail:          opts.TLS.IssuerEmail,
-			ACMEServer:         opts.TLS.ACMEServer,
-			Capabilities:       layout.UnionCapabilities(live.Nodes),
-			DatabaseTier:       topology.DatabaseTier,
-			DatabaseStorage:    DefaultDatabaseStorage,
-			RegistryStorage:    DefaultRegistryStorage,
-			RegistryNode:       opts.RegistryNode,
-			PlatformPreference: platformPreference,
-			InstallationRecord: canonical,
+			ClusterName:             record.Cluster,
+			IngressHost:             opts.Endpoints.API,
+			RegistryDomain:          opts.Endpoints.Registry,
+			TokenKeyPEM:             tokenKeyPEM,
+			TokenCertPEM:            tokenCertPEM,
+			NodePullSecret:          pullSecret,
+			ACMEEmail:               opts.TLS.IssuerEmail,
+			ACMEServer:              opts.TLS.ACMEServer,
+			Capabilities:            layout.UnionCapabilities(live.Nodes),
+			DatabaseTier:            topology.DatabaseTier,
+			DatabaseStorage:         DefaultDatabaseStorage,
+			RegistryStorage:         DefaultRegistryStorage,
+			RegistryNode:            opts.RegistryNode,
+			PlatformPreference:      platformPreference,
+			ProxyProtocolTrustedIPs: edgeConfig.ProxyProtocolTrustedIPs(),
+			InstallationRecord:      canonical,
 		},
 	}
 
 	if err := bundle.Converge(ctx, client, profile, progress); err != nil {
 		return fail(err)
 	}
+
+	progress.Start("Wait for the Traefik edge")
+	if err := bundle.WaitEdgeTraefik(ctx, client, profile, edgeRolloutTimeout); err != nil {
+		return fail(err)
+	}
+	progress.Done("")
 
 	progress.Start("Wait for skalid ready")
 	if err := waitSkalidHealthy(ctx, client); err != nil {
@@ -292,6 +322,11 @@ func ValidateInitOptions(opts InitOptions) error {
 	}
 	if err := validatePlatformPreference(opts.PlatformPreference); err != nil {
 		return fmt.Errorf("platform preference %s", err)
+	}
+	if opts.Edge != nil {
+		if _, err := normalizeEdgeConfig(opts.Edge); err != nil {
+			return fmt.Errorf("edge: %w", err)
+		}
 	}
 	domains := map[string]string{
 		"api/ui": opts.Endpoints.API, "registry": opts.Endpoints.Registry,

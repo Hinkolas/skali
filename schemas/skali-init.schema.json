@@ -29,6 +29,36 @@
       },
       "additionalProperties": false
     },
+    "edge": {
+      "type": [
+        "null",
+        "object"
+      ],
+      "description": "Edge settings for the whole installation. Present, the block replaces the recorded settings (an empty block turns PROXY protocol off); absent, they are kept.",
+      "properties": {
+        "proxyProtocol": {
+          "type": [
+            "null",
+            "object"
+          ],
+          "description": "PROXY protocol from a TCP load balancer in front of the edge nodes. Omit when clients connect to the edge nodes directly.",
+          "required": [
+            "trustedIPs"
+          ],
+          "properties": {
+            "trustedIPs": {
+              "type": "array",
+              "description": "Addresses (IPs or CIDRs) the load balancer connects to the edge nodes from, for example its private network address. Only connections from these addresses may carry a PROXY protocol header; others are served with their own address. The header is optional from them, so enable it on the balancer after this setting is applied.",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "endpoints": {
       "type": "object",
       "required": [

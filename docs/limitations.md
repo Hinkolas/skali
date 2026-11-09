@@ -30,22 +30,28 @@ Declared volume sizes are advisory on the supported local-path storage.
 Volumes are not replicated, and their workloads remain tied to the node
 holding the data. See [storage](storage.md).
 
-## Applications do not see client addresses
+## Client addresses depend on how traffic reaches the edge
 
-The edge passes `X-Forwarded-For` and `X-Real-Ip` to every application and
-discards values a client sent, but the address in them is not the
-visitor's. k3s's bundled load balancer forwards traffic to Traefik with
-`externalTrafficPolicy: Cluster`, which rewrites the source to an internal
-pod-network address (`10.42.x.x`) shared by everyone entering through the
-same node. Consequences:
+Traefik runs on every edge node and passes the visitor's address to
+applications in `X-Forwarded-For` and `X-Real-Ip`, discarding values a
+client sent. The address is the visitor's only when the connection reaches
+Traefik unchanged or announces the visitor itself:
 
-- Rate limiting, abuse blocking, IP allowlists, geolocation, and audit logs
-  in an application cannot rely on the client IP; key them on an
-  authenticated identity instead.
-- The control plane is affected the same way: session lists show internal
-  addresses, and its per-IP login limits are shared (see
+- Visitors connecting to an edge node directly: their own address.
+- A TCP load balancer in front of the edge nodes: the balancer's address,
+  unless the balancer sends PROXY protocol headers and the cluster trusts
+  it for them (`edge.proxyProtocol.trustedIPs` in `init.yaml`, or
+  `skali cluster init --proxy-protocol-trusted-ips`; see
   [security](security.md#reverse-proxies-and-client-addresses)).
-- Local development behaves the same, so testing locally does not reveal it.
+- A load balancer that terminates TLS itself is not supported: Traefik
+  issues the route certificates and must receive the TLS connection.
+- Traffic sent to a node without the edge capability still reaches Traefik,
+  but with an internal `10.42.x.x` address shared by everyone entering
+  there. Point DNS or the balancer at edge nodes only.
+- Local development reports an address on the local Docker network.
+
+The control plane resolves its session addresses and per-IP login limits
+the same way.
 
 ## Environments cannot talk to each other
 

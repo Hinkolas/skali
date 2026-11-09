@@ -54,6 +54,10 @@ type Status struct {
 	BundleVersion string
 	BundleCurrent bool
 	Initialized   bool
+	// Edge is the installation's edge settings: the published record's
+	// when the cluster is reachable (a server that did not run init has
+	// none locally), else this host's record's.
+	Edge *EdgeConfig
 	// Nodes lists cluster members when the API is reachable.
 	Nodes []NodeStatus
 	// Components lists bootstrap component health; empty when the cluster
@@ -113,6 +117,7 @@ func GatherStatus(ctx context.Context, runner host.Runner) (*Status, error) {
 		return status, nil
 	}
 	status.K3sCurrent = detected.K3sVersion == K3sVersion
+	status.Edge = detected.Record.Edge
 	status.BundleVersion = detected.Record.Versions.Bundle
 	status.Initialized = detected.Record.Versions.Bundle != ""
 	if detected.Record.Node.Role == layout.RoleServer {
@@ -170,6 +175,7 @@ func GatherStatus(ctx context.Context, runner host.Runner) (*Status, error) {
 	// in-cluster record identifies the init owner: the bundle exists and
 	// is maintained there, so status must not claim it is missing.
 	if record, err := InClusterRecord(ctx, client); err == nil && record != nil {
+		status.Edge = recordedEdge(detected.Record, record)
 		if !detected.Record.Reconciled() &&
 			record.Node.Name != "" && record.Node.Name != detected.Hostname {
 			status.InitOwner = record.Node.Name

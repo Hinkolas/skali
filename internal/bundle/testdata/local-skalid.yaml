@@ -14,7 +14,7 @@ rules:
     resourceNames: [skali-environment-ownership-v1]
     verbs: [get, list, watch]
   - apiGroups: [""]
-    resources: [namespaces, secrets, configmaps, services, services/proxy, pods, pods/log, pods/exec, events, persistentvolumeclaims, nodes]
+    resources: [namespaces, secrets, configmaps, services, services/proxy, pods, pods/proxy, pods/log, pods/exec, events, persistentvolumeclaims, nodes]
     verbs: ["*"]
   # The storage sampler reads each kubelet's /stats/summary through the
   # API server's node proxy.

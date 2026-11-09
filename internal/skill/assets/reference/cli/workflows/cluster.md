@@ -23,6 +23,15 @@ replaces the candidate from an already-enrolled layout, and `changes discard`
 drops the candidate. `node forget` finalizes an unreachable removed host;
 it cannot perform cleanup on that host.
 
+DNS for every route and platform domain points at edge nodes, or at a TCP
+load balancer in front of them (never one that terminates TLS: Traefik
+issues the certificates). Behind such a balancer, `init.yaml`'s
+`edge.proxyProtocol.trustedIPs` (or `cluster init
+--proxy-protocol-trusted-ips`, `none` to turn it off) names the addresses
+the balancer connects from; enable PROXY protocol on the balancer for ports
+80 and 443 only after that init run, so applications and the control plane
+see visitors' addresses instead of the balancer's.
+
 `cluster status`, `diagnose`, and `repair` inspect health and recover scoped
 problems. `cluster addresses` declares addressing, `rebalance` reconciles
 placement, and `tier` applies available database availability. Read their individual

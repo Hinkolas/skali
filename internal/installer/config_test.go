@@ -195,6 +195,39 @@ skalid:
 	require.ErrorContains(t, err, "twice")
 }
 
+func TestParseInitConfigEdge(t *testing.T) {
+	t.Parallel()
+	base := `endpoints:
+  api: skali.example.com
+  registry: registry.example.com
+tls:
+  issuerEmail: ops@example.com
+admin:
+  email: a@example.com
+  passwordFile: /root/pw
+skalid:
+  image: skalid:dev
+`
+	config, err := ParseInitConfig([]byte(base))
+	require.NoError(t, err)
+	require.Nil(t, config.Edge, "an omitted edge block keeps the recorded settings")
+
+	config, err = ParseInitConfig([]byte(base + "edge:\n  proxyProtocol:\n    trustedIPs: [10.0.0.2, 2001:db8::/64]\n"))
+	require.NoError(t, err)
+	require.Equal(t, []string{"10.0.0.2", "2001:db8::/64"}, config.Edge.ProxyProtocolTrustedIPs())
+
+	config, err = ParseInitConfig([]byte(base + "edge: {}\n"))
+	require.NoError(t, err)
+	require.NotNil(t, config.Edge, "an empty edge block is an explicit choice: PROXY protocol off")
+	require.Empty(t, config.Edge.ProxyProtocolTrustedIPs())
+
+	_, err = ParseInitConfig([]byte(base + "edge:\n  proxyProtocol:\n    trustedIPs: [10.42.0.0/16]\n"))
+	require.ErrorContains(t, err, "init config: edge:")
+
+	_, err = ParseInitConfig([]byte(base + "edge:\n  proxyProtocol:\n    trusted: [10.0.0.2]\n"))
+	require.Error(t, err, "the edge block is strict like the rest of init.yaml")
+}
+
 func TestParseInitConfigRejections(t *testing.T) {
 	t.Parallel()
 	base := map[string]string{

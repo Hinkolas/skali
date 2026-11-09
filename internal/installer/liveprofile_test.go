@@ -89,6 +89,7 @@ func TestLiveProfileHashStability(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	record := liveProfileRecord()
+	record.Edge = &EdgeConfig{ProxyProtocol: &ProxyProtocolConfig{TrustedIPs: []string{"10.0.0.2/32"}}}
 	client := fakeClientWith(liveProfileObjects()...)
 	fake := &host.Fake{FS: map[string][]byte{
 		K3sRegistriesPath: []byte(k3sRegistriesYAML("pull-secret-value")),
@@ -110,19 +111,22 @@ func TestLiveProfileHashStability(t *testing.T) {
 		AuthSecret:    "auth-secret-value",
 		RegistryHost:  bundle.RegistryInternalHost,
 		Production: &bundle.Production{
-			ClusterName:        record.Cluster,
-			IngressHost:        record.Endpoints.API,
-			RegistryDomain:     record.Endpoints.Registry,
-			TokenKeyPEM:        "key-pem",
-			TokenCertPEM:       "cert-pem",
-			NodePullSecret:     "pull-secret-value",
-			ACMEEmail:          record.TLS.IssuerEmail,
-			ACMEServer:         record.TLS.ACMEServer,
-			Capabilities:       layout.UnionCapabilities(expectedLayout.Nodes),
-			DatabaseTier:       topology.DatabaseTier,
-			DatabaseStorage:    DefaultDatabaseStorage,
-			RegistryStorage:    DefaultRegistryStorage,
-			InstallationRecord: canonical,
+			ClusterName:     record.Cluster,
+			IngressHost:     record.Endpoints.API,
+			RegistryDomain:  record.Endpoints.Registry,
+			TokenKeyPEM:     "key-pem",
+			TokenCertPEM:    "cert-pem",
+			NodePullSecret:  "pull-secret-value",
+			ACMEEmail:       record.TLS.IssuerEmail,
+			ACMEServer:      record.TLS.ACMEServer,
+			Capabilities:    layout.UnionCapabilities(expectedLayout.Nodes),
+			DatabaseTier:    topology.DatabaseTier,
+			DatabaseStorage: DefaultDatabaseStorage,
+			RegistryStorage: DefaultRegistryStorage,
+			// A recorded balancer reaches the edge on every reconverge
+			// (upgrade, tier apply, repair), not only at init.
+			ProxyProtocolTrustedIPs: []string{"10.0.0.2/32"},
+			InstallationRecord:      canonical,
 		},
 	}
 	require.Equal(t, expected, profile)

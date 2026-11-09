@@ -64,16 +64,42 @@ Trusted proxies must overwrite `X-Real-IP` or append the actual socket peer to
 `X-Forwarded-For`; the API walks the latter from right to left and stops at the
 first untrusted hop. Invalid addresses fall back to the socket peer.
 
-On the bundled k3s edge, Traefik itself does not see visitors' addresses.
-k3s's ServiceLB forwards ports 80 and 443 to the Traefik Service with
-`externalTrafficPolicy: Cluster`, which rewrites the source to a pod-network
-address before Traefik accepts the connection. The address the API resolves
-is therefore an internal `10.42.x.x` address shared by every client whose
-traffic enters through the same node; session lists show it in place of the
-real client. The per-IP login, 2FA, and device-flow limits group those
-clients into one bucket, while per-account limits are unaffected.
-Applications behind the edge receive the same address (see
-[known limitations](limitations.md#applications-do-not-see-client-addresses)).
+On the bundled k3s edge, Traefik runs as a DaemonSet on every edge node and
+the Traefik Service uses `externalTrafficPolicy: Local`, so k3s's ServiceLB
+hands each connection to the Traefik pod on the receiving node without
+rewriting its source. The address the API resolves, and the one
+applications receive, is the visitor's when the visitor connects to an edge
+node directly. A node without the edge capability still forwards, but with
+an internal `10.42.x.x` source shared by everyone entering there; keep DNS
+and load balancers pointed at edge nodes.
+
+A TCP load balancer in front of the edge nodes becomes the peer instead.
+Declare its addresses, and Traefik reads the visitor's address from the
+balancer's PROXY protocol header on ports 80 and 443:
+
+```yaml
+# init.yaml
+edge:
+  proxyProtocol:
+    trustedIPs: [10.0.0.5]   # the balancer's address as the nodes see it
+```
+
+or `sudo skali cluster init --proxy-protocol-trusted-ips 10.0.0.5` on a
+server node of an initialized cluster (`none` turns it off; omitting the
+flag or the block keeps the recorded choice). Use the address the balancer
+connects from, for example its private network address when it reaches
+the nodes over a private network. Only connections from the declared
+addresses may carry the header; every other peer is served as itself, so a
+client cannot forge an address by sending one. The cluster refuses ranges
+that would trust everyone or overlap the pod and service networks
+(`10.42.0.0/16`, `10.43.0.0/16`), from which application pods could forge
+headers. The header is optional from a trusted balancer, so apply the
+setting first and then enable PROXY protocol on the balancer for both
+ports; the reverse order breaks every connection until the setting lands.
+
+The upgrade that moved Traefik to a DaemonSet with the Local policy
+interrupts the edge once, for about ten seconds, while ServiceLB and
+Traefik are replaced.
 
 ## Browser sessions
 

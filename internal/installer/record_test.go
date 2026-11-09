@@ -122,6 +122,13 @@ func TestRecordCanonicalYAML(t *testing.T) {
 	require.Contains(t, preferred, "platformPreference:")
 	require.Less(t, strings.Index(preferred, "linux/arm64"), strings.Index(preferred, "linux/amd64"),
 		"the preference order must survive the canonical encoding")
+
+	// The edge settings are absent until chosen, then a bundle-hash input.
+	require.NotContains(t, preferred, "edge:")
+	record.Edge = &EdgeConfig{ProxyProtocol: &ProxyProtocolConfig{TrustedIPs: []string{"10.0.0.2/32"}}}
+	balanced, err := record.CanonicalYAML()
+	require.NoError(t, err)
+	require.Contains(t, balanced, "edge:\n    proxyProtocol:\n        trustedIPs:\n            - 10.0.0.2/32\n")
 }
 
 // Agent records keep their enrollment bookkeeping across save and load.

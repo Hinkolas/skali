@@ -290,15 +290,18 @@ type or that must deliver exact bytes.
 
 The edge sets `X-Forwarded-For`, `X-Real-Ip`, `X-Forwarded-Proto`, and
 `X-Forwarded-Host` on every request it passes to an application,
-replacing any values the client sent. `X-Forwarded-Proto` and
-`X-Forwarded-Host` give the public scheme and hostname. The address in
-`X-Forwarded-For` and `X-Real-Ip` is **not** the visitor's IP: the
-cluster's load balancer rewrites the source before the request reaches the
-edge, so both headers carry an internal pod-network address (`10.42.x.x`)
-that many visitors share, in production and in local development alike.
-Do not key rate limits, abuse blocks, allowlists, geolocation, or audit
-records on it; use an authenticated identity (account, session, API key)
-instead.
+replacing any values the client sent, so these are the headers to read.
+`X-Forwarded-Proto` and `X-Forwarded-Host` give the public scheme and
+hostname. `X-Forwarded-For` and `X-Real-Ip` carry the visitor's IP
+address when the visitor connects to an edge node directly, or through a
+TCP load balancer the cluster operator has set up with PROXY protocol
+(`edge.proxyProtocol` at `skali cluster init`). They carry the balancer's
+address behind a balancer without it, and an internal `10.42.x.x` address
+for traffic that enters through a node without the edge capability.
+Local development reports an address on the local Docker network, not
+the browser's. Treat the address as a hint for rate limits and logs, and
+key anything that must hold (access control, account lockout) on an
+authenticated identity.
 
 ### Health
 

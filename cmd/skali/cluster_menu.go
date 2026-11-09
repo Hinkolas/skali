@@ -151,6 +151,9 @@ func printStatus(out *os.File, status *installer.Status, all ...bool) {
 	if record != nil && record.Node.IP != "" {
 		printStatusRow(out, style, "addresses", describeNetwork(record.Node.Network()))
 	}
+	if trusted := status.Edge.ProxyProtocolTrustedIPs(); len(trusted) > 0 {
+		printStatusRow(out, style, "edge", "PROXY protocol from "+strings.Join(trusted, ", "))
+	}
 
 	k3sSuffix := style.BrightYellow("(expected " + installer.K3sVersion + ")")
 	if status.K3sCurrent {

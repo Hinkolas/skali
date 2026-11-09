@@ -55,6 +55,60 @@ func TestRouterCountersDelta(t *testing.T) {
 	require.Equal(t, reset, reset.delta(previous))
 }
 
+// One Traefik pod runs per edge node and counts only its own requests: the
+// stored delta is the sum over pods, each differenced against its own
+// previous scrape.
+func TestEdgeDeltasSumPerPod(t *testing.T) {
+	const router = "skali-shop-prod-shop-web-public-0011@kubernetescrd"
+	counters := func(requests int64) map[string]routerCounters {
+		return map[string]routerCounters{router: {requests: requests, requestBytes: requests * 10, responseBytes: requests * 100}}
+	}
+	listed := func(pods ...string) map[string]struct{} {
+		set := make(map[string]struct{}, len(pods))
+		for _, pod := range pods {
+			set[pod] = struct{}{}
+		}
+		return set
+	}
+	var last map[string]map[string]routerCounters
+	round := func(scrapes map[string]map[string]routerCounters, running map[string]struct{}) map[string]routerCounters {
+		before := len(last)
+		next, deltas := edgeDeltas(last, scrapes, running)
+		require.Len(t, last, before, "the previous baselines stay untouched until the caller commits")
+		last = next
+		return deltas
+	}
+
+	// First sight of both pods only records baselines.
+	deltas := round(map[string]map[string]routerCounters{"a": counters(100), "b": counters(40)}, listed("a", "b"))
+	require.Empty(t, deltas)
+
+	// Both advance: the deltas add up across pods.
+	deltas = round(map[string]map[string]routerCounters{"a": counters(110), "b": counters(45)}, listed("a", "b"))
+	require.Equal(t, routerCounters{requests: 15, requestBytes: 150, responseBytes: 1500}, deltas[router])
+
+	// An uncommitted round (the insert failed) is computed again from the
+	// same baselines next time, so its traffic is not lost.
+	uncommitted, _ := edgeDeltas(last, map[string]map[string]routerCounters{"a": counters(130)}, listed("a", "b"))
+	require.EqualValues(t, 130, uncommitted["a"][router].requests)
+	deltas = round(map[string]map[string]routerCounters{"a": counters(131), "b": counters(45)}, listed("a", "b"))
+	require.EqualValues(t, 21, deltas[router].requests)
+
+	// Pod b's scrape fails this round but it is still running: its baseline
+	// survives, and its next answer covers both intervals.
+	deltas = round(map[string]map[string]routerCounters{"a": counters(133)}, listed("a", "b"))
+	require.EqualValues(t, 2, deltas[router].requests)
+	deltas = round(map[string]map[string]routerCounters{"a": counters(133), "b": counters(52)}, listed("a", "b"))
+	require.EqualValues(t, 7, deltas[router].requests)
+
+	// Pod a restarts its container (counters reset); a new pod c appears and
+	// only baselines; pod b is gone and drops its baseline.
+	deltas = round(map[string]map[string]routerCounters{"a": counters(3), "c": counters(500)}, listed("a", "c"))
+	require.EqualValues(t, 3, deltas[router].requests, "a reset books the post-restart total, the new pod nothing")
+	require.NotContains(t, last, "b")
+	require.Contains(t, last, "c")
+}
+
 func TestMatchRouter(t *testing.T) {
 	envA, envB := uuid.New(), uuid.New()
 	index := map[string]routeIdentity{
