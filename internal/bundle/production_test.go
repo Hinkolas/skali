@@ -461,10 +461,7 @@ func TestProductionEdgeTraefik(t *testing.T) {
 
 	plain := productionProfile()
 	text, values := chartValues(plain)
-	kind, _, _ := unstructured.NestedString(values, "deployment", "kind")
-	require.Equal(t, "DaemonSet", kind)
-	policy, _, _ := unstructured.NestedString(values, "service", "spec", "externalTrafficPolicy")
-	require.Equal(t, "Local", policy)
+	requireEdgeHostPorts(t, values)
 	selector, _, _ := unstructured.NestedStringMap(values, "nodeSelector")
 	require.Equal(t, map[string]string{"skali.dev/capability-edge": "true"}, selector)
 	require.NotContains(t, text, "proxyProtocol", "no balancer declared, no header honoured")
@@ -476,6 +473,7 @@ func TestProductionEdgeTraefik(t *testing.T) {
 		trusted, _, _ := unstructured.NestedStringSlice(values, "ports", entryPoint, "proxyProtocol", "trustedIPs")
 		require.Equal(t, []string{"10.0.0.2/32", "2001:db8::/64"}, trusted, entryPoint)
 	}
+	requireEdgeHostPorts(t, values)
 	readTimeout, _, _ := unstructured.NestedString(values,
 		"ports", "websecure", "transport", "respondingTimeouts", "readTimeout")
 	require.Equal(t, EdgeReadTimeout, readTimeout, "the overlay keeps the websecure transport beside proxyProtocol")

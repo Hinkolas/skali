@@ -7,9 +7,14 @@ spec:
   valuesContent: |-
     deployment:
       kind: DaemonSet
+    updateStrategy:
+      type: RollingUpdate
+      rollingUpdate:
+        maxUnavailable: 1
+        maxSurge: 0
     service:
       spec:
-        externalTrafficPolicy: Local
+        type: ClusterIP
     metrics:
       prometheus:
         addRoutersLabels: true
@@ -17,7 +22,10 @@ spec:
       metrics:
         expose:
           default: true
+      web:
+        hostPort: 80
       websecure:
+        hostPort: 443
         transport:
           respondingTimeouts:
             readTimeout: 30m

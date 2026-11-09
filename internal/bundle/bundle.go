@@ -572,17 +572,21 @@ const EdgeReadTimeout = "30m"
 // profiles: the local k3d edge is the same Traefik. Request read time:
 // see EdgeReadTimeout.
 //
-// Client addresses: k3s's ServiceLB hands a connection to the Traefik
-// Service from a pod on the receiving node, and under the default Cluster
-// traffic policy it masquerades the source to that pod's address, so
-// every X-Forwarded-For named an internal 10.42.x.x address. The Local
-// policy keeps the visitor's address when the receiving node runs Traefik
-// itself, which the DaemonSet guarantees on every edge node (production
-// pins it there by capability label; a local node carries none). A node
-// without Traefik still forwards, with the internal address as before.
-// The chart rolls the DaemonSet with surge, so a Traefik update keeps
-// each node served. With an operator's TCP load balancer in front, the
-// peer is the balancer; ProxyProtocolTrustedIPs makes Traefik read the
+// Client addresses: Traefik binds ports 80 and 443 on every edge node
+// itself (a DaemonSet with host ports; production pins it there by
+// capability label, a local node carries none), and its Service is a
+// plain ClusterIP, so k3s's ServiceLB stays out of the path. ServiceLB
+// masqueraded every connection it forwarded, and even with the Local
+// traffic policy kube-proxy only bypassed it for the node addresses
+// ServiceLB published (the public ones when a node declares any), so a
+// load balancer reaching the nodes over a private network still delivered
+// an internal 10.42.x.x address. A host port keeps the visitor's address
+// whichever node address a connection arrives at. Nodes without the edge
+// capability no longer answer on 80 and 443. A host port cannot be held
+// twice on one node, so the DaemonSet rolls one node at a time without
+// surge: an update restarts each edge node's Traefik in place, about a
+// second each. With an operator's TCP load balancer in front, the peer
+// is the balancer; ProxyProtocolTrustedIPs makes Traefik read the
 // visitor's address from the balancer's PROXY protocol header, honoured
 // from those peers only and optional from them, so the balancer can
 // start sending it after the upgrade without a cutover window.
@@ -603,11 +607,7 @@ func edgeTraefikYAML(profile Profile) string {
           trustedIPs: [%s]`, strings.Join(quoted, ", "))
 		}
 	}
-	webProxyProtocol := ""
-	if proxyProtocol != "" {
-		webProxyProtocol = `
-      web:` + proxyProtocol
-	}
+
 	return fmt.Sprintf(`apiVersion: helm.cattle.io/v1
 kind: HelmChartConfig
 metadata:
@@ -617,24 +617,32 @@ spec:
   valuesContent: |-
     deployment:
       kind: DaemonSet%s
+    updateStrategy:
+      type: RollingUpdate
+      rollingUpdate:
+        maxUnavailable: 1
+        maxSurge: 0
     service:
       spec:
-        externalTrafficPolicy: Local
+        type: ClusterIP
     metrics:
       prometheus:
         addRoutersLabels: true
     ports:
       metrics:
         expose:
-          default: true%s
+          default: true
+      web:
+        hostPort: 80%s
       websecure:
+        hostPort: 443
         transport:
           respondingTimeouts:
             readTimeout: %s%s
     providers:
       kubernetesCRD:
         allowCrossNamespace: true
-`, placement, webProxyProtocol, EdgeReadTimeout, proxyProtocol)
+`, placement, proxyProtocol, EdgeReadTimeout, proxyProtocol)
 }
 
 func databaseYAML(profile Profile) string {

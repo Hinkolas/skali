@@ -104,13 +104,10 @@ func TestRenderBundleObjects(t *testing.T) {
 		"slow registry pushes outlast Traefik's 60-second default")
 	exposed, _, _ := unstructured.NestedBool(chartValues, "ports", "metrics", "expose", "default")
 	require.True(t, exposed)
-	// Visitors' addresses survive ServiceLB only where the receiving node
-	// runs Traefik itself; the local node carries no capability labels, so
-	// nothing pins the DaemonSet there, and no balancer sends PROXY headers.
-	kind, _, _ := unstructured.NestedString(chartValues, "deployment", "kind")
-	require.Equal(t, "DaemonSet", kind)
-	policy, _, _ := unstructured.NestedString(chartValues, "service", "spec", "externalTrafficPolicy")
-	require.Equal(t, "Local", policy)
+	// Traefik holds the node's ports itself so visitors' addresses survive;
+	// the local node carries no capability labels, so nothing pins the
+	// DaemonSet there, and no balancer sends PROXY headers.
+	requireEdgeHostPorts(t, chartValues)
 	_, hasSelector, _ := unstructured.NestedMap(chartValues, "nodeSelector")
 	require.False(t, hasSelector)
 	require.NotContains(t, traefikValues, "proxyProtocol")
@@ -278,4 +275,26 @@ func TestSkalidDevCACertEnv(t *testing.T) {
 	objects, err = Render(productionProfile())
 	require.NoError(t, err)
 	require.NotContains(t, skalidEnv(objects), "SKALI_DEV_CA_CERT")
+}
+
+// requireEdgeHostPorts pins the edge shape both profiles share: Traefik as
+// a DaemonSet binding 80 and 443 on its node, rolled without surge (a host
+// port cannot be held twice), behind a ClusterIP Service so ServiceLB,
+// which masquerades connections, never forwards edge traffic.
+func requireEdgeHostPorts(t *testing.T, chartValues map[string]any) {
+	t.Helper()
+	kind, _, _ := unstructured.NestedString(chartValues, "deployment", "kind")
+	require.Equal(t, "DaemonSet", kind)
+	serviceType, _, _ := unstructured.NestedString(chartValues, "service", "spec", "type")
+	require.Equal(t, "ClusterIP", serviceType)
+	_, hasPolicy, _ := unstructured.NestedFieldNoCopy(chartValues, "service", "spec", "externalTrafficPolicy")
+	require.False(t, hasPolicy, "a ClusterIP Service refuses an external traffic policy")
+	for entryPoint, port := range map[string]int64{"web": 80, "websecure": 443} {
+		hostPort, _, _ := unstructured.NestedFieldNoCopy(chartValues, "ports", entryPoint, "hostPort")
+		require.EqualValues(t, port, hostPort, entryPoint)
+	}
+	surge, _, _ := unstructured.NestedFieldNoCopy(chartValues, "updateStrategy", "rollingUpdate", "maxSurge")
+	require.EqualValues(t, 0, surge)
+	unavailable, _, _ := unstructured.NestedFieldNoCopy(chartValues, "updateStrategy", "rollingUpdate", "maxUnavailable")
+	require.EqualValues(t, 1, unavailable)
 }

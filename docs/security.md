@@ -65,13 +65,16 @@ Trusted proxies must overwrite `X-Real-IP` or append the actual socket peer to
 first untrusted hop. Invalid addresses fall back to the socket peer.
 
 On the bundled k3s edge, Traefik runs as a DaemonSet on every edge node and
-the Traefik Service uses `externalTrafficPolicy: Local`, so k3s's ServiceLB
-hands each connection to the Traefik pod on the receiving node without
-rewriting its source. The address the API resolves, and the one
-applications receive, is the visitor's when the visitor connects to an edge
-node directly. A node without the edge capability still forwards, but with
-an internal `10.42.x.x` source shared by everyone entering there; keep DNS
-and load balancers pointed at edge nodes.
+binds ports 80 and 443 on the node itself; its Service is a plain
+ClusterIP, so k3s's ServiceLB, which rewrites the source of every
+connection it forwards, is not in the path. The address the API resolves,
+and the one applications receive, is the visitor's when the visitor
+connects to an edge node directly, through any of the node's addresses
+(public, private, or a floating IP). Only edge nodes answer on 80 and 443;
+keep DNS and load balancers pointed at them. Because a host port cannot be
+held twice, an update restarts each edge node's Traefik in place, one node
+at a time, for about a second; a load balancer's health checks route
+around it.
 
 A TCP load balancer in front of the edge nodes becomes the peer instead.
 Declare its addresses, and Traefik reads the visitor's address from the
@@ -97,9 +100,9 @@ headers. The header is optional from a trusted balancer, so apply the
 setting first and then enable PROXY protocol on the balancer for both
 ports; the reverse order breaks every connection until the setting lands.
 
-The upgrade that moved Traefik to a DaemonSet with the Local policy
-interrupts the edge once, for about ten seconds, while ServiceLB and
-Traefik are replaced.
+Upgrading from a release that still ran Traefik behind ServiceLB
+(v0.1.4-rc.1 and older) interrupts the edge once while ServiceLB releases
+the ports and Traefik takes them over, for a second or two.
 
 ## Browser sessions
 
