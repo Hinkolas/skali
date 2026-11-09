@@ -288,6 +288,18 @@ therefore need no compression of their own. `compress: false` turns it off
 for one route; use it for routes that stream events under another content
 type or that must deliver exact bytes.
 
+The edge sets `X-Forwarded-For`, `X-Real-Ip`, `X-Forwarded-Proto`, and
+`X-Forwarded-Host` on every request it passes to an application,
+replacing any values the client sent. `X-Forwarded-Proto` and
+`X-Forwarded-Host` give the public scheme and hostname. The address in
+`X-Forwarded-For` and `X-Real-Ip` is **not** the visitor's IP: the
+cluster's load balancer rewrites the source before the request reaches the
+edge, so both headers carry an internal pod-network address (`10.42.x.x`)
+that many visitors share, in production and in local development alike.
+Do not key rate limits, abuse blocks, allowlists, geolocation, or audit
+records on it; use an authenticated identity (account, session, API key)
+instead.
+
 ### Health
 
 ```yaml
