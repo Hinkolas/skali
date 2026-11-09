@@ -57,9 +57,10 @@ type Sampler struct {
 	// poolMetricsUnavailable suppresses repeat logging per pool while its
 	// metrics Service is not applied yet.
 	poolMetricsUnavailable map[string]bool
-	// lastEdge holds the previous scrape's cumulative counters per Traefik
-	// router; deltas against it become the stored edge samples.
-	lastEdge map[string]routerCounters
+	// lastEdge holds each Traefik pod's previous cumulative counters per
+	// router, keyed by pod UID; deltas against it become the stored edge
+	// samples.
+	lastEdge map[string]map[string]routerCounters
 	// lastPool holds the previous exporter counters per pool row, keyed by
 	// id so a recreated namesake starts a fresh baseline.
 	lastPool map[uuid.UUID]poolCounters

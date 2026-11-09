@@ -65,7 +65,11 @@ type Record struct {
 	// preferred platform an application supports wins its single-arch
 	// build. Empty records keep multi-arch builds.
 	PlatformPreference []string `yaml:"platformPreference,omitempty"`
-	Versions           Versions `yaml:"versions"`
+	// Edge holds installation-wide edge settings chosen at init: the TCP
+	// load balancer allowed to send PROXY protocol headers. Nil keeps the
+	// defaults (clients connect to the edge nodes directly).
+	Edge     *EdgeConfig `yaml:"edge,omitempty"`
+	Versions Versions    `yaml:"versions"`
 	// Lifecycle is present while a managed host install is in progress or
 	// failed. Records written before lifecycle tracking omit it and are
 	// treated as complete.
@@ -365,6 +369,7 @@ func (r *Record) CanonicalYAML() (string, error) {
 		RegistryNode       string      `yaml:"registryNode,omitempty"`
 		StorageDriver      string      `yaml:"storageDriver,omitempty"`
 		PlatformPreference []string    `yaml:"platformPreference,omitempty"`
+		Edge               *EdgeConfig `yaml:"edge,omitempty"`
 		Versions           Versions    `yaml:"versions"`
 	}
 	data, err := yaml.Marshal(canonicalRecord{
@@ -381,6 +386,7 @@ func (r *Record) CanonicalYAML() (string, error) {
 		RegistryNode:       r.RegistryNode,
 		StorageDriver:      r.StorageDriver,
 		PlatformPreference: r.PlatformPreference,
+		Edge:               r.Edge,
 		Versions:           r.Versions,
 	})
 	if err != nil {

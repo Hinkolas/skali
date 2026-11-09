@@ -116,7 +116,7 @@ func runInteractiveFreshFlowMode(ctx context.Context, out *os.File, seedOnly boo
 		return nil
 	}
 	fmt.Fprintln(out)
-	return runInteractiveInit(ctx, out, reader, record, nil, nil)
+	return runInteractiveInit(ctx, out, reader, record, nil, nil, nil)
 }
 
 // runInteractiveJoinFlow enrolls this host into an existing cluster in
@@ -260,10 +260,12 @@ func promptCapabilities(ctx context.Context, out *os.File, reader *bufio.Reader)
 // account only after skalid is ready (the engine calls Admin at exactly
 // that point).
 func runInteractiveInit(ctx context.Context, out *os.File, reader *bufio.Reader,
-	record *installer.Record, asserted *layout.Layout, platformPreference []string) error {
+	record *installer.Record, asserted *layout.Layout, platformPreference []string,
+	edge *installer.EdgeConfig) error {
 	opts := installer.InitOptions{
 		Out: out, Layout: asserted,
 		PlatformPreference: platformPreference,
+		Edge:               edge,
 	}
 	if err := seedInitInputs(reader, true, record, &opts); err != nil {
 		return err

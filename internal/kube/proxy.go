@@ -94,6 +94,41 @@ func (c *Client) NodeProxyDo(ctx context.Context, method, node, reqPath string, 
 	return data, resp.StatusCode, nil
 }
 
+// PodProxyDo performs one HTTP request against a single pod's port through
+// the API server's pod proxy, for callers that must reach every replica
+// rather than whichever one a Service picks (the edge sampler reads each
+// Traefik pod's own counters). Non-2xx answers are returned as data, not
+// errors: the caller owns HTTP semantics.
+func (c *Client) PodProxyDo(ctx context.Context, method, namespace, pod string, port int, reqPath string, query url.Values, body []byte) ([]byte, int, error) {
+	client, base, err := c.proxyClient()
+	if err != nil {
+		return nil, 0, err
+	}
+	u := *base
+	u.Path = "/api/v1/namespaces/" + namespace + "/pods/" + pod + ":" + strconv.Itoa(port) +
+		"/proxy/" + strings.TrimLeft(reqPath, "/")
+	u.RawQuery = query.Encode()
+
+	var reader io.Reader
+	if body != nil {
+		reader = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, u.String(), reader)
+	if err != nil {
+		return nil, 0, fmt.Errorf("kube: pod proxy request: %w", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, 0, fmt.Errorf("kube: pod proxy %s %s/%s:%d: %w", method, namespace, pod, port, err)
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if err != nil {
+		return nil, 0, fmt.Errorf("kube: pod proxy read: %w", err)
+	}
+	return data, resp.StatusCode, nil
+}
+
 // proxyClient lazily builds the authenticated HTTP client + base URL for
 // ServiceProxyDo from the same rest.Config as every other call.
 func (c *Client) proxyClient() (*http.Client, *url.URL, error) {

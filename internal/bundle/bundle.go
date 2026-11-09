@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"strings"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -230,6 +231,12 @@ type Production struct {
 	// first reconciled initialization. Empty retains legacy
 	// capability-only placement.
 	RegistryNode string
+	// ProxyProtocolTrustedIPs lists the addresses (IPs or CIDRs) of the
+	// operator's TCP load balancer in front of the edge nodes. Traefik reads
+	// a PROXY protocol header from connections they open, and only from
+	// them, so the visitor's address survives the balancer. Empty disables
+	// PROXY protocol: every peer is the client itself.
+	ProxyProtocolTrustedIPs []string
 	// PlatformPreference is the cluster's ordered build platform
 	// preference for mixed-architecture clusters, read from the
 	// installation record. It reaches skalid as the
@@ -270,6 +277,11 @@ func (p *Production) validate() error {
 		return errors.New("bundle: production profile: registry storage size is required")
 	case p.InstallationRecord == "":
 		return errors.New("bundle: production profile: installation record is required")
+	}
+	for _, trusted := range p.ProxyProtocolTrustedIPs {
+		if _, err := netip.ParsePrefix(trusted); err != nil {
+			return fmt.Errorf("bundle: production profile: proxy protocol trusted address %q is not a CIDR", trusted)
+		}
 	}
 	for _, platform := range p.PlatformPreference {
 		if platform != manifest.PlatformAMD64 && platform != manifest.PlatformARM64 {
@@ -336,7 +348,7 @@ func stageSources(profile Profile) []string {
 		registryYAML(profile),
 		skalidYAML(profile),
 		recordYAML(profile),
-		edgeTraefikYAML(),
+		edgeTraefikYAML(profile),
 		// Bootstrap must stay last: Hash blanks the final source under
 		// production because the generated password never reproduces.
 		bootstrapYAML(profile),
@@ -559,7 +571,43 @@ const EdgeReadTimeout = "30m"
 // operator-authored traefik HelmChartConfigs are unsupported. Both
 // profiles: the local k3d edge is the same Traefik. Request read time:
 // see EdgeReadTimeout.
-func edgeTraefikYAML() string {
+//
+// Client addresses: k3s's ServiceLB hands a connection to the Traefik
+// Service from a pod on the receiving node, and under the default Cluster
+// traffic policy it masquerades the source to that pod's address, so
+// every X-Forwarded-For named an internal 10.42.x.x address. The Local
+// policy keeps the visitor's address when the receiving node runs Traefik
+// itself, which the DaemonSet guarantees on every edge node (production
+// pins it there by capability label; a local node carries none). A node
+// without Traefik still forwards, with the internal address as before.
+// The chart rolls the DaemonSet with surge, so a Traefik update keeps
+// each node served. With an operator's TCP load balancer in front, the
+// peer is the balancer; ProxyProtocolTrustedIPs makes Traefik read the
+// visitor's address from the balancer's PROXY protocol header, honoured
+// from those peers only and optional from them, so the balancer can
+// start sending it after the upgrade without a cutover window.
+func edgeTraefikYAML(profile Profile) string {
+	placement := ""
+	proxyProtocol := ""
+	if production := profile.Production; production != nil {
+		placement = fmt.Sprintf(`
+    nodeSelector:
+      %s: "%s"`, layout.CapabilityLabel(layout.CapabilityEdge), layout.CapabilityLabelValue)
+		if len(production.ProxyProtocolTrustedIPs) > 0 {
+			quoted := make([]string, len(production.ProxyProtocolTrustedIPs))
+			for i, trusted := range production.ProxyProtocolTrustedIPs {
+				quoted[i] = fmt.Sprintf("%q", trusted)
+			}
+			proxyProtocol = fmt.Sprintf(`
+        proxyProtocol:
+          trustedIPs: [%s]`, strings.Join(quoted, ", "))
+		}
+	}
+	webProxyProtocol := ""
+	if proxyProtocol != "" {
+		webProxyProtocol = `
+      web:` + proxyProtocol
+	}
 	return fmt.Sprintf(`apiVersion: helm.cattle.io/v1
 kind: HelmChartConfig
 metadata:
@@ -567,21 +615,26 @@ metadata:
   namespace: kube-system
 spec:
   valuesContent: |-
+    deployment:
+      kind: DaemonSet%s
+    service:
+      spec:
+        externalTrafficPolicy: Local
     metrics:
       prometheus:
         addRoutersLabels: true
     ports:
       metrics:
         expose:
-          default: true
+          default: true%s
       websecure:
         transport:
           respondingTimeouts:
-            readTimeout: %s
+            readTimeout: %s%s
     providers:
       kubernetesCRD:
         allowCrossNamespace: true
-`, EdgeReadTimeout)
+`, placement, webProxyProtocol, EdgeReadTimeout, proxyProtocol)
 }
 
 func databaseYAML(profile Profile) string {
@@ -1084,7 +1137,7 @@ rules:
     resourceNames: [skali-environment-ownership-v1]
     verbs: [get, list, watch]
   - apiGroups: [""]
-    resources: [namespaces, secrets, configmaps, services, services/proxy, pods, pods/log, pods/exec, events, persistentvolumeclaims, nodes]
+    resources: [namespaces, secrets, configmaps, services, services/proxy, pods, pods/proxy, pods/log, pods/exec, events, persistentvolumeclaims, nodes]
     verbs: ["*"]
   # The storage sampler reads each kubelet's /stats/summary through the
   # API server's node proxy.

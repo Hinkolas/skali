@@ -19,4 +19,5 @@ Initialize Skali on the joined cluster (run once on a server)
 | `--image-tar` | `string` | `""` | docker-save tar of the skalid image, imported into the node during init (source installs) (inherited) |
 | `--layout` | `string` | `""` | cluster-layout document asserting the expected membership |
 | `--platform-preference` | `string` | `""` | ordered build platform preference for mixed-architecture clusters, comma-separated (for example linux/arm64); empty keeps the recorded choice |
+| `--proxy-protocol-trusted-ips` | `string` | `""` | addresses (IPs or CIDRs, comma-separated) of a TCP load balancer in front of the edge nodes that sends PROXY protocol headers; none turns it off; omitted keeps the recorded choice |
 | `--verbose` | `bool` | `false` | show every recorded detail under live steps (TLS issuance fields, health snapshots) and dev proxy relay diagnostics (inherited) |

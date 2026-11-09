@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"sigs.k8s.io/yaml"
 
 	"github.com/Hinkolas/skali/internal/layout"
 	"github.com/Hinkolas/skali/internal/registrytoken"
@@ -443,6 +444,45 @@ func TestProductionPlatformPreference(t *testing.T) {
 		"setting a preference must roll the bundle so skalid restarts with the env var")
 }
 
+// The production edge runs Traefik on every edge node and nowhere else,
+// and reads PROXY protocol headers only from the operator's declared
+// balancer addresses, on both entrypoints a balancer forwards.
+func TestProductionEdgeTraefik(t *testing.T) {
+	t.Parallel()
+	chartValues := func(profile Profile) (string, map[string]any) {
+		objects, err := Render(profile)
+		require.NoError(t, err)
+		require.Len(t, objects.EdgeTraefik, 1)
+		text, _, _ := unstructured.NestedString(objects.EdgeTraefik[0].Object, "spec", "valuesContent")
+		var values map[string]any
+		require.NoError(t, yaml.Unmarshal([]byte(text), &values))
+		return text, values
+	}
+
+	plain := productionProfile()
+	text, values := chartValues(plain)
+	kind, _, _ := unstructured.NestedString(values, "deployment", "kind")
+	require.Equal(t, "DaemonSet", kind)
+	policy, _, _ := unstructured.NestedString(values, "service", "spec", "externalTrafficPolicy")
+	require.Equal(t, "Local", policy)
+	selector, _, _ := unstructured.NestedStringMap(values, "nodeSelector")
+	require.Equal(t, map[string]string{"skali.dev/capability-edge": "true"}, selector)
+	require.NotContains(t, text, "proxyProtocol", "no balancer declared, no header honoured")
+
+	balanced := productionProfile()
+	balanced.Production.ProxyProtocolTrustedIPs = []string{"10.0.0.2/32", "2001:db8::/64"}
+	_, values = chartValues(balanced)
+	for _, entryPoint := range []string{"web", "websecure"} {
+		trusted, _, _ := unstructured.NestedStringSlice(values, "ports", entryPoint, "proxyProtocol", "trustedIPs")
+		require.Equal(t, []string{"10.0.0.2/32", "2001:db8::/64"}, trusted, entryPoint)
+	}
+	readTimeout, _, _ := unstructured.NestedString(values,
+		"ports", "websecure", "transport", "respondingTimeouts", "readTimeout")
+	require.Equal(t, EdgeReadTimeout, readTimeout, "the overlay keeps the websecure transport beside proxyProtocol")
+	require.NotEqual(t, Hash(plain), Hash(balanced),
+		"declaring a balancer must roll the edge so Traefik starts honouring it")
+}
+
 func TestProductionProfileValidation(t *testing.T) {
 	t.Parallel()
 	for field, mutate := range map[string]func(*Production){
@@ -457,6 +497,7 @@ func TestProductionProfileValidation(t *testing.T) {
 		"registry storage size": func(p *Production) { p.RegistryStorage = "" },
 		"installation record":   func(p *Production) { p.InstallationRecord = "" },
 		"platform preference":   func(p *Production) { p.PlatformPreference = []string{"linux/riscv64"} },
+		"proxy protocol":        func(p *Production) { p.ProxyProtocolTrustedIPs = []string{"10.0.0.2"} },
 	} {
 		profile := productionProfile()
 		mutate(profile.Production)

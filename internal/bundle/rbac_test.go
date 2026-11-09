@@ -41,3 +41,26 @@ func TestSkalidCanManageObjectStoreDisruptionBudgets(t *testing.T) {
 		})
 	}
 }
+
+// The edge sampler scrapes every Traefik pod's metrics port through the API
+// server's pod proxy: one pod per edge node, each with its own counters.
+func TestSkalidCanProxyToPods(t *testing.T) {
+	t.Parallel()
+	for name, profile := range map[string]Profile{"local": localProfile(), "production": productionProfile()} {
+		t.Run(name, func(t *testing.T) {
+			objects, err := Render(profile)
+			require.NoError(t, err)
+			var role rbacv1.ClusterRole
+			for _, object := range objects.Skalid {
+				if object.GetKind() == "ClusterRole" && object.GetName() == "skalid" {
+					require.NoError(t, runtime.DefaultUnstructuredConverter.FromUnstructured(object.Object, &role))
+				}
+			}
+			allowed := slices.ContainsFunc(role.Rules, func(rule rbacv1.PolicyRule) bool {
+				return slices.Contains(rule.APIGroups, "") && slices.Contains(rule.Resources, "pods/proxy") &&
+					(slices.Contains(rule.Verbs, "get") || slices.Contains(rule.Verbs, "*"))
+			})
+			require.True(t, allowed, "skalid must be able to get pods/proxy")
+		})
+	}
+}

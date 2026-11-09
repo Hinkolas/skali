@@ -82,6 +82,7 @@ type InitConfig struct {
 	Skalid    SkalidConfig         `yaml:"skalid" json:"skalid"`
 	Storage   *StorageInitConfig   `yaml:"storage,omitempty" json:"storage,omitempty"`
 	Platforms *PlatformsInitConfig `yaml:"platforms,omitempty" json:"platforms,omitempty"`
+	Edge      *EdgeConfig          `yaml:"edge,omitempty" json:"edge,omitempty" jsonschema:"Edge settings for the whole installation. Present, the block replaces the recorded settings (an empty block turns PROXY protocol off); absent, they are kept."`
 }
 
 // PlatformPreference folds the optional platforms block: empty keeps the
@@ -217,6 +218,11 @@ func ParseInitConfig(data []byte) (*InitConfig, error) {
 		case "", "local":
 		default:
 			return nil, fmt.Errorf("init config: storage.driver must be local; %q is no longer supported", config.Storage.Driver)
+		}
+	}
+	if config.Edge != nil {
+		if _, err := normalizeEdgeConfig(config.Edge); err != nil {
+			return nil, fmt.Errorf("init config: edge: %w", err)
 		}
 	}
 	if config.Platforms != nil {

@@ -16,7 +16,7 @@ import (
 )
 
 func newClusterInitCommand() *cobra.Command {
-	var configPath, layoutPath, platformPreference string
+	var configPath, layoutPath, platformPreference, proxyProtocolTrust string
 	command := &cobra.Command{
 		Use:   "init",
 		Short: "Initialize Skali on the joined cluster (run once on a server)",
@@ -56,13 +56,17 @@ func newClusterInitCommand() *cobra.Command {
 			}
 
 			preference := splitPreferenceFlag(platformPreference)
+			edgeOverride, err := proxyProtocolFlag(command.Flags().Changed("proxy-protocol-trusted-ips"), proxyProtocolTrust)
+			if err != nil {
+				return err
+			}
 			if configPath == "" {
 				if !cliprompt.Interactive() {
 					return fmt.Errorf("non-interactive run requires --config")
 				}
 				banner(out)
 				reader := bufio.NewReader(os.Stdin)
-				return runInteractiveInit(ctx, out, reader, detected.Record, asserted, preference)
+				return runInteractiveInit(ctx, out, reader, detected.Record, asserted, preference, edgeOverride)
 			}
 
 			data, err := os.ReadFile(configPath)
@@ -94,6 +98,7 @@ func newClusterInitCommand() *cobra.Command {
 				SkalidImageID:      config.Skalid.ImageID,
 				Layout:             asserted,
 				PlatformPreference: config.PlatformPreference(),
+				Edge:               config.Edge,
 				Admin: func(context.Context) (string, string, error) {
 					return config.Admin.Email, adminPassword, nil
 				},
@@ -102,6 +107,9 @@ func newClusterInitCommand() *cobra.Command {
 			}
 			if len(preference) > 0 {
 				opts.PlatformPreference = preference
+			}
+			if edgeOverride != nil {
+				opts.Edge = edgeOverride
 			}
 			if err := installer.ValidateInitOptions(opts); err != nil {
 				progress.Abort()
@@ -154,7 +162,33 @@ func newClusterInitCommand() *cobra.Command {
 	command.Flags().StringVar(&layoutPath, "layout", "", "cluster-layout document asserting the expected membership")
 	command.Flags().StringVar(&platformPreference, "platform-preference", "",
 		"ordered build platform preference for mixed-architecture clusters, comma-separated (for example linux/arm64); empty keeps the recorded choice")
+	command.Flags().StringVar(&proxyProtocolTrust, "proxy-protocol-trusted-ips", "",
+		"addresses (IPs or CIDRs, comma-separated) of a TCP load balancer in front of the edge nodes that sends PROXY protocol headers; none turns it off; omitted keeps the recorded choice")
 	return command
+}
+
+// proxyProtocolFlag turns --proxy-protocol-trusted-ips into the edge
+// override: unset keeps the recorded settings (nil), none turns PROXY
+// protocol off, and a list replaces the trusted balancer addresses.
+// Validation happens in ValidateInitOptions.
+func proxyProtocolFlag(changed bool, value string) (*installer.EdgeConfig, error) {
+	if !changed {
+		return nil, nil
+	}
+	value = strings.TrimSpace(value)
+	switch value {
+	case "":
+		return nil, fmt.Errorf("--proxy-protocol-trusted-ips needs addresses, or none to turn PROXY protocol off")
+	case "none":
+		return &installer.EdgeConfig{}, nil
+	}
+	var trusted []string
+	for part := range strings.SplitSeq(value, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			trusted = append(trusted, part)
+		}
+	}
+	return &installer.EdgeConfig{ProxyProtocol: &installer.ProxyProtocolConfig{TrustedIPs: trusted}}, nil
 }
 
 // splitPreferenceFlag splits the comma-separated --platform-preference
