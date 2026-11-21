@@ -1,6 +1,6 @@
 module github.com/Hinkolas/skali
 
-go 1.26.10
+go 1.26.11
 
 require (
 	charm.land/bubbletea/v2 v2.0.2
@@ -15,7 +15,7 @@ require (
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/joho/godotenv v1.5.1
-	github.com/klauspost/compress v1.19.1
+	github.com/klauspost/compress v1.20.2
 	github.com/minio/minio-go/v7 v7.2.1
 	github.com/moby/patternmatcher v0.6.1
 	github.com/pquerna/otp v1.5.0
