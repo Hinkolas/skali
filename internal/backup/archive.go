@@ -162,7 +162,7 @@ func walkArchive(in io.Reader, visit func(name string, header *tar.Header, conte
 			return fmt.Errorf("archive entry conflicts with existing children")
 		}
 		switch header.Typeflag {
-		case tar.TypeDir, tar.TypeReg, tar.TypeRegA, tar.TypeSymlink:
+		case tar.TypeDir, tar.TypeReg, tar.TypeSymlink:
 		default:
 			return fmt.Errorf("unsupported archive entry type %d", header.Typeflag)
 		}
@@ -245,7 +245,7 @@ func extractTar(path string, in io.Reader) error {
 				return err
 			}
 			directories = append(directories, name)
-		case tar.TypeReg, tar.TypeRegA:
+		case tar.TypeReg:
 			if err := root.MkdirAll(filepath.Dir(name), 0700); err != nil {
 				return err
 			}

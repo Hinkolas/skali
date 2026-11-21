@@ -55,18 +55,18 @@ type Project struct {
 
 type Application struct {
 	Image       string            `yaml:"image,omitempty" json:"image,omitempty" jsonschema:"Existing OCI image reference. Mutually exclusive with build."`
-	Build       Build             `yaml:"build,omitempty" json:"build,omitempty" jsonschema:"Project source build. Mutually exclusive with image."`
+	Build       Build             `yaml:"build,omitempty" json:"build,omitzero" jsonschema:"Project source build. Mutually exclusive with image."`
 	Platforms   []string          `yaml:"platforms,omitempty" json:"platforms,omitempty" jsonschema:"Platforms the application's image supports: linux/amd64, linux/arm64. Unordered; empty means every cluster platform."`
 	Command     []string          `yaml:"command,omitempty" json:"command,omitempty" jsonschema:"Container command and arguments."`
 	Environment map[string]Scalar `yaml:"environment,omitempty" json:"environment,omitempty" jsonschema:"Environment variables exposed to the application."`
 	Ports       map[string]Port   `yaml:"ports,omitempty" json:"ports,omitempty" jsonschema:"Named application ports."`
 	Routes      map[string]Route  `yaml:"routes,omitempty" json:"routes,omitempty" jsonschema:"Public HTTP routes."`
-	Health      Health            `yaml:"health,omitempty" json:"health,omitempty" jsonschema:"Startup, readiness, and liveness health checks."`
-	Resources   Resources         `yaml:"resources,omitempty" json:"resources,omitempty" jsonschema:"Per-replica resource reservations and limits."`
-	Scaling     Scaling           `yaml:"scaling,omitempty" json:"scaling,omitempty" jsonschema:"Replica and autoscaling policy."`
-	Placement   Placement         `yaml:"placement,omitempty" json:"placement,omitempty" jsonschema:"Replica placement preferences."`
-	Deployment  Deployment        `yaml:"deployment,omitempty" json:"deployment,omitempty" jsonschema:"Release and rollout behavior."`
-	Shutdown    Shutdown          `yaml:"shutdown,omitempty" json:"shutdown,omitempty" jsonschema:"Graceful shutdown behavior."`
+	Health      Health            `yaml:"health,omitempty" json:"health,omitzero" jsonschema:"Startup, readiness, and liveness health checks."`
+	Resources   Resources         `yaml:"resources,omitempty" json:"resources,omitzero" jsonschema:"Per-replica resource reservations and limits."`
+	Scaling     Scaling           `yaml:"scaling,omitempty" json:"scaling,omitzero" jsonschema:"Replica and autoscaling policy."`
+	Placement   Placement         `yaml:"placement,omitempty" json:"placement,omitzero" jsonschema:"Replica placement preferences."`
+	Deployment  Deployment        `yaml:"deployment,omitempty" json:"deployment,omitzero" jsonschema:"Release and rollout behavior."`
+	Shutdown    Shutdown          `yaml:"shutdown,omitempty" json:"shutdown,omitzero" jsonschema:"Graceful shutdown behavior."`
 	Volumes     map[string]Volume `yaml:"volumes,omitempty" json:"volumes,omitempty" jsonschema:"Persistent volumes mounted by the application."`
 	// Commands and Dev are client-only authoring surface: they drive host-side
 	// behavior (skali dev interception and skali dev run) and are deliberately
@@ -74,7 +74,7 @@ type Application struct {
 	// hash. Mirroring them would change every environment's plan diff for a
 	// purely local concern.
 	Commands map[string][]string `yaml:"commands,omitempty" json:"commands,omitempty" jsonschema:"Named host-side commands run with the application's resolved environment via skali dev run."`
-	Dev      Dev                 `yaml:"dev,omitempty" json:"dev,omitempty" jsonschema:"Local dev server mode: skali dev runs this command on the host instead of building the application."`
+	Dev      Dev                 `yaml:"dev,omitempty" json:"dev,omitzero" jsonschema:"Local dev server mode: skali dev runs this command on the host instead of building the application."`
 }
 
 // Dev describes an application's local dev server. When present, skali dev
@@ -118,13 +118,13 @@ type Route struct {
 }
 
 type Health struct {
-	Startup   Probe `yaml:"startup,omitempty" json:"startup,omitempty"`
-	Readiness Probe `yaml:"readiness,omitempty" json:"readiness,omitempty"`
-	Liveness  Probe `yaml:"liveness,omitempty" json:"liveness,omitempty"`
+	Startup   Probe `yaml:"startup,omitempty" json:"startup,omitzero"`
+	Readiness Probe `yaml:"readiness,omitempty" json:"readiness,omitzero"`
+	Liveness  Probe `yaml:"liveness,omitempty" json:"liveness,omitzero"`
 }
 
 type Probe struct {
-	HTTP             HTTPProbe `yaml:"http,omitempty" json:"http,omitempty"`
+	HTTP             HTTPProbe `yaml:"http,omitempty" json:"http,omitzero"`
 	Interval         Text      `yaml:"interval,omitempty" json:"interval,omitempty"`
 	Timeout          Text      `yaml:"timeout,omitempty" json:"timeout,omitempty"`
 	FailureThreshold int       `yaml:"failureThreshold,omitempty" json:"failureThreshold,omitempty"`
@@ -136,8 +136,8 @@ type HTTPProbe struct {
 }
 
 type Resources struct {
-	Requests ResourceValues `yaml:"requests,omitempty" json:"requests,omitempty"`
-	Limits   ResourceValues `yaml:"limits,omitempty" json:"limits,omitempty"`
+	Requests ResourceValues `yaml:"requests,omitempty" json:"requests,omitzero"`
+	Limits   ResourceValues `yaml:"limits,omitempty" json:"limits,omitzero"`
 }
 
 type ResourceValues struct {
@@ -147,8 +147,8 @@ type ResourceValues struct {
 }
 
 type Scaling struct {
-	Replicas    Replicas    `yaml:"replicas,omitempty" json:"replicas,omitempty"`
-	Autoscaling Autoscaling `yaml:"autoscaling,omitempty" json:"autoscaling,omitempty"`
+	Replicas    Replicas    `yaml:"replicas,omitempty" json:"replicas,omitzero"`
+	Autoscaling Autoscaling `yaml:"autoscaling,omitempty" json:"autoscaling,omitzero"`
 }
 
 type Replicas struct {
@@ -157,7 +157,7 @@ type Replicas struct {
 }
 
 type Autoscaling struct {
-	CPU CPUAutoscaling `yaml:"cpu,omitempty" json:"cpu,omitempty"`
+	CPU CPUAutoscaling `yaml:"cpu,omitempty" json:"cpu,omitzero"`
 }
 
 type CPUAutoscaling struct {
@@ -165,7 +165,7 @@ type CPUAutoscaling struct {
 }
 
 type Placement struct {
-	Spread Spread `yaml:"spread,omitempty" json:"spread,omitempty"`
+	Spread Spread `yaml:"spread,omitempty" json:"spread,omitzero"`
 }
 
 type Spread struct {
@@ -175,8 +175,8 @@ type Spread struct {
 }
 
 type Deployment struct {
-	ReleaseCommand ReleaseCommand `yaml:"releaseCommand,omitempty" json:"releaseCommand,omitempty" jsonschema:"Command run once with the new image before the new version goes live; the migration hook."`
-	Rollout        Rollout        `yaml:"rollout,omitempty" json:"rollout,omitempty" jsonschema:"How a new revision replaces the running one."`
+	ReleaseCommand ReleaseCommand `yaml:"releaseCommand,omitempty" json:"releaseCommand,omitzero" jsonschema:"Command run once with the new image before the new version goes live; the migration hook."`
+	Rollout        Rollout        `yaml:"rollout,omitempty" json:"rollout,omitzero" jsonschema:"How a new revision replaces the running one."`
 }
 
 type ReleaseCommand struct {
@@ -205,9 +205,9 @@ type Database struct {
 	Version      Text     `yaml:"version" json:"version"`
 	Isolation    string   `yaml:"isolation,omitempty" json:"isolation,omitempty"`
 	Availability string   `yaml:"availability,omitempty" json:"availability,omitempty"`
-	Storage      Storage  `yaml:"storage,omitempty" json:"storage,omitempty"`
+	Storage      Storage  `yaml:"storage,omitempty" json:"storage,omitzero"`
 	Extensions   []string `yaml:"extensions,omitempty" json:"extensions,omitempty"`
-	Recovery     Recovery `yaml:"recovery,omitempty" json:"recovery,omitempty"`
+	Recovery     Recovery `yaml:"recovery,omitempty" json:"recovery,omitzero"`
 }
 
 type Storage struct {
@@ -220,9 +220,9 @@ type Recovery struct {
 
 type Bucket struct {
 	Visibility string          `yaml:"visibility,omitempty" json:"visibility,omitempty"`
-	Quotas     BucketQuotas    `yaml:"quotas,omitempty" json:"quotas,omitempty"`
+	Quotas     BucketQuotas    `yaml:"quotas,omitempty" json:"quotas,omitzero"`
 	Versioning string          `yaml:"versioning,omitempty" json:"versioning,omitempty"`
-	Lifecycle  BucketLifecycle `yaml:"lifecycle,omitempty" json:"lifecycle,omitempty"`
+	Lifecycle  BucketLifecycle `yaml:"lifecycle,omitempty" json:"lifecycle,omitzero"`
 	CORS       *BucketCORS     `yaml:"cors,omitempty" json:"cors,omitempty"`
 	// Route publishes the bucket on a hostname of its own through the
 	// edge. Absent, the bucket is reachable in-cluster only.

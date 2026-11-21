@@ -471,7 +471,7 @@ func CoordinatorRouteAddress(ctx context.Context, runner host.Runner, endpoint s
 			return ""
 		}
 		targets = nil
-		for _, line := range strings.Split(result.Stdout, "\n") {
+		for line := range strings.SplitSeq(result.Stdout, "\n") {
 			fields := strings.Fields(line)
 			if len(fields) > 0 && net.ParseIP(fields[0]) != nil && !slices.Contains(targets, fields[0]) {
 				targets = append(targets, fields[0])

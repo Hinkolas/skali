@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -348,10 +349,8 @@ func tenantRoleNames(tenant store.DatabaseTenant) []string {
 		if name == "" || name == tenant.RoleName {
 			return
 		}
-		for _, seen := range names {
-			if seen == name {
-				return
-			}
+		if slices.Contains(names, name) {
+			return
 		}
 		names = append(names, name)
 	}

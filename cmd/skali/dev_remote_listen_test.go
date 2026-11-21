@@ -149,7 +149,7 @@ func TestListenRoutesTakesTheSocketsABackgroundSessionInherits(t *testing.T) {
 	defer closeListeners(bound)
 	files, err := listenerFiles(bound)
 	require.NoError(t, err)
-	descriptors := ""
+	var descriptors strings.Builder
 	for index, file := range files {
 		// The inheriting side owns what it was handed: give it its own
 		// descriptors, as exec would.
@@ -157,11 +157,11 @@ func TestListenRoutesTakesTheSocketsABackgroundSessionInherits(t *testing.T) {
 		require.NoError(t, err)
 		file.Close()
 		if index > 0 {
-			descriptors += ","
+			descriptors.WriteString(",")
 		}
-		descriptors += strconv.Itoa(duplicate)
+		descriptors.WriteString(strconv.Itoa(duplicate))
 	}
-	t.Setenv(envListenFDs, descriptors)
+	t.Setenv(envListenFDs, descriptors.String())
 
 	listeners, err := listenRoutes(t.Context(), routes, "skali dev proxy")
 	require.NoError(t, err)

@@ -174,7 +174,7 @@ func nodeVolumes(t *testing.T) map[string]string {
 		`{{range .Mounts}}{{if eq .Type "volume"}}{{.Destination}}={{.Name}}{{"\n"}}{{end}}{{end}}`, e2eCluster).Output()
 	require.NoError(t, err)
 	volumes := map[string]string{}
-	for _, line := range strings.Fields(string(out)) {
+	for line := range strings.FieldsSeq(string(out)) {
 		destination, name, _ := strings.Cut(line, "=")
 		volumes[destination] = name
 	}

@@ -1,7 +1,6 @@
 package kube
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -167,7 +166,7 @@ func unchangedBy(converter managedfields.TypeConverter, applied, live *unstructu
 		return false
 	}
 	ownedSet := &fieldpath.Set{}
-	if err := ownedSet.FromJSON(bytes.NewReader(owned.FieldsV1.Raw)); err != nil {
+	if err := ownedSet.FromJSON(owned.FieldsV1.GetRawReader()); err != nil {
 		return false
 	}
 	config, err := converter.ObjectToTyped(applied)

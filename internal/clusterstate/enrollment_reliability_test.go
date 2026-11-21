@@ -234,11 +234,11 @@ func TestElevenHeartbeatsDoNotMirrorRevisionHistory(t *testing.T) {
 	store, _, _, _ := enrollmentFixture(t)
 	ctx := context.Background()
 	state, err := store.Update(ctx, func(s *State) error {
-		for i := 0; i < 10; i++ {
+		for i := range 10 {
 			id := uuid.NewString()
 			s.Nodes[id] = Node{ID: id, InstallationID: uuid.NewString(), Name: fmt.Sprintf("node-%d", i), Phase: NodePhaseActive, Role: layout.RoleAgent, Capabilities: []string{layout.CapabilityApplication}}
 		}
-		for i := 0; i < 150; i++ {
+		for range 150 {
 			if _, err := s.EditCandidate(time.Now(), func(map[string]RevisionNode, *PlatformState) error { return nil }); err != nil {
 				return err
 			}
@@ -262,7 +262,7 @@ func TestElevenHeartbeatsDoNotMirrorRevisionHistory(t *testing.T) {
 		wg.Add(1)
 		go func(id string) {
 			defer wg.Done()
-			for j := 0; j < 3; j++ {
+			for range 3 {
 				request := httptest.NewRequest(http.MethodPost, "/v1/agent/poll", strings.NewReader(`{"report":{}}`))
 				request.TLS = nodeTLS(id)
 				response := httptest.NewRecorder()
@@ -432,11 +432,11 @@ func TestBoundInvitationSurvivesStateWriteTimeout(t *testing.T) {
 func TestEnrollmentWhileElevenNodesHeartbeatUnderThrottling(t *testing.T) {
 	store, token, joining, csr := enrollmentFixture(t)
 	state, err := store.Update(context.Background(), func(s *State) error {
-		for i := 0; i < 10; i++ {
+		for i := range 10 {
 			id := uuid.NewString()
 			s.Nodes[id] = Node{ID: id, Name: fmt.Sprintf("existing-%d", i), Role: layout.RoleAgent, Phase: NodePhaseAwaitingApply}
 		}
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			_, err := s.EditCandidate(time.Now(), func(map[string]RevisionNode, *PlatformState) error { return nil })
 			if err != nil {
 				return err
@@ -459,7 +459,7 @@ func TestEnrollmentWhileElevenNodesHeartbeatUnderThrottling(t *testing.T) {
 		wg.Add(1)
 		go func(id string) {
 			defer wg.Done()
-			for i := 0; i < 3; i++ {
+			for range 3 {
 				request := httptest.NewRequest(http.MethodPost, "/v1/agent/poll", strings.NewReader(`{"report":{}}`)).WithContext(ctx)
 				request.TLS = nodeTLS(id)
 				response := httptest.NewRecorder()

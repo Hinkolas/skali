@@ -37,9 +37,9 @@ cnpg_collector_up{cluster="pg17-shared"} 1
 	reading, err := parsePoolExporter(body)
 	require.NoError(t, err)
 	require.Equal(t, poolExporterReading{
-		connections:   ptr(int64(8)),
+		connections:   new(int64(8)),
 		counters:      &poolCounters{commit: 1020, rollback: 5, blksHit: 10000, blksRead: 100},
-		databaseBytes: ptr(int64(44646863 + 7877091)),
+		databaseBytes: new(int64(44646863 + 7877091)),
 	}, reading)
 
 	// Missing families are unknown, never zero: the exporter drops a query
@@ -58,10 +58,8 @@ cnpg_collector_up{cluster="pg17-shared"} 1
 	require.NoError(t, err)
 	require.Nil(t, partial.connections, "no backends family is no connection count")
 	require.Nil(t, partial.counters, "a counter set with families missing has no delta")
-	require.Equal(t, ptr(int64(100)), partial.databaseBytes)
+	require.Equal(t, new(int64(100)), partial.databaseBytes)
 }
-
-func ptr[T any](value T) *T { return &value }
 
 func TestPoolCountersDelta(t *testing.T) {
 	t.Parallel()

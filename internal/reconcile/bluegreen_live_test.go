@@ -261,7 +261,7 @@ func kubeOwnsReplicas(deployment *appsv1.Deployment) bool {
 		if entry.Manager != "skalid-project" || entry.FieldsV1 == nil {
 			continue
 		}
-		if strings.Contains(string(entry.FieldsV1.Raw), `"f:replicas"`) {
+		if strings.Contains(entry.FieldsV1.GetRawString(), `"f:replicas"`) {
 			return true
 		}
 	}

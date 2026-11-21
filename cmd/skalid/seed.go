@@ -1362,7 +1362,7 @@ func (s *seeder) seedEnvironmentTelemetry(ctx context.Context, envID uuid.UUID, 
 
 	// Storage footprints: the newest sample per service is what the
 	// Studio reads; a few hours of history keeps the cutoff comfortable.
-	for i := 0; i < 6; i++ {
+	for i := range 6 {
 		at := s.now.Add(-time.Duration(i) * time.Hour)
 		params := store.InsertStorageSamplesParams{SampledAt: at}
 		add := func(key, kind string, used int64, measured bool, capacity int64) {
@@ -1460,7 +1460,7 @@ func (s *seeder) seedNodeTelemetry(ctx context.Context) error {
 			return err
 		}
 	}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		at := s.now.Add(-time.Duration(i) * 20 * time.Minute)
 		params := store.InsertStorageNodeSamplesParams{SampledAt: at}
 		for _, n := range seedNodes {

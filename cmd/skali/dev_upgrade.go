@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"syscall"
 
@@ -237,10 +238,8 @@ func printDevUpgradePlan(out io.Writer, style *clirender.Style, plan *localdev.U
 func componentNames(components []localdev.ComponentChange) []string {
 	var names []string
 	add := func(name string) {
-		for _, existing := range names {
-			if existing == name {
-				return
-			}
+		if slices.Contains(names, name) {
+			return
 		}
 		names = append(names, name)
 	}

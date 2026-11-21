@@ -3,6 +3,7 @@ package cnpg
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -163,13 +164,7 @@ func DropTenantRolesSQL(roles []string) string {
 // (status.managedRolesStatus). The reason explains a false answer.
 func RoleReconciled(cluster *unstructured.Unstructured, role, secretVersion string) (bool, string) {
 	reconciled, _, _ := unstructured.NestedStringSlice(cluster.Object, "status", "managedRolesStatus", "byStatus", "reconciled")
-	found := false
-	for _, name := range reconciled {
-		if name == role {
-			found = true
-			break
-		}
-	}
+	found := slices.Contains(reconciled, role)
 	if !found {
 		if failures, _, _ := unstructured.NestedStringSlice(cluster.Object, "status", "managedRolesStatus", "cannotReconcile", role); len(failures) > 0 {
 			return false, fmt.Sprintf("role %s: %s", role, failures[0])

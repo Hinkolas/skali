@@ -2,6 +2,7 @@ package workstats
 
 import (
 	"hash/fnv"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -192,9 +193,7 @@ func (q *Queue[K]) Stats() QueueStats {
 	stats := QueueStats{Depth: depth, Active: len(q.taken), Kinds: make([]KindStats, 0, len(q.kinds))}
 	for kind, t := range q.kinds {
 		arrivals := make(map[string]uint64, len(t.arrivals))
-		for reason, n := range t.arrivals {
-			arrivals[reason] = n
-		}
+		maps.Copy(arrivals, t.arrivals)
 		stats.Kinds = append(stats.Kinds, KindStats{Kind: kind, Arrivals: arrivals, Wait: t.wait.clone(), Pass: t.pass.clone()})
 	}
 	slices.SortFunc(stats.Kinds, func(a, b KindStats) int { return strings.Compare(a.Kind, b.Kind) })

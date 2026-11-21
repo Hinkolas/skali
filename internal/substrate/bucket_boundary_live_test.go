@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"reflect"
 	"testing"
@@ -244,9 +245,7 @@ func status(t *testing.T, client *http.Client, method, rawURL string, header htt
 	}
 	request, err := http.NewRequest(method, rawURL, reader)
 	require.NoError(t, err)
-	for name, values := range header {
-		request.Header[name] = values
-	}
+	maps.Copy(request.Header, header)
 	response, err := client.Do(request)
 	require.NoError(t, err)
 	defer response.Body.Close()

@@ -2,6 +2,7 @@ package reconcile
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -58,12 +59,7 @@ func (f *kernelFixture) deployActiveWithService(t *testing.T) string {
 }
 
 func containsOp(ops []string, op string) bool {
-	for _, entry := range ops {
-		if entry == op {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(ops, op)
 }
 
 // A second revision renders a new color beside the serving one. The

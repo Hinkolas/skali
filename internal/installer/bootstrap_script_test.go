@@ -102,11 +102,11 @@ func TestInstallScript(t *testing.T) {
 			calls := filepath.Join(root, "calls")
 			fixtureCLI := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$SKALI_TEST_CALLS\"\n"
 			assets := map[string]string{assetName: fixtureCLI}
-			checksums := ""
+			var checksums strings.Builder
 			for name, body := range assets {
-				checksums += fmt.Sprintf("%x  %s\n", sha256.Sum256([]byte(body)), name)
+				fmt.Fprintf(&checksums, "%x  %s\n", sha256.Sum256([]byte(body)), name)
 			}
-			assets["checksums.txt"] = checksums
+			assets["checksums.txt"] = checksums.String()
 			if tc.badChecksum {
 				assets["skali_linux_amd64"] = "corrupted CLI"
 			}
@@ -208,7 +208,7 @@ func TestInstallScript(t *testing.T) {
 					// suggestions after it are indented the same way.
 					var commands []string
 					inSetup := false
-					for _, line := range strings.Split(string(output), "\n") {
+					for line := range strings.SplitSeq(string(output), "\n") {
 						switch {
 						case strings.HasPrefix(line, "PATH setup required:"):
 							inSetup = true

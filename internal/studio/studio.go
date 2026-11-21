@@ -45,7 +45,7 @@ func handler(api http.Handler, assets fs.FS) http.Handler {
 			return
 		}
 		name := strings.TrimPrefix(r.URL.Path, "/")
-		for _, segment := range strings.Split(name, "/") {
+		for segment := range strings.SplitSeq(name, "/") {
 			if strings.HasPrefix(segment, ".") {
 				http.NotFound(w, r)
 				return

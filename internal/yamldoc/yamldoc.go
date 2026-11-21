@@ -257,8 +257,7 @@ func walkUnknown(node *yaml.Node, t reflect.Type, path, file string, found *Diag
 // Inline tags are not used by any skali document type.
 func yamlFields(t reflect.Type) map[string]reflect.Type {
 	fields := make(map[string]reflect.Type, t.NumField())
-	for i := range t.NumField() {
-		field := t.Field(i)
+	for field := range t.Fields() {
 		if !field.IsExported() {
 			continue
 		}

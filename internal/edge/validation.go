@@ -37,7 +37,7 @@ func CanonicalDomain(value string) (string, error) {
 		return "", fmt.Errorf("must be a DNS hostname, not an IP address")
 	}
 	offset := 0
-	for _, label := range strings.Split(value, ".") {
+	for label := range strings.SplitSeq(value, ".") {
 		switch {
 		case len(label) == 0:
 			return "", fmt.Errorf("must be a DNS hostname: empty label at position %d", offset+1)

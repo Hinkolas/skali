@@ -163,7 +163,7 @@ func inheritedListeners(routes []devremote.Route) (listeners []net.Listener, inh
 			file.Close()
 		}
 	}()
-	for _, field := range strings.Split(value, ",") {
+	for field := range strings.SplitSeq(value, ",") {
 		descriptor, err := strconv.Atoi(field)
 		if err != nil || descriptor < 3 {
 			return nil, true, fmt.Errorf("%s=%q does not name inherited sockets", envListenFDs, value)

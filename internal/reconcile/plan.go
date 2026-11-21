@@ -234,8 +234,8 @@ func planBatches(definition compiler.ProjectDefinition) (batches [][]string, wai
 // splitService separates a dotted service name into its collection and bare
 // key.
 func splitService(dotted string) (collection, key string) {
-	if index := strings.IndexByte(dotted, '.'); index >= 0 {
-		return dotted[:index], dotted[index+1:]
+	if before, after, ok := strings.Cut(dotted, "."); ok {
+		return before, after
 	}
 	return "", dotted
 }

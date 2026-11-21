@@ -62,7 +62,7 @@ type Application struct {
 	Scaling     Scaling               "json:\"scaling\""
 	Placement   Placement             "json:\"placement,omitzero\""
 	Deployment  Deployment            "json:\"deployment,omitzero\""
-	Shutdown    Shutdown              "json:\"shutdown,omitempty\""
+	Shutdown    Shutdown              "json:\"shutdown,omitzero\""
 	Volumes     map[string]Volume     "json:\"volumes,omitempty\""
 }
 

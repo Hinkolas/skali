@@ -154,11 +154,13 @@ func TrustedKeySet(certPEM []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	// JWK coordinates are the fixed-size big-endian field elements.
-	x := make([]byte, 32)
-	y := make([]byte, 32)
-	public.X.FillBytes(x)
-	public.Y.FillBytes(y)
+	// JWK coordinates are the fixed-size big-endian field elements, which
+	// the uncompressed point encoding (0x04 || X || Y) holds back to back.
+	point, err := public.Bytes()
+	if err != nil {
+		return nil, fmt.Errorf("registrytoken: encode signing key: %w", err)
+	}
+	x, y := point[1:33], point[33:]
 	type jwk struct {
 		KeyType   string `json:"kty"`
 		Curve     string `json:"crv"`

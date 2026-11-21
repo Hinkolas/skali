@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -1070,9 +1071,7 @@ func (d *CoordinatorDaemon) activateTopology(ctx context.Context,
 			for _, capability := range layout.Capabilities {
 				delete(node.Labels, layout.CapabilityLabel(capability))
 			}
-			for key, value := range layout.CapabilityLabels(desired.Capabilities) {
-				node.Labels[key] = value
-			}
+			maps.Copy(node.Labels, layout.CapabilityLabels(desired.Capabilities))
 			taints := node.Spec.Taints[:0]
 			for _, taint := range node.Spec.Taints {
 				if taint.Key != layout.PendingTaintKey {

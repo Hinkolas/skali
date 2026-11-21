@@ -59,10 +59,7 @@ func (c *Controller) SeaweedProbe() observe.Probe {
 		if err != nil {
 			return nil, err
 		}
-		ready := int32(len(peers) + 1)
-		if ready > row.Masters {
-			ready = row.Masters
-		}
+		ready := min(int32(len(peers)+1), row.Masters)
 		storeObj.ObjectStore.MastersReady = ready
 		if count, err := c.deps.Seaweed.VolumeServerCount(ctx); err == nil {
 			storeObj.ObjectStore.VolumeServersReady = int32(count)

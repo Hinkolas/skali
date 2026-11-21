@@ -156,7 +156,7 @@ func TestVerificationUsesJournaledPinAfterRestart(t *testing.T) {
 	previous := installer.ReleaseBase
 	installer.ReleaseBase = server.URL
 	t.Cleanup(func() { installer.ReleaseBase = previous })
-	runner := &host.Fake{FS: map[string][]byte{installer.K3sKubeconfigPath: []byte(fmt.Sprintf("apiVersion: v1\nkind: Config\nclusters:\n- name: test\n  cluster:\n    server: %s\ncontexts:\n- name: test\n  context:\n    cluster: test\ncurrent-context: test\n", server.URL))}}
+	runner := &host.Fake{FS: map[string][]byte{installer.K3sKubeconfigPath: fmt.Appendf(nil, "apiVersion: v1\nkind: Config\nclusters:\n- name: test\n  cluster:\n    server: %s\ncontexts:\n- name: test\n  context:\n    cluster: test\ncurrent-context: test\n", server.URL)}}
 	state := &clusterstate.State{CurrentOperation: "op", Nodes: map[string]clusterstate.Node{
 		"id": {ID: "id", Name: "worker", Role: "agent", Phase: "active", LastSeen: now, AgentVersion: release, K3sVersion: pin},
 	}, Updates: clusterstate.UpdateJournal{Operations: map[string]clusterstate.ReleaseUpdate{"op": {Version: release, K3s: pin}}}}
@@ -178,8 +178,7 @@ func TestReleasePreflightChecksBothArchitecturesBeforeUpgrading(t *testing.T) {
 					}
 				} else if strings.HasSuffix(r.URL.Path, "release.json") {
 					fmt.Fprintf(w, `{"version":%q,"k3s":"v1.36.3+k3s1"}`, release)
-				} else if strings.HasPrefix(r.URL.Path, "/api/v1/nodes/") {
-					name := strings.TrimPrefix(r.URL.Path, "/api/v1/nodes/")
+				} else if name, ok := strings.CutPrefix(r.URL.Path, "/api/v1/nodes/"); ok {
 					visited[name] = true
 					arch := "arm64"
 					if name == "node-09" || name == "node-10" {
@@ -195,7 +194,7 @@ func TestReleasePreflightChecksBothArchitecturesBeforeUpgrading(t *testing.T) {
 			previous := installer.ReleaseBase
 			installer.ReleaseBase = server.URL
 			defer func() { installer.ReleaseBase = previous }()
-			runner := &host.Fake{FS: map[string][]byte{installer.K3sKubeconfigPath: []byte(fmt.Sprintf("apiVersion: v1\nkind: Config\nclusters:\n- name: test\n  cluster:\n    server: %s\ncontexts:\n- name: test\n  context:\n    cluster: test\ncurrent-context: test\n", server.URL))}}
+			runner := &host.Fake{FS: map[string][]byte{installer.K3sKubeconfigPath: fmt.Appendf(nil, "apiVersion: v1\nkind: Config\nclusters:\n- name: test\n  cluster:\n    server: %s\ncontexts:\n- name: test\n  context:\n    cluster: test\ncurrent-context: test\n", server.URL)}}
 			d := &CoordinatorDaemon{Runner: runner, Releases: server.Client()}
 			state := &clusterstate.State{Nodes: map[string]clusterstate.Node{}}
 			target := clusterstate.Revision{Platform: clusterstate.PlatformState{Version: release}, Nodes: map[string]clusterstate.RevisionNode{}}

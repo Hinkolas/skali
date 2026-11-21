@@ -92,12 +92,6 @@ func masterPeers(namespace string, masters int) string {
 	return strings.Join(peers, ",")
 }
 
-func ptrIntOrString(value intstr.IntOrString) *intstr.IntOrString { return &value }
-
-func replicas(desired int32) *int32 {
-	return &desired
-}
-
 // RenderProduction renders the managed multi-component shape: master
 // StatefulSet (raft quorum), volume DaemonSet (one server per capable
 // node), filer Deployment with the S3 gateway embedded, plus configuration
@@ -369,7 +363,7 @@ func renderMasters(spec StoreSpec) *appsv1.StatefulSet {
 		ObjectMeta: objectMeta(spec.Namespace, MasterService, MasterService),
 		Spec: appsv1.StatefulSetSpec{
 			ServiceName: MasterService,
-			Replicas:    replicas(int32(spec.Masters)),
+			Replicas:    new(int32(spec.Masters)),
 			Selector:    &metav1.LabelSelector{MatchLabels: map[string]string{"app": MasterService}},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
@@ -541,15 +535,15 @@ func renderFiler(spec StoreSpec) *appsv1.Deployment {
 		TypeMeta:   metav1.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"},
 		ObjectMeta: objectMeta(spec.Namespace, FilerService, FilerService),
 		Spec: appsv1.DeploymentSpec{
-			Replicas: replicas(int32(spec.filers())),
+			Replicas: new(int32(spec.filers())),
 			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": FilerService}},
 			// One filer keeps serving through a rollout: the new pod must be
 			// ready before an old one goes.
 			Strategy: appsv1.DeploymentStrategy{
 				Type: appsv1.RollingUpdateDeploymentStrategyType,
 				RollingUpdate: &appsv1.RollingUpdateDeployment{
-					MaxUnavailable: ptrIntOrString(intstr.FromInt32(0)),
-					MaxSurge:       ptrIntOrString(intstr.FromInt32(1)),
+					MaxUnavailable: new(intstr.FromInt32(0)),
+					MaxSurge:       new(intstr.FromInt32(1)),
 				},
 			},
 			Template: corev1.PodTemplateSpec{
@@ -642,7 +636,7 @@ func renderAllInOne(spec StoreSpec) *appsv1.Deployment {
 		TypeMeta:   metav1.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"},
 		ObjectMeta: objectMeta(spec.Namespace, AllInOneApp, AllInOneApp),
 		Spec: appsv1.DeploymentSpec{
-			Replicas: replicas(1),
+			Replicas: new(int32(1)),
 			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": AllInOneApp}},
 			Strategy: appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType},
 			Template: corev1.PodTemplateSpec{

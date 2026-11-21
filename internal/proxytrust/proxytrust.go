@@ -26,7 +26,7 @@ func Parse(value string) ([]netip.Prefix, error) {
 	if strings.TrimSpace(value) == "" {
 		return prefixes, nil
 	}
-	for _, raw := range strings.Split(value, ",") {
+	for raw := range strings.SplitSeq(value, ",") {
 		prefix, err := netip.ParsePrefix(strings.TrimSpace(raw))
 		if err != nil {
 			return nil, fmt.Errorf("SKALI_TRUSTED_PROXIES: invalid CIDR %q", raw)
