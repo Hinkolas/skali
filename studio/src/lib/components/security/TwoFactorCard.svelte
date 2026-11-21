@@ -1,7 +1,7 @@
 <script lang="ts">
 	import ShieldCheck from '@lucide/svelte/icons/shield-check';
 	import ShieldOff from '@lucide/svelte/icons/shield-off';
-	import { invalidateAll } from '$app/navigation';
+	import { refreshAll } from '$app/navigation';
 	import { api, ApiError } from '#lib/api/client.ts';
 	import { modal } from '#lib/stores/modal.svelte.ts';
 	import { dialog } from '#lib/stores/dialog.svelte.ts';
@@ -32,7 +32,7 @@
 			const enrollment = await api.post<TwoFactorEnrollment>('/v1/auth/2fa/enable');
 			busy = false;
 			if (await modal.open<boolean>(TwoFactorEnrollModal, { enrollment }, enrollOptions).result) {
-				await invalidateAll();
+				await refreshAll();
 			}
 		} catch (err) {
 			busy = false;
@@ -52,7 +52,7 @@
 		try {
 			await api.post('/v1/auth/2fa/disable');
 			toast.success('Two-factor authentication disabled');
-			await invalidateAll();
+			await refreshAll();
 		} catch (err) {
 			toast.error(err instanceof ApiError ? err.message : 'Could not disable 2FA');
 		}

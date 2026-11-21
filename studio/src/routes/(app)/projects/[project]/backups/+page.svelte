@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { invalidateAll } from '$app/navigation';
+	import { refreshAll } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import Archive from '@lucide/svelte/icons/archive';
 	import CalendarClock from '@lucide/svelte/icons/calendar-clock';
@@ -145,7 +145,7 @@
 				try {
 					await api.del(`/v1/projects/${data.project.id}/backups/${snapshot.id}`);
 					toast.success('Snapshot deleted');
-					await invalidateAll();
+					await refreshAll();
 				} catch (err) {
 					toast.error(err instanceof ApiError ? err.message : 'Could not delete the snapshot');
 					throw err;

@@ -4,7 +4,7 @@
 // decisions the reconciler executes, so the Studio only confirms and
 // starts them; the project stream refreshes every view as they progress.
 
-import { invalidateAll } from '$app/navigation';
+import { refreshAll } from '$app/navigation';
 import { api, ApiError } from '#lib/api/client.ts';
 import { dialog } from '#lib/stores/dialog.svelte.ts';
 import { sidepanel } from '#lib/stores/sidepanel.svelte.ts';
@@ -32,7 +32,7 @@ export function confirmStopEnvironment(env: Target) {
 				const result = await api.post<{ run_id: string }>(`/v1/environments/${env.id}/teardown`);
 				toast.success(`Stopping ${env.name}`);
 				sidepanel.open(RunDetailPanel, { runId: result.run_id }, { label: 'Run details' });
-				await invalidateAll();
+				await refreshAll();
 			} catch (err) {
 				toast.error(err instanceof ApiError ? err.message : 'Could not stop the environment');
 				throw err;
@@ -55,7 +55,7 @@ export function confirmDeleteEnvironment(env: Target) {
 			try {
 				await api.post(`/v1/environments/${env.id}/teardown`, { purge: true });
 				toast.success(`Deleting ${env.name}`);
-				await invalidateAll();
+				await refreshAll();
 			} catch (err) {
 				toast.error(err instanceof ApiError ? err.message : 'Could not delete the environment');
 				throw err;

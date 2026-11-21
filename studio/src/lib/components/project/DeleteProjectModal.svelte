@@ -8,7 +8,7 @@
 </script>
 
 <script lang="ts">
-	import { invalidateAll } from '$app/navigation';
+	import { refreshAll } from '$app/navigation';
 	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
 	import { api, ApiError } from '#lib/api/client.ts';
 	import { leaveDeletedProject } from '#lib/projectstream.ts';
@@ -51,7 +51,7 @@
 				return;
 			}
 			toast.success(`Deleting ${project.display_name || project.name}`);
-			await invalidateAll();
+			await refreshAll();
 		} catch (err) {
 			errorMessage = err instanceof ApiError ? err.message : 'Could not delete the project.';
 			busy = false;

@@ -1,7 +1,7 @@
 // Shell data for the whole authenticated area: the caller's project list
 // (no summaries: those belong to the pages that show them), instance meta,
 // and, for instance admins only, the observed nodes (/v1/nodes answers 403
-// to everyone else). Runs once per hard load and again on invalidateAll();
+// to everyone else). Runs once per hard load and again on refreshAll();
 // tab navigation does not re-run it.
 //
 // Everything here must stay cheap: no page paints before this resolves.

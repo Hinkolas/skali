@@ -7,7 +7,7 @@
 </script>
 
 <script lang="ts">
-	import { invalidateAll } from '$app/navigation';
+	import { refreshAll } from '$app/navigation';
 	import { page } from '$app/state';
 	import { api, ApiError } from '#lib/api/client.ts';
 	import { isInstanceAdmin } from '#lib/access.ts';
@@ -44,7 +44,7 @@
 				priority: instanceAdmin ? priority : 'normal'
 			});
 			toast.success(`Environment "${trimmed}" created`);
-			await invalidateAll();
+			await refreshAll();
 			close(true);
 		} catch (err) {
 			errorMessage = err instanceof ApiError ? err.message : 'Could not create the environment.';

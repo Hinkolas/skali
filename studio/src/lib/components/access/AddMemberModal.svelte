@@ -15,7 +15,7 @@
 	// the chosen person and the role ladder spelled out. Users themselves are
 	// created by an instance admin on the Users page; this only attaches one
 	// to the project.
-	import { invalidateAll } from '$app/navigation';
+	import { refreshAll } from '$app/navigation';
 	import { page } from '$app/state';
 	import Search from '@lucide/svelte/icons/search';
 	import ArrowLeft from '@lucide/svelte/icons/arrow-left';
@@ -109,7 +109,7 @@
 		try {
 			await api.put(`/v1/projects/${project.id}/members/${selected.id}`, { role });
 			toast.success(`Added ${selected.name || selected.email} as ${role}`);
-			await invalidateAll();
+			await refreshAll();
 			close(true);
 		} catch (err) {
 			errorMessage = err instanceof ApiError ? err.message : 'Could not add the member.';

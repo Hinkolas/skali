@@ -2,7 +2,7 @@
 	import ChevronRight from '@lucide/svelte/icons/chevron-right';
 	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
 	import X from '@lucide/svelte/icons/x';
-	import { invalidateAll } from '$app/navigation';
+	import { refreshAll } from '$app/navigation';
 	import { api, ApiError } from '#lib/api/client.ts';
 	import type { RunTree, Step } from '#lib/types/runs.ts';
 	import { runCancellable, runKindLabel, runUnsettled } from '#lib/types/runs.ts';
@@ -56,7 +56,7 @@
 				unsettledSeen = true;
 			} else if (unsettledSeen) {
 				unsettledSeen = false;
-				setTimeout(() => void invalidateAll(), SETTLE_REFRESH_DELAY_MS);
+				setTimeout(() => void refreshAll(), SETTLE_REFRESH_DELAY_MS);
 			}
 		};
 		// REST seed first (the stream re-sends full documents afterwards).

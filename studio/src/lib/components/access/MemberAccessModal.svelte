@@ -11,9 +11,9 @@
 	// One member's whole standing on the project: the project role plus the
 	// effective role on every environment the viewer may read, with explicit
 	// overrides edited in place. Reads live page data by user id, so every
-	// mutation's invalidateAll() refreshes the modal too; confirms and the
+	// mutation's refreshAll() refreshes the modal too; confirms and the
 	// sudo reauth prompt layer above it on the modal stack.
-	import { invalidateAll } from '$app/navigation';
+	import { refreshAll } from '$app/navigation';
 	import { page } from '$app/state';
 	import { slide } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
@@ -103,7 +103,7 @@
 		busy[id] = true;
 		try {
 			await call();
-			await invalidateAll();
+			await refreshAll();
 		} catch (err) {
 			toast.error(err instanceof ApiError ? err.message : fallback);
 		} finally {
@@ -151,7 +151,7 @@
 			await api.del(`/v1/projects/${project.id}/members/${userId}`);
 			toast.success(`Removed ${email}`);
 			close();
-			await invalidateAll();
+			await refreshAll();
 		} catch (err) {
 			toast.error(err instanceof ApiError ? err.message : 'Could not remove the member');
 			removing = false;

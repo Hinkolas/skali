@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import { invalidateAll } from '$app/navigation';
+	import { refreshAll } from '$app/navigation';
 	import { updated } from '$app/state';
 	import ArrowDownToLine from '@lucide/svelte/icons/arrow-down-to-line';
 	import ArrowRight from '@lucide/svelte/icons/arrow-right';
@@ -278,7 +278,7 @@
 					title: updatePresentation(status).title
 				});
 			}
-			await invalidateAll();
+			await refreshAll();
 		} catch (err) {
 			toast.update(id, {
 				variant: 'error',
@@ -330,7 +330,7 @@
 				channel,
 				auto_update: autoUpdate
 			});
-			await invalidateAll();
+			await refreshAll();
 		} catch (err) {
 			toast.error(describeError(err, 'Could not save the update settings'));
 		} finally {
