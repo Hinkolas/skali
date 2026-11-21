@@ -124,7 +124,6 @@ func TestOwnershipMonitorVerifiesEveryPeerAndInvalidates(t *testing.T) {
 			var peerCalls [2]int
 			servers := make([]*httptest.Server, 2)
 			for i := range servers {
-				i := i
 				servers[i] = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					w.Header().Set("Content-Type", "application/json")
 					var object any

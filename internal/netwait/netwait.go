@@ -103,11 +103,9 @@ func Wait(ctx context.Context, addresses []string) []string {
 	reached := make([]bool, len(addresses))
 	var wg sync.WaitGroup
 	for index, address := range addresses {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			reached[index] = waitOne(ctx, address)
-		}()
+		})
 	}
 	wg.Wait()
 	var unreachable []string

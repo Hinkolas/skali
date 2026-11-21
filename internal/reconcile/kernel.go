@@ -385,11 +385,9 @@ func (k *Kernel) Run(ctx context.Context) error {
 
 	var workers sync.WaitGroup
 	for range k.cfg.Workers {
-		workers.Add(1)
-		go func() {
-			defer workers.Done()
+		workers.Go(func() {
 			k.worker(ctx)
-		}()
+		})
 	}
 	// The boot audit runs every environment at once: after a restart no
 	// health verdict exists until a pass derives it.

@@ -210,20 +210,20 @@ func (k *KubeSource) register() {
 	managed := rendering.ManagedSelector
 
 	k.addObjectInformer("Pod", &corev1.Pod{}, k.listWatch("Pod",
-		func(o metav1.ListOptions) (runtime.Object, error) {
-			return core.Pods(all).List(context.Background(), o)
+		func(ctx context.Context, o metav1.ListOptions) (runtime.Object, error) {
+			return core.Pods(all).List(ctx, o)
 		},
-		func(o metav1.ListOptions) (watch.Interface, error) {
-			return core.Pods(all).Watch(context.Background(), o)
+		func(ctx context.Context, o metav1.ListOptions) (watch.Interface, error) {
+			return core.Pods(all).Watch(ctx, o)
 		},
 		managed, ""), convertPod)
 
 	deployments := k.addObjectInformer("Deployment", &appsv1.Deployment{}, k.listWatch("Deployment",
-		func(o metav1.ListOptions) (runtime.Object, error) {
-			return apps.Deployments(all).List(context.Background(), o)
+		func(ctx context.Context, o metav1.ListOptions) (runtime.Object, error) {
+			return apps.Deployments(all).List(ctx, o)
 		},
-		func(o metav1.ListOptions) (watch.Interface, error) {
-			return apps.Deployments(all).Watch(context.Background(), o)
+		func(ctx context.Context, o metav1.ListOptions) (watch.Interface, error) {
+			return apps.Deployments(all).Watch(ctx, o)
 		},
 		managed, ""), convertDeployment)
 
@@ -231,29 +231,29 @@ func (k *KubeSource) register() {
 	// terminal state, and a completing Job must poke its environment instead
 	// of waiting out the requeue interval.
 	k.addObjectInformer("Job", &batchv1.Job{}, k.listWatch("Job",
-		func(o metav1.ListOptions) (runtime.Object, error) {
-			return batch.Jobs(all).List(context.Background(), o)
+		func(ctx context.Context, o metav1.ListOptions) (runtime.Object, error) {
+			return batch.Jobs(all).List(ctx, o)
 		},
-		func(o metav1.ListOptions) (watch.Interface, error) {
-			return batch.Jobs(all).Watch(context.Background(), o)
+		func(ctx context.Context, o metav1.ListOptions) (watch.Interface, error) {
+			return batch.Jobs(all).Watch(ctx, o)
 		},
 		managed, ""), convertJob)
 
 	services := k.addObjectInformer("Service", &corev1.Service{}, k.listWatch("Service",
-		func(o metav1.ListOptions) (runtime.Object, error) {
-			return core.Services(all).List(context.Background(), o)
+		func(ctx context.Context, o metav1.ListOptions) (runtime.Object, error) {
+			return core.Services(all).List(ctx, o)
 		},
-		func(o metav1.ListOptions) (watch.Interface, error) {
-			return core.Services(all).Watch(context.Background(), o)
+		func(ctx context.Context, o metav1.ListOptions) (watch.Interface, error) {
+			return core.Services(all).Watch(ctx, o)
 		},
 		managed, ""), convertService)
 
 	k.addObjectInformer("Ingress", &networkingv1.Ingress{}, k.listWatch("Ingress",
-		func(o metav1.ListOptions) (runtime.Object, error) {
-			return networking.Ingresses(all).List(context.Background(), o)
+		func(ctx context.Context, o metav1.ListOptions) (runtime.Object, error) {
+			return networking.Ingresses(all).List(ctx, o)
 		},
-		func(o metav1.ListOptions) (watch.Interface, error) {
-			return networking.Ingresses(all).Watch(context.Background(), o)
+		func(ctx context.Context, o metav1.ListOptions) (watch.Interface, error) {
+			return networking.Ingresses(all).Watch(ctx, o)
 		},
 		managed, ""), convertPlain(schema.GroupVersionKind{Group: "networking.k8s.io", Version: "v1", Kind: "Ingress"}, module.KindIngress))
 
@@ -264,38 +264,38 @@ func (k *KubeSource) register() {
 	// as an undesired managed object and the kernel would prune it on every
 	// pass (the controller recreating it each time).
 	k.addObjectInformer("EndpointSlice", &discoveryv1.EndpointSlice{}, k.listWatch("EndpointSlice",
-		func(o metav1.ListOptions) (runtime.Object, error) {
-			return k.client.Clientset.DiscoveryV1().EndpointSlices(all).List(context.Background(), o)
+		func(ctx context.Context, o metav1.ListOptions) (runtime.Object, error) {
+			return k.client.Clientset.DiscoveryV1().EndpointSlices(all).List(ctx, o)
 		},
-		func(o metav1.ListOptions) (watch.Interface, error) {
-			return k.client.Clientset.DiscoveryV1().EndpointSlices(all).Watch(context.Background(), o)
+		func(ctx context.Context, o metav1.ListOptions) (watch.Interface, error) {
+			return k.client.Clientset.DiscoveryV1().EndpointSlices(all).Watch(ctx, o)
 		},
 		rendering.InterceptEndpointSliceSelector, ""), convertPlain(schema.GroupVersionKind{Group: "discovery.k8s.io", Version: "v1", Kind: "EndpointSlice"}, module.KindEndpointSlice))
 
 	claims := k.addObjectInformer("PersistentVolumeClaim", &corev1.PersistentVolumeClaim{}, k.listWatch("PersistentVolumeClaim",
-		func(o metav1.ListOptions) (runtime.Object, error) {
-			return core.PersistentVolumeClaims(all).List(context.Background(), o)
+		func(ctx context.Context, o metav1.ListOptions) (runtime.Object, error) {
+			return core.PersistentVolumeClaims(all).List(ctx, o)
 		},
-		func(o metav1.ListOptions) (watch.Interface, error) {
-			return core.PersistentVolumeClaims(all).Watch(context.Background(), o)
+		func(ctx context.Context, o metav1.ListOptions) (watch.Interface, error) {
+			return core.PersistentVolumeClaims(all).Watch(ctx, o)
 		},
 		managed, ""), convertPlain(schema.GroupVersionKind{Version: "v1", Kind: "PersistentVolumeClaim"}, module.KindVolume))
 
 	autoscalers := k.addObjectInformer("HorizontalPodAutoscaler", &autoscalingv2.HorizontalPodAutoscaler{}, k.listWatch("HorizontalPodAutoscaler",
-		func(o metav1.ListOptions) (runtime.Object, error) {
-			return autoscaling.HorizontalPodAutoscalers(all).List(context.Background(), o)
+		func(ctx context.Context, o metav1.ListOptions) (runtime.Object, error) {
+			return autoscaling.HorizontalPodAutoscalers(all).List(ctx, o)
 		},
-		func(o metav1.ListOptions) (watch.Interface, error) {
-			return autoscaling.HorizontalPodAutoscalers(all).Watch(context.Background(), o)
+		func(ctx context.Context, o metav1.ListOptions) (watch.Interface, error) {
+			return autoscaling.HorizontalPodAutoscalers(all).Watch(ctx, o)
 		},
 		managed, ""), convertAutoscaler)
 
 	namespaces := k.addObjectInformer("Namespace", &corev1.Namespace{}, k.listWatch("Namespace",
-		func(o metav1.ListOptions) (runtime.Object, error) {
-			return core.Namespaces().List(context.Background(), o)
+		func(ctx context.Context, o metav1.ListOptions) (runtime.Object, error) {
+			return core.Namespaces().List(ctx, o)
 		},
-		func(o metav1.ListOptions) (watch.Interface, error) {
-			return core.Namespaces().Watch(context.Background(), o)
+		func(ctx context.Context, o metav1.ListOptions) (watch.Interface, error) {
+			return core.Namespaces().Watch(ctx, o)
 		},
 		managed, ""), convertNamespace)
 
@@ -310,30 +310,32 @@ func (k *KubeSource) register() {
 	// reads: nothing about them is health, and nothing prunes them.
 	policies := networkingv1.SchemeGroupVersion.WithResource("networkpolicies")
 	k.addCacheInformer("NetworkPolicy", policies, k.listWatch("NetworkPolicy",
-		func(o metav1.ListOptions) (runtime.Object, error) {
-			return k.client.Dynamic.Resource(policies).Namespace(all).List(context.Background(), o)
+		func(ctx context.Context, o metav1.ListOptions) (runtime.Object, error) {
+			return k.client.Dynamic.Resource(policies).Namespace(all).List(ctx, o)
 		},
-		func(o metav1.ListOptions) (watch.Interface, error) {
-			return k.client.Dynamic.Resource(policies).Namespace(all).Watch(context.Background(), o)
+		func(ctx context.Context, o metav1.ListOptions) (watch.Interface, error) {
+			return k.client.Dynamic.Resource(policies).Namespace(all).Watch(ctx, o)
 		},
 		managed, ""))
 
 	// Nodes are unlabeled infrastructure: observed only to fan a node change
 	// out to the environments with pods placed on it.
 	k.addNodeInformer(k.listWatch("Node",
-		func(o metav1.ListOptions) (runtime.Object, error) { return core.Nodes().List(context.Background(), o) },
-		func(o metav1.ListOptions) (watch.Interface, error) {
-			return core.Nodes().Watch(context.Background(), o)
+		func(ctx context.Context, o metav1.ListOptions) (runtime.Object, error) {
+			return core.Nodes().List(ctx, o)
+		},
+		func(ctx context.Context, o metav1.ListOptions) (watch.Interface, error) {
+			return core.Nodes().Watch(ctx, o)
 		},
 		"", ""))
 
 	// Warning events join to environments through their involved object.
 	k.addEventInformer(k.listWatch("Event",
-		func(o metav1.ListOptions) (runtime.Object, error) {
-			return core.Events(all).List(context.Background(), o)
+		func(ctx context.Context, o metav1.ListOptions) (runtime.Object, error) {
+			return core.Events(all).List(ctx, o)
 		},
-		func(o metav1.ListOptions) (watch.Interface, error) {
-			return core.Events(all).Watch(context.Background(), o)
+		func(ctx context.Context, o metav1.ListOptions) (watch.Interface, error) {
+			return core.Events(all).Watch(ctx, o)
 		},
 		"", "type=Warning"))
 
@@ -343,11 +345,11 @@ func (k *KubeSource) register() {
 		gvr := dynamicKind.GVR
 		convert := dynamicKind.Convert
 		informer := k.addObjectInformer(dynamicKind.Kind, &unstructured.Unstructured{}, k.listWatch(dynamicKind.Kind,
-			func(o metav1.ListOptions) (runtime.Object, error) {
-				return k.client.Dynamic.Resource(gvr).Namespace(all).List(context.Background(), o)
+			func(ctx context.Context, o metav1.ListOptions) (runtime.Object, error) {
+				return k.client.Dynamic.Resource(gvr).Namespace(all).List(ctx, o)
 			},
-			func(o metav1.ListOptions) (watch.Interface, error) {
-				return k.client.Dynamic.Resource(gvr).Namespace(all).Watch(context.Background(), o)
+			func(ctx context.Context, o metav1.ListOptions) (watch.Interface, error) {
+				return k.client.Dynamic.Resource(gvr).Namespace(all).Watch(ctx, o)
 			},
 			managed, ""), func(raw any) (Object, bool) {
 			object, ok := raw.(*unstructured.Unstructured)
@@ -368,15 +370,15 @@ func (k *KubeSource) register() {
 // immediately closing zero-event watcher is recorded as a failure.
 func (k *KubeSource) listWatch(
 	kind string,
-	list func(metav1.ListOptions) (runtime.Object, error),
-	watchFn func(metav1.ListOptions) (watch.Interface, error),
+	list func(context.Context, metav1.ListOptions) (runtime.Object, error),
+	watchFn func(context.Context, metav1.ListOptions) (watch.Interface, error),
 	labelSelector, fieldSelector string,
 ) cache.ListerWatcher {
 	return &cache.ListWatch{
-		ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
+		ListWithContextFunc: func(ctx context.Context, options metav1.ListOptions) (runtime.Object, error) {
 			options.LabelSelector = labelSelector
 			options.FieldSelector = fieldSelector
-			result, err := list(options)
+			result, err := list(ctx, options)
 			if err != nil {
 				k.store.MarkFailure(SourceKubernetes)
 				return nil, err
@@ -384,10 +386,10 @@ func (k *KubeSource) listWatch(
 			k.contact()
 			return result, nil
 		},
-		WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
+		WatchFuncWithContext: func(ctx context.Context, options metav1.ListOptions) (watch.Interface, error) {
 			options.LabelSelector = labelSelector
 			options.FieldSelector = fieldSelector
-			result, err := watchFn(options)
+			result, err := watchFn(ctx, options)
 			if err != nil {
 				k.store.MarkFailure(SourceKubernetes)
 				return nil, err

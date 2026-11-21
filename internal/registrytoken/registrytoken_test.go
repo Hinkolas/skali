@@ -2,6 +2,7 @@ package registrytoken
 
 import (
 	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
@@ -81,7 +82,8 @@ func TestTrustedKeySet(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, x, 32)
 	require.Len(t, y, 32)
-	public := &ecdsa.PublicKey{Curve: signer.key.Curve, X: new(big.Int).SetBytes(x), Y: new(big.Int).SetBytes(y)}
+	public, err := ecdsa.ParseUncompressedPublicKey(elliptic.P256(), append(append([]byte{4}, x...), y...))
+	require.NoError(t, err)
 
 	token, err := signer.Mint(Service, "ada", nil, time.Now(), TokenTTL)
 	require.NoError(t, err)

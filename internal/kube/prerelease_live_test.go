@@ -59,7 +59,7 @@ func TestLivePrereleaseOwnershipAndRoutes(t *testing.T) {
 			if i == 1 {
 				project, domain, extra = "beta", "b.example.com", ""
 			}
-			doc, err := manifest.Parse([]byte(fmt.Sprintf(`name: %s
+			doc, err := manifest.Parse(fmt.Appendf(nil, `name: %s
 applications:
   web:
     image: traefik/whoami:v1.10.2
@@ -67,7 +67,7 @@ applications:
       http: {port: 80}
     routes:
       public: {domain: %s, port: http}%s
-`, project, domain, extra)), "skali.yml")
+`, project, domain, extra), "skali.yml")
 			require.NoError(t, err)
 			compiled, err := compiler.Compile(doc)
 			require.NoError(t, err)

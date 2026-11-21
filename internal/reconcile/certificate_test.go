@@ -207,7 +207,7 @@ func TestCertificateRedeployRecoveryAndCheckpoint(t *testing.T) {
 		f.fake.SetCertificate(f.environmentID, f.namespace, certName, "web", issuing)
 		return true, nil
 	}
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		_, err := f.kernel.reconcileEnvironment(ctx, f.environmentID)
 		require.NoError(t, err)
 	}

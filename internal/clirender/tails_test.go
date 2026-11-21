@@ -1,6 +1,7 @@
 package clirender
 
 import (
+	"maps"
 	"strings"
 	"testing"
 	"time"
@@ -15,9 +16,7 @@ func tlsEntry(seq int64, phase string, attempt int, extra map[string]any) client
 	if attempt > 0 {
 		fields["issuance_attempt"] = float64(attempt) // JSON numbers decode as float64
 	}
-	for key, value := range extra {
-		fields[key] = value
-	}
+	maps.Copy(fields, extra)
 	return client.LogEntry{Seq: seq, Message: "snapshot " + phase, Fields: fields}
 }
 

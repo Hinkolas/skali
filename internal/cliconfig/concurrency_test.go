@@ -22,7 +22,7 @@ func TestConcurrentConfigMutationsAreLossless(t *testing.T) {
 	expected := Remote{Master: "https://main", Token: "old", Instance: "i"}
 	var wg sync.WaitGroup
 	results := make(chan error, 25)
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -36,8 +36,7 @@ func TestConcurrentConfigMutationsAreLossless(t *testing.T) {
 			results <- Save(cfg)
 		}(i)
 	}
-	wg.Add(1)
-	go func() { defer wg.Done(); results <- Observe("main", expected, "i", "v0.4.0") }()
+	wg.Go(func() { results <- Observe("main", expected, "i", "v0.4.0") })
 	wg.Wait()
 	require.NoError(t, Save(login))
 	close(results)

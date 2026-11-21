@@ -12,6 +12,7 @@ package pgtune
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 	"sort"
 	"strconv"
@@ -118,9 +119,7 @@ func Effective(budgetBytes, storageBytes int64, managed bool, overrides map[stri
 		}
 	}
 	parameters := derive(budgetBytes, storageBytes, managed, maxConnections)
-	for key, value := range overrides {
-		parameters[key] = value
-	}
+	maps.Copy(parameters, overrides)
 	return parameters
 }
 

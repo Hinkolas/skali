@@ -112,7 +112,6 @@ func TestInvalidFixtures(t *testing.T) {
 		"bucket-route-app-conflict.yml":    "a bucket cannot share a hostname with an application route",
 	}
 	for name, message := range tests {
-		name, message := name, message
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			document, err := manifest.ParseFile(filepath.Join("testdata", name))

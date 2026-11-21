@@ -191,7 +191,7 @@ func TestTaskProgressFitsNarrowTerminals(t *testing.T) {
 	block := task.render()
 	tasks.mu.Unlock()
 	require.NotContains(t, block, "━")
-	for _, line := range strings.Split(strings.TrimRight(ansi.Strip(block), "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.TrimRight(ansi.Strip(block), "\n"), "\n") {
 		require.LessOrEqual(t, ansi.StringWidth(line), 30, "line %q", line)
 	}
 	task.Done("")

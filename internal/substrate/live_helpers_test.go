@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -44,10 +45,8 @@ func permanentLiveError(err error) bool {
 	case *pgconn.PgError:
 		return strings.HasPrefix(e.Code, "23") || strings.HasPrefix(e.Code, "42")
 	case interface{ Unwrap() []error }:
-		for _, child := range e.Unwrap() {
-			if permanentLiveError(child) {
-				return true
-			}
+		if slices.ContainsFunc(e.Unwrap(), permanentLiveError) {
+			return true
 		}
 	case interface{ Unwrap() error }:
 		return permanentLiveError(e.Unwrap())

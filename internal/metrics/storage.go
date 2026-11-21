@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"math"
 	"net/http"
 	"strings"
@@ -207,9 +208,7 @@ func (s *Sampler) collectKubeletStats(ctx context.Context, node func(string) *no
 		for ref, used := range summary.volumes {
 			readings[ref] = pvcReading{usedBytes: used, node: item.Name}
 		}
-		for key, used := range summary.pods {
-			scratch[key] = used
-		}
+		maps.Copy(scratch, summary.pods)
 	}
 	return readings, scratch, nil
 }

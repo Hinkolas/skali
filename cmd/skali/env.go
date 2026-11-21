@@ -250,7 +250,7 @@ func newEnvSetCommand() *cobra.Command {
 			if command.Flags().Changed("promote-from") {
 				sources := []string{}
 				if promoteFrom != "any" && promoteFrom != "" {
-					for _, name := range strings.Split(promoteFrom, ",") {
+					for name := range strings.SplitSeq(promoteFrom, ",") {
 						if name = strings.TrimSpace(name); name != "" {
 							sources = append(sources, name)
 						}

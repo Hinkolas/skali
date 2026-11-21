@@ -42,7 +42,7 @@ func (c *Client) APIServerReady(ctx context.Context) error {
 // apiserver's own verbose check list is reduced to its failing entries.
 func readinessAnswer(status, body string) string {
 	var failing []string
-	for _, line := range strings.Split(body, "\n") {
+	for line := range strings.SplitSeq(body, "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "[-]") {
 			failing = append(failing, line)

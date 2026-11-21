@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"strings"
 	"testing"
@@ -584,9 +585,7 @@ func (a *testAPI) completeDeployment(t *testing.T, token, envID, definitionVersi
 		"definition_version_id": definitionVersion,
 		"builds":                buildsPayload(),
 	}
-	for key, value := range extra {
-		request[key] = value
-	}
+	maps.Copy(request, extra)
 	status, body := a.do("POST", "/v1/environments/"+envID+"/deployments", token, request)
 	require.Equal(t, http.StatusCreated, status, "%v", body)
 	deployment := body["deployment"].(map[string]any)

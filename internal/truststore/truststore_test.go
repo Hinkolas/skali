@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -64,10 +65,8 @@ func seams(t *testing.T, os_ string, tools *fakeTools, onPath ...string) {
 	})
 	run = tools.run
 	lookPath = func(file string) (string, error) {
-		for _, name := range onPath {
-			if name == file {
-				return "/usr/bin/" + file, nil
-			}
+		if slices.Contains(onPath, file) {
+			return "/usr/bin/" + file, nil
 		}
 		return "", errors.New("not found")
 	}

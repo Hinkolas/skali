@@ -48,7 +48,7 @@ func deferredDetailLines(entry client.LogEntry) []string {
 	if checked, ok := fieldTime(entry.Fields, "edge_checked_at"); ok {
 		lines = append(lines, "checked "+checked.Local().Format(time.RFC3339))
 	}
-	for _, address := range strings.Split(fieldString(entry.Fields, "edge_addresses"), "\n") {
+	for address := range strings.SplitSeq(fieldString(entry.Fields, "edge_addresses"), "\n") {
 		if address = strings.TrimSpace(address); address != "" {
 			lines = append(lines, "  "+address)
 		}
@@ -322,8 +322,8 @@ func fieldTime(fields map[string]any, key string) (time.Time, bool) {
 }
 
 func firstLine(text string) string {
-	if index := strings.IndexByte(text, '\n'); index >= 0 {
-		return text[:index]
+	if before, _, ok := strings.Cut(text, "\n"); ok {
+		return before
 	}
 	return text
 }

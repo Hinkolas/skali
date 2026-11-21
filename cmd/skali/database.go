@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"slices"
 	"sort"
@@ -328,9 +329,7 @@ func newDatabaseSetCommand() *cobra.Command {
 			// onto the current map so unrelated keys survive.
 			if len(sets) > 0 || len(unsets) > 0 {
 				overrides := make(map[string]string, len(pool.Parameters.Overrides))
-				for key, value := range pool.Parameters.Overrides {
-					overrides[key] = value
-				}
+				maps.Copy(overrides, pool.Parameters.Overrides)
 				for _, pair := range sets {
 					key, value, found := strings.Cut(pair, "=")
 					key, value = strings.TrimSpace(key), strings.TrimSpace(value)

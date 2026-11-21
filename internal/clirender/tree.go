@@ -156,7 +156,7 @@ func stepLines(step *client.Step, depth int, logs func(stepID string) []string, 
 		for _, entry := range logs(step.ID) {
 			// Structured checkpoint messages contain several lines. Split
 			// before truncating and counting terminal rows for repaint.
-			for _, text := range strings.Split(entry, "\n") {
+			for text := range strings.SplitSeq(entry, "\n") {
 				if room := view.width - len(tailIndent) - 1; view.width > 0 && room > 1 {
 					text = ansi.Truncate(text, room, "…")
 				}

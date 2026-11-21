@@ -178,10 +178,7 @@ func (h *metricsHandlers) nodesStorage(w http.ResponseWriter, r *http.Request) {
 	for _, node := range nodes {
 		attributed := node.VolumesBytes + node.DatabasesBytes + node.ObjectsBytes +
 			node.ImagesBytes + node.TemporaryBytes
-		system := node.UsedBytes - attributed
-		if system < 0 {
-			system = 0
-		}
+		system := max(node.UsedBytes-attributed, 0)
 		payload.Nodes = append(payload.Nodes, nodeStoragePayload{
 			Name:           node.Name,
 			SampledAt:      node.SampledAt,

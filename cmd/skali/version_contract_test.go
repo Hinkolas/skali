@@ -27,11 +27,9 @@ func TestConcurrentHomeUpgradesChooseNewestRelease(t *testing.T) {
 	for _, release := range []string{"v0.5.0", "v0.6.0-rc.2", "v0.6.0-rc.1", "v0.5.1"} {
 		copy := *f.d
 		copy.stderr = &bytes.Buffer{}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			errs <- copy.upgradeHome(context.Background(), fakeCLI(release), release, "target")
-		}()
+		})
 	}
 	wg.Wait()
 	close(errs)

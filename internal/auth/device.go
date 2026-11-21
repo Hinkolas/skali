@@ -129,7 +129,7 @@ func (s *Service) createDeviceRequest(ctx context.Context, intent DeviceIntent, 
 	expiresAt := s.now().Add(s.cfg.DeviceTTL)
 	// The user code is short, so a collision with a live request is
 	// possible in principle; retry on the unique violation.
-	for attempt := 0; attempt < 5; attempt++ {
+	for range 5 {
 		userCode, err := newUserCode()
 		if err != nil {
 			return nil, err

@@ -7,6 +7,7 @@ package clusterstate
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -137,7 +138,7 @@ type Node struct {
 	Phase          string    `json:"phase"`
 	LastAction     string    `json:"lastAction,omitempty"`
 	LastError      string    `json:"lastError,omitempty"`
-	LastSeen       time.Time `json:"lastSeen,omitempty"`
+	LastSeen       time.Time `json:"lastSeen,omitzero"`
 	EnrolledAt     time.Time `json:"enrolledAt"`
 	UpdatedAt      time.Time `json:"updatedAt"`
 }
@@ -159,7 +160,7 @@ type Operation struct {
 	LastError        string    `json:"lastError,omitempty"`
 	StartedAt        time.Time `json:"startedAt"`
 	UpdatedAt        time.Time `json:"updatedAt"`
-	CompletedAt      time.Time `json:"completedAt,omitempty"`
+	CompletedAt      time.Time `json:"completedAt,omitzero"`
 }
 
 type NodeStep struct {
@@ -312,9 +313,7 @@ func (s *State) ReplaceCandidateLayout(desired layout.Layout,
 			}
 		}
 		clear(nodes)
-		for id, node := range replacement {
-			nodes[id] = node
-		}
+		maps.Copy(nodes, replacement)
 		return nil
 	})
 }

@@ -84,8 +84,7 @@ func TestConcurrentHostnameClaimsHaveOneWinner(t *testing.T) {
 	results := make(chan error, 2)
 	var wg sync.WaitGroup
 	for _, candidate := range candidates {
-		wg.Add(1)
-		go func() { defer wg.Done(); results <- f.deploy.Promote(ctx, candidate) }()
+		wg.Go(func() { results <- f.deploy.Promote(ctx, candidate) })
 	}
 	wg.Wait()
 	close(results)

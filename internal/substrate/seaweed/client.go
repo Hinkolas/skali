@@ -649,7 +649,7 @@ func (c *Client) ConfigureVolumeReplication(ctx context.Context, replication str
 // shellError reads a `weed shell` transcript for the "error:" lines a
 // failed command leaves behind.
 func shellError(command, out string) error {
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "error:") {
 			return fmt.Errorf("seaweed: %s: %s", command, line)

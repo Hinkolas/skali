@@ -122,8 +122,8 @@ func TestEnvironmentStatusStream(t *testing.T) {
 				if err != nil {
 					return
 				}
-				if strings.HasPrefix(line, "data: ") {
-					data <- strings.TrimRight(strings.TrimPrefix(line, "data: "), "\n")
+				if after, ok := strings.CutPrefix(line, "data: "); ok {
+					data <- strings.TrimRight(after, "\n")
 					return
 				}
 			}

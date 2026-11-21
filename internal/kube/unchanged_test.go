@@ -39,7 +39,7 @@ func liveAfter(t *testing.T, config *unstructured.Unstructured, manager, apiVers
 	live.SetResourceVersion("7")
 	live.SetManagedFields([]metav1.ManagedFieldsEntry{{
 		Manager: manager, Operation: metav1.ManagedFieldsOperationApply, APIVersion: apiVersion,
-		FieldsType: "FieldsV1", FieldsV1: &metav1.FieldsV1{Raw: raw},
+		FieldsType: "FieldsV1", FieldsV1: metav1.NewFieldsV1(string(raw)),
 	}})
 	return live
 }

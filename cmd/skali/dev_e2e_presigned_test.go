@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -413,9 +414,7 @@ func trySend(client *http.Client, method, rawURL string, header http.Header, bod
 	if err != nil {
 		return nil, nil
 	}
-	for name, values := range header {
-		request.Header[name] = values
-	}
+	maps.Copy(request.Header, header)
 	response, err := client.Do(request)
 	if err != nil {
 		return nil, nil
@@ -482,9 +481,7 @@ func (h *e2eHarness) requestFull(t *testing.T, method, path string, header http.
 	request, err := http.NewRequest(method, fmt.Sprintf("https://127.0.0.1:%d%s", e2eHTTPSPort, path), body)
 	require.NoError(t, err)
 	request.Host = h.host
-	for name, values := range header {
-		request.Header[name] = values
-	}
+	maps.Copy(request.Header, header)
 	response, err := h.httpsClient().Do(request)
 	require.NoError(t, err)
 	defer response.Body.Close()
@@ -503,9 +500,7 @@ func send(t *testing.T, client *http.Client, method, rawURL string, header http.
 	}
 	request, err := http.NewRequest(method, rawURL, reader)
 	require.NoError(t, err)
-	for name, values := range header {
-		request.Header[name] = values
-	}
+	maps.Copy(request.Header, header)
 	response, err := client.Do(request)
 	require.NoError(t, err)
 	defer response.Body.Close()

@@ -54,7 +54,7 @@ func namesFromAnnotations(annotations map[string]string) []string {
 		seen[name] = true
 		names = append(names, name)
 	}
-	for _, raw := range strings.Split(annotations[annotationAltNames], ",") {
+	for raw := range strings.SplitSeq(annotations[annotationAltNames], ",") {
 		add(raw)
 	}
 	add(annotations[annotationCommonName])

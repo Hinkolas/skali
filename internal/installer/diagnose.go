@@ -105,10 +105,8 @@ func Diagnose(ctx context.Context, runner host.Runner, opts DiagnoseOptions) (*D
 	}
 	diagnosis := &Diagnosis{Host: detected}
 	suggest := func(action string) {
-		for _, existing := range diagnosis.Suggestions {
-			if existing == action {
-				return
-			}
+		if slices.Contains(diagnosis.Suggestions, action) {
+			return
 		}
 		diagnosis.Suggestions = append(diagnosis.Suggestions, action)
 	}

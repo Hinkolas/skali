@@ -83,10 +83,7 @@ func runDeviceFlow(ctx context.Context, out io.Writer, master string, start devi
 	}
 	fmt.Fprintln(out, style.Dim("Waiting for approval (Ctrl-C to cancel)..."))
 
-	interval := time.Duration(req.Interval) * time.Second
-	if interval < devicePollMinimum {
-		interval = devicePollMinimum
-	}
+	interval := max(time.Duration(req.Interval)*time.Second, devicePollMinimum)
 	deadline := req.ExpiresAt
 	for {
 		select {
