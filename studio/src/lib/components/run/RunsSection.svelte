@@ -1,21 +1,21 @@
 <script lang="ts">
 	import Rocket from '@lucide/svelte/icons/rocket';
-	import { api, ApiError } from '$lib/api/client';
-	import type { Run, RunKind } from '$lib/types/runs';
-	import { runCancellable, runKindLabel } from '$lib/types/runs';
-	import { describeActor, formatDuration, relativeTime } from '$lib/format';
-	import { actionWord, deploymentSummary, serviceChanges } from '$lib/models/rundeployment';
-	import { clock } from '$lib/stores/clock.svelte';
-	import { dialog } from '$lib/stores/dialog.svelte';
-	import { envRuns } from '$lib/stores/envruns.svelte';
-	import { sidepanel } from '$lib/stores/sidepanel.svelte';
-	import { toast } from '$lib/stores/toast.svelte';
-	import { users } from '$lib/stores/users.svelte';
-	import Button from '$lib/components/ui/Button.svelte';
-	import CopyId from '$lib/components/ui/CopyId.svelte';
-	import Pill from '$lib/components/ui/Pill.svelte';
-	import EmptyState from '$lib/components/ui/EmptyState.svelte';
-	import Table from '$lib/components/ui/Table.svelte';
+	import { api, ApiError } from '#lib/api/client.ts';
+	import type { Run, RunKind } from '#lib/types/runs.ts';
+	import { runCancellable, runKindLabel } from '#lib/types/runs.ts';
+	import { describeActor, formatDuration, relativeTime } from '#lib/format.ts';
+	import { actionWord, deploymentSummary, serviceChanges } from '#lib/models/rundeployment.ts';
+	import { clock } from '#lib/stores/clock.svelte.ts';
+	import { dialog } from '#lib/stores/dialog.svelte.ts';
+	import { envRuns } from '#lib/stores/envruns.svelte.ts';
+	import { sidepanel } from '#lib/stores/sidepanel.svelte.ts';
+	import { toast } from '#lib/stores/toast.svelte.ts';
+	import { users } from '#lib/stores/users.svelte.ts';
+	import Button from '#lib/components/ui/Button.svelte';
+	import CopyId from '#lib/components/ui/CopyId.svelte';
+	import Pill from '#lib/components/ui/Pill.svelte';
+	import EmptyState from '#lib/components/ui/EmptyState.svelte';
+	import Table from '#lib/components/ui/Table.svelte';
 	import RunDetailPanel from './RunDetailPanel.svelte';
 
 	// The environment's run feed: seeded by the caller's load, kept live by

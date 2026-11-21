@@ -3,11 +3,11 @@
 	import Container from '@lucide/svelte/icons/container';
 	import FileCode from '@lucide/svelte/icons/file-code';
 	import FolderOpen from '@lucide/svelte/icons/folder-open';
-	import type { ApplicationView } from '$lib/models/service';
-	import type { Probe } from '$lib/types/definition';
-	import { formatBytes, formatCores, formatMillis } from '$lib/format';
-	import Pill from '$lib/components/ui/Pill.svelte';
-	import ProgressBar from '$lib/components/ui/ProgressBar.svelte';
+	import type { ApplicationView } from '#lib/models/service.ts';
+	import type { Probe } from '#lib/types/definition.ts';
+	import { formatBytes, formatCores, formatMillis } from '#lib/format.ts';
+	import Pill from '#lib/components/ui/Pill.svelte';
+	import ProgressBar from '#lib/components/ui/ProgressBar.svelte';
 	import Choice from './Choice.svelte';
 	import CodeBlock from './CodeBlock.svelte';
 	import ConfigCard from './ConfigCard.svelte';

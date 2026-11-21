@@ -1,6 +1,6 @@
-import { apiFetch } from '$lib/api/client';
-import type { RevisionSummary, Target } from '$lib/types/revisions';
-import { runUnsettled, type Run } from '$lib/types/runs';
+import { apiFetch } from '#lib/api/client.ts';
+import type { RevisionSummary, Target } from '#lib/types/revisions.ts';
+import { runUnsettled, type Run } from '#lib/types/runs.ts';
 import type { PageLoad } from './$types';
 
 /** What the environments list shows per row beyond the environment itself. */

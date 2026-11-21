@@ -3,20 +3,20 @@
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import Container from '@lucide/svelte/icons/container';
 	import { slide } from 'svelte/transition';
-	import { envStatus } from '$lib/stores/envstatus.svelte';
-	import { HEALTH_META, STORAGE_KIND_META } from '$lib/service-types';
-	import { formatBytes } from '$lib/format';
-	import { usageLimits, usageStats } from '$lib/models/usage';
-	import { storageByKind, storageFootprint, storageForEnvironment } from '$lib/types/metrics';
-	import PageHeader from '$lib/components/shell/PageHeader.svelte';
-	import Card from '$lib/components/ui/Card.svelte';
-	import EmptyState from '$lib/components/ui/EmptyState.svelte';
-	import ProgressBar from '$lib/components/ui/ProgressBar.svelte';
-	import Skeleton from '$lib/components/ui/Skeleton.svelte';
-	import StackedBar from '$lib/components/ui/StackedBar.svelte';
-	import StatCard from '$lib/components/ui/StatCard.svelte';
-	import ServiceCard from '$lib/components/service/ServiceCard.svelte';
-	import IncompleteRestoreBanner from '$lib/components/run/IncompleteRestoreBanner.svelte';
+	import { envStatus } from '#lib/stores/envstatus.svelte.ts';
+	import { HEALTH_META, STORAGE_KIND_META } from '#lib/service-types.ts';
+	import { formatBytes } from '#lib/format.ts';
+	import { usageLimits, usageStats } from '#lib/models/usage.ts';
+	import { storageByKind, storageFootprint, storageForEnvironment } from '#lib/types/metrics.ts';
+	import PageHeader from '#lib/components/shell/PageHeader.svelte';
+	import Card from '#lib/components/ui/Card.svelte';
+	import EmptyState from '#lib/components/ui/EmptyState.svelte';
+	import ProgressBar from '#lib/components/ui/ProgressBar.svelte';
+	import Skeleton from '#lib/components/ui/Skeleton.svelte';
+	import StackedBar from '#lib/components/ui/StackedBar.svelte';
+	import StatCard from '#lib/components/ui/StatCard.svelte';
+	import ServiceCard from '#lib/components/service/ServiceCard.svelte';
+	import IncompleteRestoreBanner from '#lib/components/run/IncompleteRestoreBanner.svelte';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -60,7 +60,7 @@
 
 	// Usage tiles for every application of the environment, summed; the
 	// limits are the declared per-replica limits scaled by the live pod
-	// count (see $lib/models/usage).
+	// count (see #lib/models/usage).
 	const limits = $derived(
 		usageLimits(data.definition?.applications ?? {}, (key) =>
 			status?.services.find((s) => s.type === 'application' && s.key === key)

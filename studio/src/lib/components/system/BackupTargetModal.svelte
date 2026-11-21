@@ -1,5 +1,5 @@
 <script module lang="ts">
-	import type { ModalOptions } from '$lib/stores/modal.svelte';
+	import type { ModalOptions } from '#lib/stores/modal.svelte.ts';
 
 	export const modalOptions = {
 		label: 'Backup target',
@@ -8,14 +8,14 @@
 </script>
 
 <script lang="ts">
-	import { api, ApiError } from '$lib/api/client';
-	import { toast } from '$lib/stores/toast.svelte';
-	import type { BackupTarget, BackupTargetInput } from '$lib/types/backups';
-	import Button from '$lib/components/ui/Button.svelte';
-	import Field from '$lib/components/ui/Field.svelte';
-	import ModalHeader from '$lib/components/ui/ModalHeader.svelte';
-	import SecretInput from '$lib/components/ui/SecretInput.svelte';
-	import TextInput from '$lib/components/ui/TextInput.svelte';
+	import { api, ApiError } from '#lib/api/client.ts';
+	import { toast } from '#lib/stores/toast.svelte.ts';
+	import type { BackupTarget, BackupTargetInput } from '#lib/types/backups.ts';
+	import Button from '#lib/components/ui/Button.svelte';
+	import Field from '#lib/components/ui/Field.svelte';
+	import ModalHeader from '#lib/components/ui/ModalHeader.svelte';
+	import SecretInput from '#lib/components/ui/SecretInput.svelte';
+	import TextInput from '#lib/components/ui/TextInput.svelte';
 
 	// Configures the backup target, or changes the stored one. The whole
 	// target is replaced, so the secret is asked for every time: it is

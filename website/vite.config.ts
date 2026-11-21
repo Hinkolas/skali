@@ -14,7 +14,10 @@ export default defineConfig({
 			},
 			// Every page is prerendered to HTML; GitHub Pages serves 404.html
 			// for anything else.
-			adapter: adapter({ fallback: '404.html', strict: true })
+			adapter: adapter({ fallback: '404.html', strict: true }),
+			// A static marketing site has nothing to reload into; keep SvelteKit
+			// 3's hourly version polling off.
+			version: { pollInterval: 0 }
 		})
 	]
 });

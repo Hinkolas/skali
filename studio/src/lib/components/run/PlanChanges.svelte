@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { splitService } from '$lib/models/runservices';
-	import type { PlanChange } from '$lib/types/deploy';
-	import type { RunValueChange } from '$lib/types/runs';
+	import { splitService } from '#lib/models/runservices.ts';
+	import type { PlanChange } from '#lib/types/deploy.ts';
+	import type { RunValueChange } from '#lib/types/runs.ts';
 
 	// A plan's rows, one per line the way the CLI prints them: services,
 	// then values (names only, never plaintext; a run's also say which

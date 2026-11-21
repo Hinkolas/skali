@@ -1,8 +1,8 @@
 import { error } from '@sveltejs/kit';
-import { apiFetch } from '$lib/api/client';
-import type { BackupTarget } from '$lib/types/backups';
-import type { DatabasePoolsResponse } from '$lib/types/pools';
-import type { UpdateStatus } from '$lib/types/updates';
+import { apiFetch } from '#lib/api/client.ts';
+import type { BackupTarget } from '#lib/types/backups.ts';
+import type { DatabasePoolsResponse } from '#lib/types/pools.ts';
+import type { UpdateStatus } from '#lib/types/updates.ts';
 import type { PageLoad } from './$types';
 
 // The System hub is instance-admin territory: the API refuses

@@ -1,9 +1,9 @@
 <script lang="ts">
-	import type { PodStatus } from '$lib/types/status';
-	import { envStatus } from '$lib/stores/envstatus.svelte';
-	import { relativeTime } from '$lib/format';
-	import Pill from '$lib/components/ui/Pill.svelte';
-	import Skeleton from '$lib/components/ui/Skeleton.svelte';
+	import type { PodStatus } from '#lib/types/status.ts';
+	import { envStatus } from '#lib/stores/envstatus.svelte.ts';
+	import { relativeTime } from '#lib/format.ts';
+	import Pill from '#lib/components/ui/Pill.svelte';
+	import Skeleton from '#lib/components/ui/Skeleton.svelte';
 
 	// The pods of one service from the live status projection: their node,
 	// restarts, age, and on blue-green workloads which color is serving.

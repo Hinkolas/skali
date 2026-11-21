@@ -1,5 +1,5 @@
 <script module lang="ts">
-	import type { ModalOptions } from '$lib/stores/modal.svelte';
+	import type { ModalOptions } from '#lib/stores/modal.svelte.ts';
 
 	// Finder anatomy inside, but placed and animated like the ordinary
 	// centered modals (owner preference over the top-hung palette position).
@@ -20,13 +20,13 @@
 	import Search from '@lucide/svelte/icons/search';
 	import ArrowLeft from '@lucide/svelte/icons/arrow-left';
 	import UserRound from '@lucide/svelte/icons/user-round';
-	import { api, ApiError } from '$lib/api/client';
-	import { PROJECT_ROLES, ROLE_HINT } from '$lib/access';
-	import { toast } from '$lib/stores/toast.svelte';
-	import Button from '$lib/components/ui/Button.svelte';
-	import ModalHeader from '$lib/components/ui/ModalHeader.svelte';
-	import type { DirectoryUser } from '$lib/types/auth';
-	import type { AccessRole, Member, Project } from '$lib/types/project';
+	import { api, ApiError } from '#lib/api/client.ts';
+	import { PROJECT_ROLES, ROLE_HINT } from '#lib/access.ts';
+	import { toast } from '#lib/stores/toast.svelte.ts';
+	import Button from '#lib/components/ui/Button.svelte';
+	import ModalHeader from '#lib/components/ui/ModalHeader.svelte';
+	import type { DirectoryUser } from '#lib/types/auth.ts';
+	import type { AccessRole, Member, Project } from '#lib/types/project.ts';
 
 	let { project, close }: { project: Project; close: (added?: boolean) => void } = $props();
 

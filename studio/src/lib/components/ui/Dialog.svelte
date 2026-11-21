@@ -1,8 +1,8 @@
 <script lang="ts">
 	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
-	import type { DialogProps } from '$lib/stores/dialog.svelte';
-	import Button from '$lib/components/ui/Button.svelte';
-	import TextInput from '$lib/components/ui/TextInput.svelte';
+	import type { DialogProps } from '#lib/stores/dialog.svelte.ts';
+	import Button from '#lib/components/ui/Button.svelte';
+	import TextInput from '#lib/components/ui/TextInput.svelte';
 
 	// Built-in content for the high-level `dialog` store. A confirm is a
 	// question, not a workbench: one compact block, buttons inline, no footer

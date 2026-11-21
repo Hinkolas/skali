@@ -135,7 +135,7 @@
 
 		<p class="text-center text-base">
 			<a
-				href={resolve('/auth/login')}
+				href={resolve('auth/login')}
 				data-sveltekit-reload
 				class="text-text-faint hover:text-text-secondary font-medium transition-colors"
 			>

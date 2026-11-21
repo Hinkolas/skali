@@ -3,11 +3,11 @@
 	import KeyRound from '@lucide/svelte/icons/key-round';
 	import LogOut from '@lucide/svelte/icons/log-out';
 	import { resolve } from '$app/paths';
-	import { authState, signOut } from '$lib/stores/auth.svelte';
-	import { dialog } from '$lib/stores/dialog.svelte';
-	import Menu from '$lib/components/ui/Menu.svelte';
-	import MenuItem from '$lib/components/ui/MenuItem.svelte';
-	import MenuSeparator from '$lib/components/ui/MenuSeparator.svelte';
+	import { authState, signOut } from '#lib/stores/auth.svelte.ts';
+	import { dialog } from '#lib/stores/dialog.svelte.ts';
+	import Menu from '#lib/components/ui/Menu.svelte';
+	import MenuItem from '#lib/components/ui/MenuItem.svelte';
+	import MenuSeparator from '#lib/components/ui/MenuSeparator.svelte';
 
 	const user = $derived(authState.user);
 
@@ -56,6 +56,6 @@
 		<div class="text-text-faint truncate text-xs">{user?.email}</div>
 	</div>
 	<MenuSeparator />
-	<MenuItem href={resolve('/account')} icon={KeyRound}>Account security</MenuItem>
+	<MenuItem href={resolve('account')} icon={KeyRound}>Account security</MenuItem>
 	<MenuItem danger icon={LogOut} onselect={confirmSignOut}>Sign out</MenuItem>
 </Menu>

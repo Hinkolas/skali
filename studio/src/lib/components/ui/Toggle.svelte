@@ -1,7 +1,7 @@
 <script lang="ts">
 	// Accessible switch: a button with role="switch"; the label sits beside
 	// it and is clickable.
-	import Switch from '$lib/components/ui/Switch.svelte';
+	import Switch from '#lib/components/ui/Switch.svelte';
 
 	let {
 		checked = $bindable(false),

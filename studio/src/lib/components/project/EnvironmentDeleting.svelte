@@ -5,14 +5,14 @@
 	// environment is gone, which moves the Studio to another environment.
 	import { resolve } from '$app/paths';
 	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
-	import { api } from '$lib/api/client';
-	import { runUnsettled, type RunsList } from '$lib/types/runs';
-	import type { Environment, Project } from '$lib/types/project';
-	import { withEnv } from '$lib/urls';
-	import PageHeader from '$lib/components/shell/PageHeader.svelte';
-	import Button from '$lib/components/ui/Button.svelte';
-	import Card from '$lib/components/ui/Card.svelte';
-	import RunDetailPanel from '$lib/components/run/RunDetailPanel.svelte';
+	import { api } from '#lib/api/client.ts';
+	import { runUnsettled, type RunsList } from '#lib/types/runs.ts';
+	import type { Environment, Project } from '#lib/types/project.ts';
+	import { withEnv } from '#lib/urls.ts';
+	import PageHeader from '#lib/components/shell/PageHeader.svelte';
+	import Button from '#lib/components/ui/Button.svelte';
+	import Card from '#lib/components/ui/Card.svelte';
+	import RunDetailPanel from '#lib/components/run/RunDetailPanel.svelte';
 
 	let {
 		environment,

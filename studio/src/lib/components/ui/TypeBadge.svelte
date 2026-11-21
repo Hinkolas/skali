@@ -1,6 +1,6 @@
 <script lang="ts">
-	import type { ServiceKind } from '$lib/service-types';
-	import { SERVICE_KIND_META } from '$lib/service-types';
+	import type { ServiceKind } from '#lib/service-types.ts';
+	import { SERVICE_KIND_META } from '#lib/service-types.ts';
 
 	// Two forms: 'chip' is the inline icon ×2 pill (project card kind counts);
 	// 'tile' is the square icon block next to service names (sm 26px, md 30px).

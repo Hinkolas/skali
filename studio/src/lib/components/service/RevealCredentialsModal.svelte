@@ -1,5 +1,5 @@
 <script module lang="ts">
-	import type { ModalOptions } from '$lib/stores/modal.svelte';
+	import type { ModalOptions } from '#lib/stores/modal.svelte.ts';
 
 	export const modalOptions = {
 		label: 'Revealed credentials'
@@ -7,9 +7,9 @@
 </script>
 
 <script lang="ts">
-	import Button from '$lib/components/ui/Button.svelte';
-	import CopyField from '$lib/components/ui/CopyField.svelte';
-	import ModalHeader from '$lib/components/ui/ModalHeader.svelte';
+	import Button from '#lib/components/ui/Button.svelte';
+	import CopyField from '#lib/components/ui/CopyField.svelte';
+	import ModalHeader from '#lib/components/ui/ModalHeader.svelte';
 
 	// Displays freshly revealed credentials exactly once: the values live in
 	// these props for the modal's lifetime and are never stored anywhere else.

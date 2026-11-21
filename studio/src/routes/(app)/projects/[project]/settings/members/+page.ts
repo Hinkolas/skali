@@ -1,5 +1,5 @@
-import { apiFetch } from '$lib/api/client';
-import type { Member } from '$lib/types/project';
+import { apiFetch } from '#lib/api/client.ts';
+import type { Member } from '#lib/types/project.ts';
 import type { PageLoad } from './$types';
 
 // The members list is returned by the API: each member carries their

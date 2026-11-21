@@ -2,8 +2,8 @@
 // these helpers only decide what the Studio disables and how it explains
 // the refusal it would get. See docs/permissions.md.
 
-import type { AuthUser } from '$lib/types/auth';
-import type { AccessRole } from '$lib/types/project';
+import type { AuthUser } from '#lib/types/auth.ts';
+import type { AccessRole } from '#lib/types/project.ts';
 
 export const ROLE_RANK: Record<AccessRole, number> = {
 	none: 0,

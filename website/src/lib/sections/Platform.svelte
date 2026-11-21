@@ -1,11 +1,11 @@
 <script lang="ts">
-	import SectionHeader from '$lib/components/SectionHeader.svelte';
-	import { reveal } from '$lib/motion';
-	import Backups from '$lib/mock/Backups.svelte';
-	import BucketConnection from '$lib/mock/BucketConnection.svelte';
-	import DatabaseInstance from '$lib/mock/DatabaseInstance.svelte';
-	import Promote from '$lib/mock/Promote.svelte';
-	import RunSteps from '$lib/mock/RunSteps.svelte';
+	import SectionHeader from '#lib/components/SectionHeader.svelte';
+	import { reveal } from '#lib/motion.ts';
+	import Backups from '#lib/mock/Backups.svelte';
+	import BucketConnection from '#lib/mock/BucketConnection.svelte';
+	import DatabaseInstance from '#lib/mock/DatabaseInstance.svelte';
+	import Promote from '#lib/mock/Promote.svelte';
+	import RunSteps from '#lib/mock/RunSteps.svelte';
 </script>
 
 {#snippet facts(items: string[])}

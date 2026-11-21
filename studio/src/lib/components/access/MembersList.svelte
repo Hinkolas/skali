@@ -5,16 +5,16 @@
 	// column width whether the project has one environment or twelve.
 	import Plus from '@lucide/svelte/icons/plus';
 	import Settings2 from '@lucide/svelte/icons/settings-2';
-	import { ROLE_HINT, requiredTitle } from '$lib/access';
-	import { modal } from '$lib/stores/modal.svelte';
-	import Button from '$lib/components/ui/Button.svelte';
-	import Card from '$lib/components/ui/Card.svelte';
+	import { ROLE_HINT, requiredTitle } from '#lib/access.ts';
+	import { modal } from '#lib/stores/modal.svelte.ts';
+	import Button from '#lib/components/ui/Button.svelte';
+	import Card from '#lib/components/ui/Card.svelte';
 	import AddMemberModal, { modalOptions as addMemberModalOptions } from './AddMemberModal.svelte';
 	import MemberAccessModal, {
 		modalOptions as memberAccessModalOptions
 	} from './MemberAccessModal.svelte';
-	import type { AuthUser } from '$lib/types/auth';
-	import type { Member, Project } from '$lib/types/project';
+	import type { AuthUser } from '#lib/types/auth.ts';
+	import type { Member, Project } from '#lib/types/project.ts';
 
 	let {
 		project,

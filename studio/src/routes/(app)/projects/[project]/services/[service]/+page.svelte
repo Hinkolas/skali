@@ -1,7 +1,7 @@
 <script lang="ts">
-	import ApplicationOverview from '$lib/components/service/ApplicationOverview.svelte';
-	import BucketOverview from '$lib/components/service/BucketOverview.svelte';
-	import DatabaseOverview from '$lib/components/service/DatabaseOverview.svelte';
+	import ApplicationOverview from '#lib/components/service/ApplicationOverview.svelte';
+	import BucketOverview from '#lib/components/service/BucketOverview.svelte';
+	import DatabaseOverview from '#lib/components/service/DatabaseOverview.svelte';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();

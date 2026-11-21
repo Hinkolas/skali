@@ -6,22 +6,22 @@
 	import LayoutGrid from '@lucide/svelte/icons/layout-grid';
 	import List from '@lucide/svelte/icons/list';
 	import Plus from '@lucide/svelte/icons/plus';
-	import { CREATE_PROJECTS_TITLE, canCreateProject, isInstanceAdmin } from '$lib/access';
-	import { deferred } from '$lib/deferred.svelte';
-	import { PROJECT_SORTS, sortProjects, type ProjectSort } from '$lib/models/project';
-	import { readPref, writePref } from '$lib/prefs';
-	import { modal } from '$lib/stores/modal.svelte';
-	import PageHeader from '$lib/components/shell/PageHeader.svelte';
-	import Button from '$lib/components/ui/Button.svelte';
-	import EmptyState from '$lib/components/ui/EmptyState.svelte';
-	import Menu from '$lib/components/ui/Menu.svelte';
-	import MenuItem from '$lib/components/ui/MenuItem.svelte';
-	import Segmented from '$lib/components/ui/Segmented.svelte';
-	import ProjectCard from '$lib/components/project/ProjectCard.svelte';
-	import ProjectList from '$lib/components/project/ProjectList.svelte';
+	import { CREATE_PROJECTS_TITLE, canCreateProject, isInstanceAdmin } from '#lib/access.ts';
+	import { deferred } from '#lib/deferred.svelte.ts';
+	import { PROJECT_SORTS, sortProjects, type ProjectSort } from '#lib/models/project.ts';
+	import { readPref, writePref } from '#lib/prefs.ts';
+	import { modal } from '#lib/stores/modal.svelte.ts';
+	import PageHeader from '#lib/components/shell/PageHeader.svelte';
+	import Button from '#lib/components/ui/Button.svelte';
+	import EmptyState from '#lib/components/ui/EmptyState.svelte';
+	import Menu from '#lib/components/ui/Menu.svelte';
+	import MenuItem from '#lib/components/ui/MenuItem.svelte';
+	import Segmented from '#lib/components/ui/Segmented.svelte';
+	import ProjectCard from '#lib/components/project/ProjectCard.svelte';
+	import ProjectList from '#lib/components/project/ProjectList.svelte';
 	import NewProjectModal, {
 		modalOptions as newProjectModalOptions
-	} from '$lib/components/project/NewProjectModal.svelte';
+	} from '#lib/components/project/NewProjectModal.svelte';
 	import type { PageData } from './$types';
 
 	// data.projects is the shell's plain list; data.summary is this page's

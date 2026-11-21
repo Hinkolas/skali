@@ -1,27 +1,27 @@
 <script lang="ts">
 	import Gauge from '@lucide/svelte/icons/gauge';
 	import HardDrive from '@lucide/svelte/icons/hard-drive';
-	import { api } from '$lib/api/client';
-	import { formatBytes, formatDateTime, relativeTime } from '$lib/format';
-	import { pollMetrics } from '$lib/metrics-poll.svelte';
+	import { api } from '#lib/api/client.ts';
+	import { formatBytes, formatDateTime, relativeTime } from '#lib/format.ts';
+	import { pollMetrics } from '#lib/metrics-poll.svelte.ts';
 	import {
 		kubernetesLabel,
 		nodeCharts,
 		nodeSeries,
 		nodeStats,
 		nodeStatus
-	} from '$lib/models/nodes';
-	import { NODE_ROLE_META, STORAGE_CATEGORY_META } from '$lib/service-types';
-	import type { MetricsWindow, NodeMetrics } from '$lib/types/metrics';
-	import PageHeader from '$lib/components/shell/PageHeader.svelte';
-	import Card from '$lib/components/ui/Card.svelte';
-	import EmptyState from '$lib/components/ui/EmptyState.svelte';
-	import KeyValueRow from '$lib/components/ui/KeyValueRow.svelte';
-	import Pill from '$lib/components/ui/Pill.svelte';
-	import StackedBar from '$lib/components/ui/StackedBar.svelte';
-	import StatCard from '$lib/components/ui/StatCard.svelte';
-	import TimeSeriesChart from '$lib/components/ui/TimeSeriesChart.svelte';
-	import WindowPicker from '$lib/components/ui/WindowPicker.svelte';
+	} from '#lib/models/nodes.ts';
+	import { NODE_ROLE_META, STORAGE_CATEGORY_META } from '#lib/service-types.ts';
+	import type { MetricsWindow, NodeMetrics } from '#lib/types/metrics.ts';
+	import PageHeader from '#lib/components/shell/PageHeader.svelte';
+	import Card from '#lib/components/ui/Card.svelte';
+	import EmptyState from '#lib/components/ui/EmptyState.svelte';
+	import KeyValueRow from '#lib/components/ui/KeyValueRow.svelte';
+	import Pill from '#lib/components/ui/Pill.svelte';
+	import StackedBar from '#lib/components/ui/StackedBar.svelte';
+	import StatCard from '#lib/components/ui/StatCard.svelte';
+	import TimeSeriesChart from '#lib/components/ui/TimeSeriesChart.svelte';
+	import WindowPicker from '#lib/components/ui/WindowPicker.svelte';
 	import type { PageData } from './$types';
 
 	// One node: what it uses now, what it is, where its disk goes, and how

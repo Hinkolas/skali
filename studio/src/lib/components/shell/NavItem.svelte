@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { NavIcon } from '$lib/navigation';
+	import type { NavIcon } from '#lib/navigation.ts';
 
 	let {
 		href,

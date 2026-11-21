@@ -14,7 +14,7 @@
 	import Search from '@lucide/svelte/icons/search';
 	import Settings2 from '@lucide/svelte/icons/settings-2';
 	import { onMount } from 'svelte';
-	import LogoMark from '$lib/components/LogoMark.svelte';
+	import LogoMark from '#lib/components/LogoMark.svelte';
 	import ServiceTile, { type Kind } from './ServiceTile.svelte';
 
 	const nav = [

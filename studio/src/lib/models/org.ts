@@ -2,7 +2,7 @@
 // footer), synthesized from instance meta plus list lengths. skali has no
 // org entity; this is a view-model, not an API shape.
 
-import type { SystemMeta } from '$lib/types/system';
+import type { SystemMeta } from '#lib/types/system.ts';
 
 export interface OrgView {
 	name: string;

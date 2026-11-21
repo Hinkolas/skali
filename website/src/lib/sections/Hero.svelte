@@ -1,8 +1,8 @@
 <script lang="ts">
 	import ArrowRight from '@lucide/svelte/icons/arrow-right';
-	import NavBar from '$lib/components/NavBar.svelte';
-	import { links } from '$lib/links';
-	import StudioOverview from '$lib/mock/StudioOverview.svelte';
+	import NavBar from '#lib/components/NavBar.svelte';
+	import { links } from '#lib/links.ts';
+	import StudioOverview from '#lib/mock/StudioOverview.svelte';
 
 	let { version }: { version: string } = $props();
 

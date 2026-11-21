@@ -1,15 +1,15 @@
 <script lang="ts">
 	import { tick } from 'svelte';
 	import X from '@lucide/svelte/icons/x';
-	import { relativeTime } from '$lib/format';
-	import Pill from '$lib/components/ui/Pill.svelte';
-	import KeyValueRow from '$lib/components/ui/KeyValueRow.svelte';
+	import { relativeTime } from '#lib/format.ts';
+	import Pill from '#lib/components/ui/Pill.svelte';
+	import KeyValueRow from '#lib/components/ui/KeyValueRow.svelte';
 	import {
 		OPERATION_PHASE_LABEL,
 		type UpdateStatus,
 		type UpdateStepPhase,
 		updateSummary
-	} from '$lib/types/updates';
+	} from '#lib/types/updates.ts';
 
 	// Lives in the shared side panel. The page re-opens it with a fresh
 	// status document on every poll, which updates props in place.

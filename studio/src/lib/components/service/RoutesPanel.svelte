@@ -7,15 +7,15 @@
 		RouteAliasStatus,
 		CertificateState,
 		RouteProbe
-	} from '$lib/types/status';
-	import type { Environment } from '$lib/types/project';
-	import { api, ApiError } from '$lib/api/client';
-	import { requiredTitle, roleAtLeast } from '$lib/access';
-	import { envStatus } from '$lib/stores/envstatus.svelte';
-	import { toast } from '$lib/stores/toast.svelte';
-	import { formatDateTime } from '$lib/format';
-	import Button from '$lib/components/ui/Button.svelte';
-	import Card from '$lib/components/ui/Card.svelte';
+	} from '#lib/types/status.ts';
+	import type { Environment } from '#lib/types/project.ts';
+	import { api, ApiError } from '#lib/api/client.ts';
+	import { requiredTitle, roleAtLeast } from '#lib/access.ts';
+	import { envStatus } from '#lib/stores/envstatus.svelte.ts';
+	import { toast } from '#lib/stores/toast.svelte.ts';
+	import { formatDateTime } from '#lib/format.ts';
+	import Button from '#lib/components/ui/Button.svelte';
+	import Card from '#lib/components/ui/Card.svelte';
 
 	// Live public routes of one application or bucket: domain, balancing
 	// policy, and the certificate lifecycle on TLS-capable installations.

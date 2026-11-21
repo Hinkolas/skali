@@ -1,6 +1,6 @@
 import { error } from '@sveltejs/kit';
-import { apiFetch } from '$lib/api/client';
-import type { NodeMetrics, NodesStorage } from '$lib/types/metrics';
+import { apiFetch } from '#lib/api/client.ts';
+import type { NodeMetrics, NodesStorage } from '#lib/types/metrics.ts';
 import type { PageLoad } from './$types';
 
 // Admin only, like every system page: the API already answers 403 to members

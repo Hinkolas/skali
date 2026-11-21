@@ -4,7 +4,7 @@
 
 import { redirect } from '@sveltejs/kit';
 import { resolve } from '$app/paths';
-import { withEnv } from '$lib/urls';
+import { withEnv } from '#lib/urls.ts';
 import type { PageLoad } from './$types';
 
 export const load: PageLoad = ({ params, url }) => {

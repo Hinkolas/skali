@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { roleAtLeast } from '$lib/access';
-	import PageHeader from '$lib/components/shell/PageHeader.svelte';
-	import SettingsNav from '$lib/components/project/SettingsNav.svelte';
-	import MembersList from '$lib/components/access/MembersList.svelte';
-	import type { AuthUser } from '$lib/types/auth';
+	import { roleAtLeast } from '#lib/access.ts';
+	import PageHeader from '#lib/components/shell/PageHeader.svelte';
+	import SettingsNav from '#lib/components/project/SettingsNav.svelte';
+	import MembersList from '#lib/components/access/MembersList.svelte';
+	import type { AuthUser } from '#lib/types/auth.ts';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();

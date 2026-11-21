@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import { formatDateTime, relativeTime } from '$lib/format';
-	import type { DatabasePoolDetail } from '$lib/types/pools';
-	import Card from '$lib/components/ui/Card.svelte';
-	import CopyId from '$lib/components/ui/CopyId.svelte';
+	import { formatDateTime, relativeTime } from '#lib/format.ts';
+	import type { DatabasePoolDetail } from '#lib/types/pools.ts';
+	import Card from '#lib/components/ui/Card.svelte';
+	import CopyId from '#lib/components/ui/CopyId.svelte';
 
 	// The pool's connection check when it needs attention, and the recent
 	// stretches of time it refused connections. A pool that accepts

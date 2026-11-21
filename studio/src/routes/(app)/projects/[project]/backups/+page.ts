@@ -3,9 +3,9 @@
 // just empty; keep the refusal code for the page to word. The runs seed
 // the live backup activity of the selected environment.
 
-import { apiFetch } from '$lib/api/client';
-import type { BackupSnapshot } from '$lib/types/backups';
-import type { Run } from '$lib/types/runs';
+import { apiFetch } from '#lib/api/client.ts';
+import type { BackupSnapshot } from '#lib/types/backups.ts';
+import type { Run } from '#lib/types/runs.ts';
 import type { PageLoad } from './$types';
 
 export interface SnapshotsRefusal {

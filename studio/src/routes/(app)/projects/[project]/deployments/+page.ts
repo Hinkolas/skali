@@ -1,8 +1,8 @@
 // The selected environment's runs seed the page; the project's run store
 // keeps them live from its first stream event on.
 
-import { apiFetch } from '$lib/api/client';
-import type { Run } from '$lib/types/runs';
+import { apiFetch } from '#lib/api/client.ts';
+import type { Run } from '#lib/types/runs.ts';
 import type { PageLoad } from './$types';
 
 export const load: PageLoad = async ({ parent, fetch }) => {

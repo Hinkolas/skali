@@ -1,5 +1,5 @@
 <script lang="ts">
-	import LogoMark from '$lib/components/ui/LogoMark.svelte';
+	import LogoMark from '#lib/components/ui/LogoMark.svelte';
 	import { page } from '$app/state';
 	import type { LayoutData } from './$types';
 

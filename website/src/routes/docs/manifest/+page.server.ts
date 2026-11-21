@@ -1,5 +1,5 @@
-import { contentRef, currentRelease } from '$lib/server/release';
-import { manifestReference, manifestReferencePath } from '$lib/server/reference';
+import { contentRef, currentRelease } from '#lib/server/release.ts';
+import { manifestReference, manifestReferencePath } from '#lib/server/reference.ts';
 
 // Static text with nothing to hydrate: shipping no client code also keeps
 // the rendered reference from being sent a second time as page data.

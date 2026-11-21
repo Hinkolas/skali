@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { formatDateTime } from '$lib/format';
+	import { formatDateTime } from '#lib/format.ts';
 	let { fields, live = false }: { fields: Record<string, unknown>; live?: boolean } = $props();
 	let now = $state(Date.now());
 	$effect(() => {

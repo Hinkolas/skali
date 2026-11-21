@@ -2,19 +2,19 @@
 	import ShieldCheck from '@lucide/svelte/icons/shield-check';
 	import ShieldOff from '@lucide/svelte/icons/shield-off';
 	import { invalidateAll } from '$app/navigation';
-	import { api, ApiError } from '$lib/api/client';
-	import { modal } from '$lib/stores/modal.svelte';
-	import { dialog } from '$lib/stores/dialog.svelte';
-	import { toast } from '$lib/stores/toast.svelte';
-	import type { TwoFactorEnrollment } from '$lib/types/auth';
-	import Card from '$lib/components/ui/Card.svelte';
-	import Button from '$lib/components/ui/Button.svelte';
+	import { api, ApiError } from '#lib/api/client.ts';
+	import { modal } from '#lib/stores/modal.svelte.ts';
+	import { dialog } from '#lib/stores/dialog.svelte.ts';
+	import { toast } from '#lib/stores/toast.svelte.ts';
+	import type { TwoFactorEnrollment } from '#lib/types/auth.ts';
+	import Card from '#lib/components/ui/Card.svelte';
+	import Button from '#lib/components/ui/Button.svelte';
 	import TwoFactorEnrollModal, {
 		modalOptions as enrollOptions
-	} from '$lib/components/security/TwoFactorEnrollModal.svelte';
+	} from '#lib/components/security/TwoFactorEnrollModal.svelte';
 	import BackupCodesModal, {
 		modalOptions as backupCodesOptions
-	} from '$lib/components/security/BackupCodesModal.svelte';
+	} from '#lib/components/security/BackupCodesModal.svelte';
 
 	let { enabled }: { enabled: boolean } = $props();
 

@@ -1,14 +1,18 @@
 <script lang="ts">
 	import Gauge from '@lucide/svelte/icons/gauge';
-	import { api } from '$lib/api/client';
-	import { formatBytes, formatCores, formatCount } from '$lib/format';
-	import { pollMetrics } from '$lib/metrics-poll.svelte';
-	import { stepLabel } from '$lib/models/pools';
-	import { toChartPoints, type EnvironmentMetrics, type MetricsWindow } from '$lib/types/metrics';
-	import Card from '$lib/components/ui/Card.svelte';
-	import EmptyState from '$lib/components/ui/EmptyState.svelte';
-	import TimeSeriesChart from '$lib/components/ui/TimeSeriesChart.svelte';
-	import WindowPicker from '$lib/components/ui/WindowPicker.svelte';
+	import { api } from '#lib/api/client.ts';
+	import { formatBytes, formatCores, formatCount } from '#lib/format.ts';
+	import { pollMetrics } from '#lib/metrics-poll.svelte.ts';
+	import { stepLabel } from '#lib/models/pools.ts';
+	import {
+		toChartPoints,
+		type EnvironmentMetrics,
+		type MetricsWindow
+	} from '#lib/types/metrics.ts';
+	import Card from '#lib/components/ui/Card.svelte';
+	import EmptyState from '#lib/components/ui/EmptyState.svelte';
+	import TimeSeriesChart from '#lib/components/ui/TimeSeriesChart.svelte';
+	import WindowPicker from '#lib/components/ui/WindowPicker.svelte';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();

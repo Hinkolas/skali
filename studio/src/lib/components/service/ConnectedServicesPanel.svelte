@@ -2,10 +2,10 @@
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import Plus from '@lucide/svelte/icons/plus';
-	import type { ApplicationView, ServiceView } from '$lib/models/service';
-	import { withEnv } from '$lib/urls';
-	import Card from '$lib/components/ui/Card.svelte';
-	import TypeBadge from '$lib/components/ui/TypeBadge.svelte';
+	import type { ApplicationView, ServiceView } from '#lib/models/service.ts';
+	import { withEnv } from '#lib/urls.ts';
+	import Card from '#lib/components/ui/Card.svelte';
+	import TypeBadge from '#lib/components/ui/TypeBadge.svelte';
 
 	let {
 		service,
@@ -41,7 +41,7 @@
 	<h3 class="text-text-primary mb-3.5 text-xl font-semibold">Connected services</h3>
 	<div class="flex flex-col gap-2">
 		{#each connected as target (`${target.type}:${target.key}`)}
-			<!-- eslint-disable svelte/no-navigation-without-resolve -- path built with resolve(), env appended by $lib/urls -->
+			<!-- eslint-disable svelte/no-navigation-without-resolve -- path built with resolve(), env appended by #lib/urls -->
 			<a
 				href={withEnv(
 					resolve('/(app)/projects/[project]/services/[service]', {

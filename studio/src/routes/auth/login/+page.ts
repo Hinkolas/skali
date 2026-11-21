@@ -1,6 +1,6 @@
 import { redirect } from '@sveltejs/kit';
-import { readUser } from '$lib/session';
-import { safeNext } from '$lib/safe-next';
+import { readUser } from '#lib/session.ts';
+import { safeNext } from '#lib/safe-next.ts';
 import type { PageLoad } from './$types';
 
 export const load: PageLoad = async ({ fetch, url }) => {

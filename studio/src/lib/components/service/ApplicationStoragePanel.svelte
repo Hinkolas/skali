@@ -1,9 +1,9 @@
 <script lang="ts">
-	import type { ServiceStorage } from '$lib/types/metrics';
-	import { STORAGE_KIND_META } from '$lib/service-types';
-	import { formatBytes } from '$lib/format';
-	import Card from '$lib/components/ui/Card.svelte';
-	import ProgressBar from '$lib/components/ui/ProgressBar.svelte';
+	import type { ServiceStorage } from '#lib/types/metrics.ts';
+	import { STORAGE_KIND_META } from '#lib/service-types.ts';
+	import { formatBytes } from '#lib/format.ts';
+	import Card from '#lib/components/ui/Card.svelte';
+	import ProgressBar from '#lib/components/ui/ProgressBar.svelte';
 
 	// The application's own storage footprints: the persistent volume it
 	// mounts and the ephemeral (temporary) space its pods write, each against

@@ -6,7 +6,7 @@
 	import Info from '@lucide/svelte/icons/info';
 	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
 	import X from '@lucide/svelte/icons/x';
-	import { toast, type ToastVariant } from '$lib/stores/toast.svelte';
+	import { toast, type ToastVariant } from '#lib/stores/toast.svelte.ts';
 
 	// Global host for the toast stack. Mounted once in the root layout; driven by
 	// the `toast` store (toast.success/error/info/warning/loading/promise).

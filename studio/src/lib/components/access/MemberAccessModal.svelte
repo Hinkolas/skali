@@ -1,5 +1,5 @@
 <script module lang="ts">
-	import type { ModalOptions } from '$lib/stores/modal.svelte';
+	import type { ModalOptions } from '#lib/stores/modal.svelte.ts';
 
 	export const modalOptions = {
 		label: 'Member access',
@@ -19,7 +19,7 @@
 	import { cubicOut } from 'svelte/easing';
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import Lock from '@lucide/svelte/icons/lock';
-	import { api, ApiError } from '$lib/api/client';
+	import { api, ApiError } from '#lib/api/client.ts';
 	import {
 		PROJECT_ROLES,
 		ROLES,
@@ -27,13 +27,13 @@
 		ROLE_RANK,
 		requiredTitle,
 		roleAtLeast
-	} from '$lib/access';
-	import { dialog } from '$lib/stores/dialog.svelte';
-	import { toast } from '$lib/stores/toast.svelte';
-	import Button from '$lib/components/ui/Button.svelte';
-	import ModalHeader from '$lib/components/ui/ModalHeader.svelte';
-	import type { AuthUser } from '$lib/types/auth';
-	import type { AccessRole, Environment, Member, Project } from '$lib/types/project';
+	} from '#lib/access.ts';
+	import { dialog } from '#lib/stores/dialog.svelte.ts';
+	import { toast } from '#lib/stores/toast.svelte.ts';
+	import Button from '#lib/components/ui/Button.svelte';
+	import ModalHeader from '#lib/components/ui/ModalHeader.svelte';
+	import type { AuthUser } from '#lib/types/auth.ts';
+	import type { AccessRole, Environment, Member, Project } from '#lib/types/project.ts';
 
 	let { userId, close }: { userId: string; close: () => void } = $props();
 

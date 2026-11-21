@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import { links } from '$lib/links';
+	import { links } from '#lib/links.ts';
 	import GitHubIcon from './GitHubIcon.svelte';
 	import LogoMark from './LogoMark.svelte';
 

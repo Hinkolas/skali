@@ -1,5 +1,5 @@
 <script module lang="ts">
-	import type { ModalOptions } from '$lib/stores/modal.svelte';
+	import type { ModalOptions } from '#lib/stores/modal.svelte.ts';
 
 	export const modalOptions = {
 		label: 'New environment'
@@ -9,15 +9,15 @@
 <script lang="ts">
 	import { invalidateAll } from '$app/navigation';
 	import { page } from '$app/state';
-	import { api, ApiError } from '$lib/api/client';
-	import { isInstanceAdmin } from '$lib/access';
-	import type { AuthUser } from '$lib/types/auth';
-	import type { Environment, Project } from '$lib/types/project';
-	import { toast } from '$lib/stores/toast.svelte';
-	import Button from '$lib/components/ui/Button.svelte';
-	import Field from '$lib/components/ui/Field.svelte';
-	import ModalHeader from '$lib/components/ui/ModalHeader.svelte';
-	import TextInput from '$lib/components/ui/TextInput.svelte';
+	import { api, ApiError } from '#lib/api/client.ts';
+	import { isInstanceAdmin } from '#lib/access.ts';
+	import type { AuthUser } from '#lib/types/auth.ts';
+	import type { Environment, Project } from '#lib/types/project.ts';
+	import { toast } from '#lib/stores/toast.svelte.ts';
+	import Button from '#lib/components/ui/Button.svelte';
+	import Field from '#lib/components/ui/Field.svelte';
+	import ModalHeader from '#lib/components/ui/ModalHeader.svelte';
+	import TextInput from '#lib/components/ui/TextInput.svelte';
 
 	let { project, close }: { project: Project; close: (created?: boolean) => void } = $props();
 

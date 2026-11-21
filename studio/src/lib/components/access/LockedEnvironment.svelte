@@ -3,9 +3,9 @@
 	// role there is none: the environment is listed by name, nothing inside
 	// is readable.
 	import Lock from '@lucide/svelte/icons/lock';
-	import PageHeader from '$lib/components/shell/PageHeader.svelte';
-	import EmptyState from '$lib/components/ui/EmptyState.svelte';
-	import type { Environment, Project } from '$lib/types/project';
+	import PageHeader from '#lib/components/shell/PageHeader.svelte';
+	import EmptyState from '#lib/components/ui/EmptyState.svelte';
+	import type { Environment, Project } from '#lib/types/project.ts';
 
 	let { environment, project }: { environment: Environment; project: Project } = $props();
 </script>

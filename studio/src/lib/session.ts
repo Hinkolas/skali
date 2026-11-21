@@ -1,5 +1,5 @@
 import { error, redirect } from '@sveltejs/kit';
-import type { AuthUser } from '$lib/types/auth';
+import type { AuthUser } from '#lib/types/auth.ts';
 
 export async function readUser(fetchFn: typeof fetch): Promise<AuthUser | null> {
 	let response: Response;

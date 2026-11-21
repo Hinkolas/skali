@@ -1,6 +1,6 @@
 <script lang="ts">
 	import Search from '@lucide/svelte/icons/search';
-	import { modal } from '$lib/stores/modal.svelte';
+	import { modal } from '#lib/stores/modal.svelte.ts';
 	import CommandPaletteModal, {
 		modalOptions as commandPaletteOptions
 	} from './CommandPaletteModal.svelte';

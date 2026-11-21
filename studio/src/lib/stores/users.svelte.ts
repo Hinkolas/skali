@@ -3,8 +3,8 @@
 // AddMemberModal); a failed fetch leaves the map empty so callers fall back
 // to short ids, and the next load() tries again.
 
-import { api } from '$lib/api/client';
-import type { DirectoryUser } from '$lib/types/auth';
+import { api } from '#lib/api/client.ts';
+import type { DirectoryUser } from '#lib/types/auth.ts';
 
 class UsersStore {
 	private byId = $state<ReadonlyMap<string, DirectoryUser>>(new Map());

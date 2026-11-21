@@ -1,5 +1,5 @@
-import { apiFetch } from '$lib/api/client';
-import type { PoolMetrics } from '$lib/types/pools';
+import { apiFetch } from '#lib/api/client.ts';
+import type { PoolMetrics } from '#lib/types/pools.ts';
 import type { PageLoad } from './$types';
 
 // The overview seeds the 24h window; the page refetches other windows

@@ -2,26 +2,26 @@
 	import { invalidateAll } from '$app/navigation';
 	import Archive from '@lucide/svelte/icons/archive';
 	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
-	import { api, ApiError } from '$lib/api/client';
-	import { deferred } from '$lib/deferred.svelte';
-	import { formatBytes, formatDateTime, relativeTime } from '$lib/format';
-	import type { StatCardData } from '$lib/models/view';
-	import { dialog } from '$lib/stores/dialog.svelte';
-	import { modal } from '$lib/stores/modal.svelte';
-	import { toast } from '$lib/stores/toast.svelte';
-	import { failingNow, type BackupTarget } from '$lib/types/backups';
-	import PageHeader from '$lib/components/shell/PageHeader.svelte';
+	import { api, ApiError } from '#lib/api/client.ts';
+	import { deferred } from '#lib/deferred.svelte.ts';
+	import { formatBytes, formatDateTime, relativeTime } from '#lib/format.ts';
+	import type { StatCardData } from '#lib/models/view.ts';
+	import { dialog } from '#lib/stores/dialog.svelte.ts';
+	import { modal } from '#lib/stores/modal.svelte.ts';
+	import { toast } from '#lib/stores/toast.svelte.ts';
+	import { failingNow, type BackupTarget } from '#lib/types/backups.ts';
+	import PageHeader from '#lib/components/shell/PageHeader.svelte';
 	import BackupTargetModal, {
 		modalOptions as backupTargetModalOptions
-	} from '$lib/components/system/BackupTargetModal.svelte';
-	import Button from '$lib/components/ui/Button.svelte';
-	import Card from '$lib/components/ui/Card.svelte';
-	import EmptyState from '$lib/components/ui/EmptyState.svelte';
-	import KeyValueRow from '$lib/components/ui/KeyValueRow.svelte';
-	import Pill from '$lib/components/ui/Pill.svelte';
-	import ProgressBar from '$lib/components/ui/ProgressBar.svelte';
-	import Skeleton from '$lib/components/ui/Skeleton.svelte';
-	import StatCard from '$lib/components/ui/StatCard.svelte';
+	} from '#lib/components/system/BackupTargetModal.svelte';
+	import Button from '#lib/components/ui/Button.svelte';
+	import Card from '#lib/components/ui/Card.svelte';
+	import EmptyState from '#lib/components/ui/EmptyState.svelte';
+	import KeyValueRow from '#lib/components/ui/KeyValueRow.svelte';
+	import Pill from '#lib/components/ui/Pill.svelte';
+	import ProgressBar from '#lib/components/ui/ProgressBar.svelte';
+	import Skeleton from '#lib/components/ui/Skeleton.svelte';
+	import StatCard from '#lib/components/ui/StatCard.svelte';
 	import type { PageData } from './$types';
 
 	// Backups at a glance: whether the bucket answers, what it holds, and how

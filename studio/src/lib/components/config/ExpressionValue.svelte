@@ -2,9 +2,9 @@
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import Lock from '@lucide/svelte/icons/lock';
-	import type { Expression } from '$lib/types/definition';
-	import { SERVICE_KIND_META } from '$lib/service-types';
-	import { withEnv } from '$lib/urls';
+	import type { Expression } from '#lib/types/definition.ts';
+	import { SERVICE_KIND_META } from '#lib/service-types.ts';
+	import { withEnv } from '#lib/urls.ts';
 
 	// A compiled expression rendered part by part: literals as text, project
 	// values as accent chips, service outputs as chips in the service's
@@ -34,7 +34,7 @@
 		{:else if part.kind === 'service_output'}
 			{@const kind = kindOf(part.collection)}
 			{@const meta = SERVICE_KIND_META[kind]}
-			<!-- eslint-disable svelte/no-navigation-without-resolve -- path built with resolve(), env appended by $lib/urls -->
+			<!-- eslint-disable svelte/no-navigation-without-resolve -- path built with resolve(), env appended by #lib/urls -->
 			<a
 				href={withEnv(
 					resolve('/(app)/projects/[project]/services/[service]', {

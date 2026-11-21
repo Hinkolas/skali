@@ -6,7 +6,7 @@
 
 <!-- The same approved v5 tile used by the native app and Studio. -->
 <img
-	src={asset('/favicon.png')}
+	src={asset('favicon.png')}
 	alt=""
 	width={size}
 	height={size}

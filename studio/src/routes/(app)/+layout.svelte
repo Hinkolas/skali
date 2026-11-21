@@ -1,20 +1,21 @@
 <script lang="ts">
 	import { afterNavigate } from '$app/navigation';
 	import MenuIcon from '@lucide/svelte/icons/menu';
-	import { setUser } from '$lib/stores/auth.svelte';
-	import { modal } from '$lib/stores/modal.svelte';
-	import StudioUpdated from '$lib/components/shell/StudioUpdated.svelte';
-	import Sidebar from '$lib/components/shell/Sidebar.svelte';
-	import Topbar from '$lib/components/shell/Topbar.svelte';
-	import SidePanel from '$lib/components/ui/SidePanel.svelte';
+	import { setUser } from '#lib/stores/auth.svelte.ts';
+	import { modal } from '#lib/stores/modal.svelte.ts';
+	import StudioUpdated from '#lib/components/shell/StudioUpdated.svelte';
+	import Sidebar from '#lib/components/shell/Sidebar.svelte';
+	import Topbar from '#lib/components/shell/Topbar.svelte';
+	import SidePanel from '#lib/components/ui/SidePanel.svelte';
 	import CommandPaletteModal, {
 		modalOptions as commandPaletteOptions
-	} from '$lib/components/shell/CommandPaletteModal.svelte';
+	} from '#lib/components/shell/CommandPaletteModal.svelte';
 	import type { LayoutData } from './$types';
 
 	let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
 	let navigationOpen = $state(false);
-	afterNavigate(() => {
+	afterNavigate(({ shallow, type }) => {
+		if (shallow && type === 'goto') return;
 		navigationOpen = false;
 	});
 

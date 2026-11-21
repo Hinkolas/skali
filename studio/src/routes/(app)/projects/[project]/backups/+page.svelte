@@ -6,33 +6,38 @@
 	import CloudOff from '@lucide/svelte/icons/cloud-off';
 	import Ellipsis from '@lucide/svelte/icons/ellipsis';
 	import Lock from '@lucide/svelte/icons/lock';
-	import { api, ApiError } from '$lib/api/client';
-	import { isInstanceAdmin, requiredTitle, roleAtLeast } from '$lib/access';
-	import { SCHEDULE_IDLE, SCHEDULE_IDLE_DETAIL, backupRefusal, confirmBackup } from '$lib/backups';
-	import { hasStatefulServices } from '$lib/models/service';
-	import { describeCron, describeSeconds, nextCronFire } from '$lib/cron';
-	import { formatBytes, formatDateTime, relativeTime } from '$lib/format';
-	import { dialog } from '$lib/stores/dialog.svelte';
-	import { modal } from '$lib/stores/modal.svelte';
-	import { toast } from '$lib/stores/toast.svelte';
-	import type { Environment } from '$lib/types/project';
-	import { snapshotContents, type BackupSnapshot } from '$lib/types/backups';
-	import PageHeader from '$lib/components/shell/PageHeader.svelte';
-	import Button from '$lib/components/ui/Button.svelte';
-	import Card from '$lib/components/ui/Card.svelte';
-	import EmptyState from '$lib/components/ui/EmptyState.svelte';
-	import Menu from '$lib/components/ui/Menu.svelte';
-	import MenuItem from '$lib/components/ui/MenuItem.svelte';
-	import Pill from '$lib/components/ui/Pill.svelte';
-	import Segmented from '$lib/components/ui/Segmented.svelte';
-	import Table from '$lib/components/ui/Table.svelte';
-	import RunsSection from '$lib/components/run/RunsSection.svelte';
+	import { api, ApiError } from '#lib/api/client.ts';
+	import { isInstanceAdmin, requiredTitle, roleAtLeast } from '#lib/access.ts';
+	import {
+		SCHEDULE_IDLE,
+		SCHEDULE_IDLE_DETAIL,
+		backupRefusal,
+		confirmBackup
+	} from '#lib/backups.ts';
+	import { hasStatefulServices } from '#lib/models/service.ts';
+	import { describeCron, describeSeconds, nextCronFire } from '#lib/cron.ts';
+	import { formatBytes, formatDateTime, relativeTime } from '#lib/format.ts';
+	import { dialog } from '#lib/stores/dialog.svelte.ts';
+	import { modal } from '#lib/stores/modal.svelte.ts';
+	import { toast } from '#lib/stores/toast.svelte.ts';
+	import type { Environment } from '#lib/types/project.ts';
+	import { snapshotContents, type BackupSnapshot } from '#lib/types/backups.ts';
+	import PageHeader from '#lib/components/shell/PageHeader.svelte';
+	import Button from '#lib/components/ui/Button.svelte';
+	import Card from '#lib/components/ui/Card.svelte';
+	import EmptyState from '#lib/components/ui/EmptyState.svelte';
+	import Menu from '#lib/components/ui/Menu.svelte';
+	import MenuItem from '#lib/components/ui/MenuItem.svelte';
+	import Pill from '#lib/components/ui/Pill.svelte';
+	import Segmented from '#lib/components/ui/Segmented.svelte';
+	import Table from '#lib/components/ui/Table.svelte';
+	import RunsSection from '#lib/components/run/RunsSection.svelte';
 	import RestoreModal, {
 		modalOptions as restoreModalOptions
-	} from '$lib/components/run/RestoreModal.svelte';
+	} from '#lib/components/run/RestoreModal.svelte';
 	import EnvironmentSettingsModal, {
 		modalOptions as environmentSettingsModalOptions
-	} from '$lib/components/access/EnvironmentSettingsModal.svelte';
+	} from '#lib/components/access/EnvironmentSettingsModal.svelte';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();

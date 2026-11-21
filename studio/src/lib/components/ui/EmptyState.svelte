@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
-	import type { NavIcon } from '$lib/navigation';
+	import type { NavIcon } from '#lib/navigation.ts';
 
 	let {
 		icon: Icon,

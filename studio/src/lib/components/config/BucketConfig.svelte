@@ -1,8 +1,8 @@
 <script lang="ts">
-	import type { BucketView } from '$lib/models/service';
-	import { renderExpression } from '$lib/types/definition';
-	import { formatBytes, formatCount } from '$lib/format';
-	import { describeSeconds } from '$lib/cron';
+	import type { BucketView } from '#lib/models/service.ts';
+	import { renderExpression } from '#lib/types/definition.ts';
+	import { formatBytes, formatCount } from '#lib/format.ts';
+	import { describeSeconds } from '#lib/cron.ts';
 	import Choice from './Choice.svelte';
 	import ConfigCard from './ConfigCard.svelte';
 

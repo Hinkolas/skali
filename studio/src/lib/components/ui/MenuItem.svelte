@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { getContext, type Snippet } from 'svelte';
 	import Check from '@lucide/svelte/icons/check';
-	import type { NavIcon } from '$lib/navigation';
+	import type { NavIcon } from '#lib/navigation.ts';
 
 	let {
 		href,

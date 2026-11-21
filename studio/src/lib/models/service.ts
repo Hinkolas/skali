@@ -7,7 +7,7 @@ import type {
 	BucketClaim,
 	DatabaseClaim,
 	ProjectDefinition
-} from '$lib/types/definition';
+} from '#lib/types/definition.ts';
 
 export type ServiceViewType = 'application' | 'database' | 'bucket';
 

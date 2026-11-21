@@ -1,5 +1,5 @@
 <script module lang="ts">
-	import type { ModalOptions } from '$lib/stores/modal.svelte';
+	import type { ModalOptions } from '#lib/stores/modal.svelte.ts';
 
 	// Finder anatomy like AddMemberModal: step one searches the project's
 	// environments, step two states the promotion and will grow the promote
@@ -24,18 +24,18 @@
 	import Lock from '@lucide/svelte/icons/lock';
 	import Rocket from '@lucide/svelte/icons/rocket';
 	import Search from '@lucide/svelte/icons/search';
-	import { api, ApiError } from '$lib/api/client';
-	import { requiredTitle, roleAtLeast } from '$lib/access';
-	import { sidepanel } from '$lib/stores/sidepanel.svelte';
-	import { toast } from '$lib/stores/toast.svelte';
-	import Button from '$lib/components/ui/Button.svelte';
-	import ModalHeader from '$lib/components/ui/ModalHeader.svelte';
-	import Pill from '$lib/components/ui/Pill.svelte';
-	import RunDetailPanel from '$lib/components/run/RunDetailPanel.svelte';
-	import PlanChanges from '$lib/components/run/PlanChanges.svelte';
-	import type { Environment } from '$lib/types/project';
-	import type { EnvironmentStatus } from '$lib/types/status';
-	import type { OpenedDeployment, PlanResult } from '$lib/types/deploy';
+	import { api, ApiError } from '#lib/api/client.ts';
+	import { requiredTitle, roleAtLeast } from '#lib/access.ts';
+	import { sidepanel } from '#lib/stores/sidepanel.svelte.ts';
+	import { toast } from '#lib/stores/toast.svelte.ts';
+	import Button from '#lib/components/ui/Button.svelte';
+	import ModalHeader from '#lib/components/ui/ModalHeader.svelte';
+	import Pill from '#lib/components/ui/Pill.svelte';
+	import RunDetailPanel from '#lib/components/run/RunDetailPanel.svelte';
+	import PlanChanges from '#lib/components/run/PlanChanges.svelte';
+	import type { Environment } from '#lib/types/project.ts';
+	import type { EnvironmentStatus } from '#lib/types/status.ts';
+	import type { OpenedDeployment, PlanResult } from '#lib/types/deploy.ts';
 
 	let {
 		source,

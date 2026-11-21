@@ -3,21 +3,21 @@
 	import ExternalLink from '@lucide/svelte/icons/external-link';
 	import RotateCw from '@lucide/svelte/icons/rotate-cw';
 	import { page } from '$app/state';
-	import type { ServiceView } from '$lib/models/service';
-	import type { Environment } from '$lib/types/project';
-	import { renderExpression, type ProjectDefinition } from '$lib/types/definition';
-	import { api, ApiError } from '$lib/api/client';
-	import { requiredTitle, roleAtLeast } from '$lib/access';
-	import { backupRefusal, confirmBackup } from '$lib/backups';
-	import { envStatus } from '$lib/stores/envstatus.svelte';
-	import { dialog } from '$lib/stores/dialog.svelte';
-	import { sidepanel } from '$lib/stores/sidepanel.svelte';
-	import { toast } from '$lib/stores/toast.svelte';
-	import PageHeader from '$lib/components/shell/PageHeader.svelte';
-	import Button from '$lib/components/ui/Button.svelte';
-	import Skeleton from '$lib/components/ui/Skeleton.svelte';
-	import StatusPill from '$lib/components/ui/StatusPill.svelte';
-	import RunDetailPanel from '$lib/components/run/RunDetailPanel.svelte';
+	import type { ServiceView } from '#lib/models/service.ts';
+	import type { Environment } from '#lib/types/project.ts';
+	import { renderExpression, type ProjectDefinition } from '#lib/types/definition.ts';
+	import { api, ApiError } from '#lib/api/client.ts';
+	import { requiredTitle, roleAtLeast } from '#lib/access.ts';
+	import { backupRefusal, confirmBackup } from '#lib/backups.ts';
+	import { envStatus } from '#lib/stores/envstatus.svelte.ts';
+	import { dialog } from '#lib/stores/dialog.svelte.ts';
+	import { sidepanel } from '#lib/stores/sidepanel.svelte.ts';
+	import { toast } from '#lib/stores/toast.svelte.ts';
+	import PageHeader from '#lib/components/shell/PageHeader.svelte';
+	import Button from '#lib/components/ui/Button.svelte';
+	import Skeleton from '#lib/components/ui/Skeleton.svelte';
+	import StatusPill from '#lib/components/ui/StatusPill.svelte';
+	import RunDetailPanel from '#lib/components/run/RunDetailPanel.svelte';
 
 	// Shared header for every service page: rendered by the service layout so
 	// name, status and actions persist while the tabs below switch content.

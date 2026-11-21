@@ -2,16 +2,16 @@
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import Plus from '@lucide/svelte/icons/plus';
-	import type { ServiceView } from '$lib/models/service';
-	import type { Project } from '$lib/types/project';
-	import { PROJECT_TABS, shipped } from '$lib/navigation';
-	import { envRuns } from '$lib/stores/envruns.svelte';
-	import { envStatus } from '$lib/stores/envstatus.svelte';
-	import { runKindLabel } from '$lib/types/runs';
-	import Skeleton from '$lib/components/ui/Skeleton.svelte';
-	import StatusDot from '$lib/components/ui/StatusDot.svelte';
-	import TypeBadge from '$lib/components/ui/TypeBadge.svelte';
-	import { withEnv } from '$lib/urls';
+	import type { ServiceView } from '#lib/models/service.ts';
+	import type { Project } from '#lib/types/project.ts';
+	import { PROJECT_TABS, shipped } from '#lib/navigation.ts';
+	import { envRuns } from '#lib/stores/envruns.svelte.ts';
+	import { envStatus } from '#lib/stores/envstatus.svelte.ts';
+	import { runKindLabel } from '#lib/types/runs.ts';
+	import Skeleton from '#lib/components/ui/Skeleton.svelte';
+	import StatusDot from '#lib/components/ui/StatusDot.svelte';
+	import TypeBadge from '#lib/components/ui/TypeBadge.svelte';
+	import { withEnv } from '#lib/urls.ts';
 	import NavItem from './NavItem.svelte';
 	import NavSection from './NavSection.svelte';
 
@@ -60,7 +60,7 @@
 	{#each services as service (`${service.type}:${service.key}`)}
 		{@const servicePath = `${base}/services/${service.key}`}
 		{@const active = pathname === servicePath || pathname.startsWith(servicePath + '/')}
-		<!-- eslint-disable svelte/no-navigation-without-resolve -- path built with resolve(), env appended by $lib/urls -->
+		<!-- eslint-disable svelte/no-navigation-without-resolve -- path built with resolve(), env appended by #lib/urls -->
 		<a
 			href={withEnv(
 				resolve('/(app)/projects/[project]/services/[service]', {

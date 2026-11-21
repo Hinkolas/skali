@@ -1,5 +1,5 @@
 <script module lang="ts">
-	import type { ModalOptions } from '$lib/stores/modal.svelte';
+	import type { ModalOptions } from '#lib/stores/modal.svelte.ts';
 
 	export const modalOptions = {
 		label: 'Edit user'
@@ -7,12 +7,12 @@
 </script>
 
 <script lang="ts">
-	import { api, ApiError } from '$lib/api/client';
-	import { toast } from '$lib/stores/toast.svelte';
-	import type { AuthUser, Role } from '$lib/types/auth';
-	import Button from '$lib/components/ui/Button.svelte';
-	import ModalHeader from '$lib/components/ui/ModalHeader.svelte';
-	import Toggle from '$lib/components/ui/Toggle.svelte';
+	import { api, ApiError } from '#lib/api/client.ts';
+	import { toast } from '#lib/stores/toast.svelte.ts';
+	import type { AuthUser, Role } from '#lib/types/auth.ts';
+	import Button from '#lib/components/ui/Button.svelte';
+	import ModalHeader from '#lib/components/ui/ModalHeader.svelte';
+	import Toggle from '#lib/components/ui/Toggle.svelte';
 
 	let {
 		user,

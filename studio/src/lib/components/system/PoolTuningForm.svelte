@@ -9,12 +9,12 @@
 	import { invalidateAll } from '$app/navigation';
 	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
 	import X from '@lucide/svelte/icons/x';
-	import { api, ApiError } from '$lib/api/client';
-	import { toast } from '$lib/stores/toast.svelte';
-	import Button from '$lib/components/ui/Button.svelte';
-	import Card from '$lib/components/ui/Card.svelte';
-	import TextInput from '$lib/components/ui/TextInput.svelte';
-	import { formatBytes } from '$lib/format';
+	import { api, ApiError } from '#lib/api/client.ts';
+	import { toast } from '#lib/stores/toast.svelte.ts';
+	import Button from '#lib/components/ui/Button.svelte';
+	import Card from '#lib/components/ui/Card.svelte';
+	import TextInput from '#lib/components/ui/TextInput.svelte';
+	import { formatBytes } from '#lib/format.ts';
 	import {
 		formatGiB,
 		groupedParameters,
@@ -24,7 +24,7 @@
 		restartRequired,
 		UNIT_HINT,
 		type DatabasePool
-	} from '$lib/types/pools';
+	} from '#lib/types/pools.ts';
 
 	let { pool }: { pool: DatabasePool } = $props();
 

@@ -4,10 +4,10 @@
 // newest bucket, the sparkline the whole window. Traffic is the exception,
 // its bytes are per-bucket deltas, so its headline is the window total.
 
-import type { StatCardData } from '$lib/models/view';
-import type { Application } from '$lib/types/definition';
-import type { ServiceStatus } from '$lib/types/status';
-import type { ApplicationSeries, EnvironmentMetrics } from '$lib/types/metrics';
+import type { StatCardData } from '#lib/models/view.ts';
+import type { Application } from '#lib/types/definition.ts';
+import type { ServiceStatus } from '#lib/types/status.ts';
+import type { ApplicationSeries, EnvironmentMetrics } from '#lib/types/metrics.ts';
 import {
 	currentTotal,
 	seriesAverage,
@@ -15,8 +15,8 @@ import {
 	sumSeries,
 	toChartPoints,
 	windowTotal
-} from '$lib/types/metrics';
-import { formatBytes, formatCount } from '$lib/format';
+} from '#lib/types/metrics.ts';
+import { formatBytes, formatCount } from '#lib/format.ts';
 
 export interface UsageLimits {
 	/** Summed CPU limit in millicores, null when no application declares one. */

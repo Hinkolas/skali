@@ -6,23 +6,23 @@
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import ShieldCheck from '@lucide/svelte/icons/shield-check';
 	import { invalidateAll } from '$app/navigation';
-	import { api, ApiError } from '$lib/api/client';
-	import { modal } from '$lib/stores/modal.svelte';
-	import { dialog } from '$lib/stores/dialog.svelte';
-	import { toast } from '$lib/stores/toast.svelte';
-	import type { AuthUser } from '$lib/types/auth';
-	import PageHeader from '$lib/components/shell/PageHeader.svelte';
-	import Button from '$lib/components/ui/Button.svelte';
-	import Table from '$lib/components/ui/Table.svelte';
+	import { api, ApiError } from '#lib/api/client.ts';
+	import { modal } from '#lib/stores/modal.svelte.ts';
+	import { dialog } from '#lib/stores/dialog.svelte.ts';
+	import { toast } from '#lib/stores/toast.svelte.ts';
+	import type { AuthUser } from '#lib/types/auth.ts';
+	import PageHeader from '#lib/components/shell/PageHeader.svelte';
+	import Button from '#lib/components/ui/Button.svelte';
+	import Table from '#lib/components/ui/Table.svelte';
 	import NewUserModal, {
 		modalOptions as newUserOptions
-	} from '$lib/components/users/NewUserModal.svelte';
+	} from '#lib/components/users/NewUserModal.svelte';
 	import EditUserModal, {
 		modalOptions as editUserOptions
-	} from '$lib/components/users/EditUserModal.svelte';
+	} from '#lib/components/users/EditUserModal.svelte';
 	import ResetPasswordModal, {
 		modalOptions as resetPasswordOptions
-	} from '$lib/components/users/ResetPasswordModal.svelte';
+	} from '#lib/components/users/ResetPasswordModal.svelte';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();

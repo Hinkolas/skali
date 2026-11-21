@@ -1,9 +1,9 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
-	import PageHeader from '$lib/components/shell/PageHeader.svelte';
-	import PoolTabs from '$lib/components/system/PoolTabs.svelte';
-	import Pill from '$lib/components/ui/Pill.svelte';
-	import { poolConnections, poolPhase, poolSubtitle } from '$lib/types/pools';
+	import PageHeader from '#lib/components/shell/PageHeader.svelte';
+	import PoolTabs from '#lib/components/system/PoolTabs.svelte';
+	import Pill from '#lib/components/ui/Pill.svelte';
+	import { poolConnections, poolPhase, poolSubtitle } from '#lib/types/pools.ts';
 	import type { LayoutData } from './$types';
 
 	// Shared header for every pool page: name, observed phase and the

@@ -1,5 +1,5 @@
 <script module lang="ts">
-	import type { ModalOptions } from '$lib/stores/modal.svelte';
+	import type { ModalOptions } from '#lib/stores/modal.svelte.ts';
 
 	export const modalOptions = {
 		label: 'Redeploy',
@@ -17,16 +17,16 @@
 	import CheckCircle2 from '@lucide/svelte/icons/circle-check-big';
 	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
 	import RefreshCw from '@lucide/svelte/icons/refresh-cw';
-	import { api, ApiError } from '$lib/api/client';
-	import { sidepanel } from '$lib/stores/sidepanel.svelte';
-	import { toast } from '$lib/stores/toast.svelte';
-	import Button from '$lib/components/ui/Button.svelte';
-	import ModalHeader from '$lib/components/ui/ModalHeader.svelte';
-	import RunDetailPanel from '$lib/components/run/RunDetailPanel.svelte';
-	import PlanChanges from '$lib/components/run/PlanChanges.svelte';
-	import type { Environment } from '$lib/types/project';
-	import type { EnvironmentStatus } from '$lib/types/status';
-	import type { OpenedDeployment, PlanResult } from '$lib/types/deploy';
+	import { api, ApiError } from '#lib/api/client.ts';
+	import { sidepanel } from '#lib/stores/sidepanel.svelte.ts';
+	import { toast } from '#lib/stores/toast.svelte.ts';
+	import Button from '#lib/components/ui/Button.svelte';
+	import ModalHeader from '#lib/components/ui/ModalHeader.svelte';
+	import RunDetailPanel from '#lib/components/run/RunDetailPanel.svelte';
+	import PlanChanges from '#lib/components/run/PlanChanges.svelte';
+	import type { Environment } from '#lib/types/project.ts';
+	import type { EnvironmentStatus } from '#lib/types/status.ts';
+	import type { OpenedDeployment, PlanResult } from '#lib/types/deploy.ts';
 
 	let {
 		env,

@@ -1,5 +1,5 @@
 <script module lang="ts">
-	import type { ModalOptions } from '$lib/stores/modal.svelte';
+	import type { ModalOptions } from '#lib/stores/modal.svelte.ts';
 
 	export const modalOptions = {
 		label: 'Restore snapshot',
@@ -21,18 +21,18 @@
 	import ArrowRight from '@lucide/svelte/icons/arrow-right';
 	import DatabaseBackup from '@lucide/svelte/icons/database-backup';
 	import Lock from '@lucide/svelte/icons/lock';
-	import { api, ApiError } from '$lib/api/client';
-	import { requiredTitle, roleAtLeast } from '$lib/access';
-	import { formatBytes, formatDateTime } from '$lib/format';
-	import { sidepanel } from '$lib/stores/sidepanel.svelte';
-	import { toast } from '$lib/stores/toast.svelte';
-	import Button from '$lib/components/ui/Button.svelte';
-	import ModalHeader from '$lib/components/ui/ModalHeader.svelte';
-	import Pill from '$lib/components/ui/Pill.svelte';
-	import TextInput from '$lib/components/ui/TextInput.svelte';
-	import RunDetailPanel from '$lib/components/run/RunDetailPanel.svelte';
-	import { snapshotContents, snapshotOrigin, type BackupSnapshot } from '$lib/types/backups';
-	import type { Environment, Project } from '$lib/types/project';
+	import { api, ApiError } from '#lib/api/client.ts';
+	import { requiredTitle, roleAtLeast } from '#lib/access.ts';
+	import { formatBytes, formatDateTime } from '#lib/format.ts';
+	import { sidepanel } from '#lib/stores/sidepanel.svelte.ts';
+	import { toast } from '#lib/stores/toast.svelte.ts';
+	import Button from '#lib/components/ui/Button.svelte';
+	import ModalHeader from '#lib/components/ui/ModalHeader.svelte';
+	import Pill from '#lib/components/ui/Pill.svelte';
+	import TextInput from '#lib/components/ui/TextInput.svelte';
+	import RunDetailPanel from '#lib/components/run/RunDetailPanel.svelte';
+	import { snapshotContents, snapshotOrigin, type BackupSnapshot } from '#lib/types/backups.ts';
+	import type { Environment, Project } from '#lib/types/project.ts';
 
 	let {
 		snapshot,

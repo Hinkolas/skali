@@ -2,9 +2,9 @@
 	import { resolve } from '$app/paths';
 	import TerminalSquare from '@lucide/svelte/icons/terminal-square';
 	import ShieldCheck from '@lucide/svelte/icons/shield-check';
-	import { api, ApiError } from '$lib/api/client';
-	import { setUser } from '$lib/stores/auth.svelte';
-	import Button from '$lib/components/ui/Button.svelte';
+	import { api, ApiError } from '#lib/api/client.ts';
+	import { setUser } from '#lib/stores/auth.svelte.ts';
+	import Button from '#lib/components/ui/Button.svelte';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -130,10 +130,12 @@
 			<TerminalSquare size={22} strokeWidth={1.75} class="text-accent-light" />
 			<h2 class="text-text-primary text-xl font-semibold">Enter the code</h2>
 		</div>
+
 		<p class="text-text-muted -mt-1.5 text-base">
 			Type the code your terminal shows to sign it in or confirm a command.
 		</p>
-		<form method="get" action={resolve('/auth/device')} class="flex flex-col gap-3.5">
+
+		<form method="get" action={resolve('auth/device')} class="flex flex-col gap-3.5">
 			<input
 				bind:value={code}
 				type="text"

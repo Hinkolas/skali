@@ -1,5 +1,5 @@
 <script module lang="ts">
-	import type { ModalOptions } from '$lib/stores/modal.svelte';
+	import type { ModalOptions } from '#lib/stores/modal.svelte.ts';
 
 	export const modalOptions = {
 		label: 'Confirm access',
@@ -9,9 +9,9 @@
 
 <script lang="ts">
 	import ShieldCheck from '@lucide/svelte/icons/shield-check';
-	import { api, ApiError } from '$lib/api/client';
-	import { authState } from '$lib/stores/auth.svelte';
-	import Button from '$lib/components/ui/Button.svelte';
+	import { api, ApiError } from '#lib/api/client.ts';
+	import { authState } from '#lib/stores/auth.svelte.ts';
+	import Button from '#lib/components/ui/Button.svelte';
 
 	// The sudo gate. A checkpoint, not a form: centered ceremony, one secret,
 	// one button. A wrong secret shakes the input and stays.

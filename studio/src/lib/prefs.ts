@@ -3,7 +3,7 @@
 // (private windows, cleared site data), so every access degrades to the
 // fallback and the page renders the same either way.
 
-import { browser } from '$app/environment';
+import { browser } from '$app/env';
 
 export function readPref<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
 	if (!browser) return fallback;

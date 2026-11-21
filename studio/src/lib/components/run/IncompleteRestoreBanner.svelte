@@ -7,18 +7,18 @@
 	// the data as it is, which a maintainer confirms by typing the name.
 	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
 	import { resolve } from '$app/paths';
-	import { requiredTitle, roleAtLeast } from '$lib/access';
-	import { relativeTime } from '$lib/format';
-	import { withEnv } from '$lib/urls';
-	import { modal } from '$lib/stores/modal.svelte';
-	import { sidepanel } from '$lib/stores/sidepanel.svelte';
-	import Button from '$lib/components/ui/Button.svelte';
+	import { requiredTitle, roleAtLeast } from '#lib/access.ts';
+	import { relativeTime } from '#lib/format.ts';
+	import { withEnv } from '#lib/urls.ts';
+	import { modal } from '#lib/stores/modal.svelte.ts';
+	import { sidepanel } from '#lib/stores/sidepanel.svelte.ts';
+	import Button from '#lib/components/ui/Button.svelte';
 	import AcceptRestoreModal, {
 		modalOptions as acceptModalOptions
-	} from '$lib/components/run/AcceptRestoreModal.svelte';
-	import RunDetailPanel from '$lib/components/run/RunDetailPanel.svelte';
-	import type { Environment, Project } from '$lib/types/project';
-	import type { IncompleteRestore } from '$lib/types/status';
+	} from '#lib/components/run/AcceptRestoreModal.svelte';
+	import RunDetailPanel from '#lib/components/run/RunDetailPanel.svelte';
+	import type { Environment, Project } from '#lib/types/project.ts';
+	import type { IncompleteRestore } from '#lib/types/status.ts';
 
 	let {
 		restore,
@@ -87,7 +87,7 @@
 			<Button size="sm" variant="ghost" onclick={openRun}>View run</Button>
 		{/if}
 		{#if !running}
-			<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- path built with resolve(), env appended by $lib/urls -->
+			<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- path built with resolve(), env appended by #lib/urls -->
 			<Button
 				size="sm"
 				variant="secondary"

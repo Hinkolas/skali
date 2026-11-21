@@ -5,10 +5,10 @@
 	import Database from '@lucide/svelte/icons/database';
 	import RefreshCw from '@lucide/svelte/icons/refresh-cw';
 	import Server from '@lucide/svelte/icons/server';
-	import PageHeader from '$lib/components/shell/PageHeader.svelte';
-	import Card from '$lib/components/ui/Card.svelte';
-	import Pill from '$lib/components/ui/Pill.svelte';
-	import { updatePresentation } from '$lib/types/updates';
+	import PageHeader from '#lib/components/shell/PageHeader.svelte';
+	import Card from '#lib/components/ui/Card.svelte';
+	import Pill from '#lib/components/ui/Pill.svelte';
+	import { updatePresentation } from '#lib/types/updates.ts';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();

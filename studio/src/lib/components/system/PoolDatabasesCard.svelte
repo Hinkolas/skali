@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import { formatBytes } from '$lib/format';
-	import type { DatabasePoolDetail } from '$lib/types/pools';
-	import Button from '$lib/components/ui/Button.svelte';
-	import Card from '$lib/components/ui/Card.svelte';
+	import { formatBytes } from '#lib/format.ts';
+	import type { DatabasePoolDetail } from '#lib/types/pools.ts';
+	import Button from '#lib/components/ui/Button.svelte';
+	import Card from '#lib/components/ui/Card.svelte';
 
 	// Who is on this pool, at a glance: the count by owner and the largest
 	// databases; the Databases tab has every row with links.

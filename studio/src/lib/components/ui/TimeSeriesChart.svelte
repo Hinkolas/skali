@@ -5,8 +5,8 @@
 		niceMax,
 		type ChartPoint,
 		type ChartSeries
-	} from '$lib/charts';
-	import { formatClock, formatDay, formatTimestamp } from '$lib/format';
+	} from '#lib/charts.ts';
+	import { formatClock, formatDay, formatTimestamp } from '#lib/format.ts';
 
 	// Line/area time-series chart. Contract: all series share identical
 	// timestamps (they come from the same sample array), so one hover index

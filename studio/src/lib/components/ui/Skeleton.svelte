@@ -1,7 +1,7 @@
 <script lang="ts">
 	// Placeholder for content that is still loading: the shape of what will
 	// appear, pulsing, so the page paints its structure before its data.
-	// Pair it with `deferred()` (see $lib/deferred.svelte.ts) and show it only
+	// Pair it with `deferred()` (see #lib/deferred.svelte.ts) and show it only
 	// while nothing was ever loaded; a reload keeps the previous value on
 	// screen instead of flashing back to this.
 	type Variant = 'line' | 'pill' | 'block' | 'card';

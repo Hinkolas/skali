@@ -3,7 +3,7 @@
 
 import type { Component } from 'svelte';
 import type { IconProps } from '@lucide/svelte';
-import type { ServiceType } from '$lib/service-types';
+import type { ServiceType } from '#lib/service-types.ts';
 
 import LayoutDashboard from '@lucide/svelte/icons/layout-dashboard';
 import FolderKanban from '@lucide/svelte/icons/folder-kanban';

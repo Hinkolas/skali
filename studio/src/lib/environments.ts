@@ -5,12 +5,12 @@
 // starts them; the project stream refreshes every view as they progress.
 
 import { invalidateAll } from '$app/navigation';
-import { api, ApiError } from '$lib/api/client';
-import { dialog } from '$lib/stores/dialog.svelte';
-import { sidepanel } from '$lib/stores/sidepanel.svelte';
-import { toast } from '$lib/stores/toast.svelte';
-import RunDetailPanel from '$lib/components/run/RunDetailPanel.svelte';
-import type { Environment } from '$lib/types/project';
+import { api, ApiError } from '#lib/api/client.ts';
+import { dialog } from '#lib/stores/dialog.svelte.ts';
+import { sidepanel } from '#lib/stores/sidepanel.svelte.ts';
+import { toast } from '#lib/stores/toast.svelte.ts';
+import RunDetailPanel from '#lib/components/run/RunDetailPanel.svelte';
+import type { Environment } from '#lib/types/project.ts';
 
 export const STOP_ENVIRONMENT_TITLE =
 	'Takes the running workloads down but keeps values, revisions, and volumes. The next deploy starts it again.';

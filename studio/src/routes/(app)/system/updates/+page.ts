@@ -1,6 +1,6 @@
 import { error } from '@sveltejs/kit';
-import { apiFetch } from '$lib/api/client';
-import type { UpdateStatus } from '$lib/types/updates';
+import { apiFetch } from '#lib/api/client.ts';
+import type { UpdateStatus } from '#lib/types/updates.ts';
 import type { PageLoad } from './$types';
 
 // Admin only, like every system page. The status document is the whole

@@ -9,13 +9,13 @@
 // still costs it a database read plus a cluster ConfigMap read per call.
 
 import { error } from '@sveltejs/kit';
-import { isInstanceAdmin } from '$lib/access';
-import { apiFetch } from '$lib/api/client';
-import { requireUser } from '$lib/session';
-import { buildOrg } from '$lib/models/org';
-import type { ClusterNode, NodesResponse } from '$lib/types/nodes';
-import type { Project } from '$lib/types/project';
-import type { SystemMeta } from '$lib/types/system';
+import { isInstanceAdmin } from '#lib/access.ts';
+import { apiFetch } from '#lib/api/client.ts';
+import { requireUser } from '#lib/session.ts';
+import { buildOrg } from '#lib/models/org.ts';
+import type { ClusterNode, NodesResponse } from '#lib/types/nodes.ts';
+import type { Project } from '#lib/types/project.ts';
+import type { SystemMeta } from '#lib/types/system.ts';
 import type { LayoutLoad } from './$types';
 
 export const load: LayoutLoad = async ({ fetch, url }) => {

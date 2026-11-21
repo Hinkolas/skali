@@ -11,8 +11,8 @@
 // The key is `summary`, not `projects`: the shell's `projects` stays an
 // array in merged page.data for the breadcrumb switcher and the palette.
 
-import { apiFetch } from '$lib/api/client';
-import type { Project } from '$lib/types/project';
+import { apiFetch } from '#lib/api/client.ts';
+import type { Project } from '#lib/types/project.ts';
 import type { PageLoad } from './$types';
 
 export const load: PageLoad = ({ fetch, parent }) => {

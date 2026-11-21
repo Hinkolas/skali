@@ -1,9 +1,9 @@
 <script lang="ts">
 	import TLSDetails from './TLSDetails.svelte';
-	import { api } from '$lib/api/client';
-	import type { LogEntry, LogsPage } from '$lib/types/runs';
-	import { openStream } from '$lib/sse';
-	import { formatDateTime } from '$lib/format';
+	import { api } from '#lib/api/client.ts';
+	import type { LogEntry, LogsPage } from '#lib/types/runs.ts';
+	import { openStream } from '#lib/sse.ts';
+	import { formatDateTime } from '#lib/format.ts';
 
 	// One step's structured log: a REST seed page establishes the cursor,
 	// then (while the step is running) the step-log SSE stream appends live

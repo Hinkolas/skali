@@ -1,13 +1,13 @@
 <script lang="ts">
-	import type { DatabaseView } from '$lib/models/service';
-	import type { DatabaseConnection } from '$lib/types/connections';
-	import { envStatus } from '$lib/stores/envstatus.svelte';
-	import { HEALTH_META } from '$lib/service-types';
-	import { formatBytes } from '$lib/format';
-	import { describeSeconds } from '$lib/cron';
-	import Card from '$lib/components/ui/Card.svelte';
-	import KeyValueRow from '$lib/components/ui/KeyValueRow.svelte';
-	import Skeleton from '$lib/components/ui/Skeleton.svelte';
+	import type { DatabaseView } from '#lib/models/service.ts';
+	import type { DatabaseConnection } from '#lib/types/connections.ts';
+	import { envStatus } from '#lib/stores/envstatus.svelte.ts';
+	import { HEALTH_META } from '#lib/service-types.ts';
+	import { formatBytes } from '#lib/format.ts';
+	import { describeSeconds } from '#lib/cron.ts';
+	import Card from '#lib/components/ui/Card.svelte';
+	import KeyValueRow from '#lib/components/ui/KeyValueRow.svelte';
+	import Skeleton from '#lib/components/ui/Skeleton.svelte';
 	import PodList from './PodList.svelte';
 
 	// The server behind one database claim: the engine it runs on, how it is

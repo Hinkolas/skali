@@ -1,5 +1,5 @@
 <script module lang="ts">
-	import type { ModalOptions } from '$lib/stores/modal.svelte';
+	import type { ModalOptions } from '#lib/stores/modal.svelte.ts';
 
 	export const modalOptions = {
 		label: 'Reset password'
@@ -7,11 +7,11 @@
 </script>
 
 <script lang="ts">
-	import { api, ApiError } from '$lib/api/client';
-	import { toast } from '$lib/stores/toast.svelte';
-	import type { AuthUser } from '$lib/types/auth';
-	import Button from '$lib/components/ui/Button.svelte';
-	import ModalHeader from '$lib/components/ui/ModalHeader.svelte';
+	import { api, ApiError } from '#lib/api/client.ts';
+	import { toast } from '#lib/stores/toast.svelte.ts';
+	import type { AuthUser } from '#lib/types/auth.ts';
+	import Button from '#lib/components/ui/Button.svelte';
+	import ModalHeader from '#lib/components/ui/ModalHeader.svelte';
 
 	let { user, close }: { user: AuthUser; close: (reset?: boolean) => void } = $props();
 

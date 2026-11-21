@@ -8,10 +8,10 @@
 
 import { goto, invalidateAll } from '$app/navigation';
 import { resolve } from '$app/paths';
-import { api, ApiError } from '$lib/api/client';
-import { openStream, type StreamHandle } from '$lib/sse';
-import { toast } from '$lib/stores/toast.svelte';
-import type { Project } from '$lib/types/project';
+import { api, ApiError } from '#lib/api/client.ts';
+import { openStream, type StreamHandle } from '#lib/sse.ts';
+import { toast } from '#lib/stores/toast.svelte.ts';
+import type { Project } from '#lib/types/project.ts';
 
 // A burst of signals (a purge concludes its run and deletes its row back
 // to back) costs one refresh.

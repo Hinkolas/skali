@@ -1,6 +1,6 @@
 import { error } from '@sveltejs/kit';
-import { apiFetch } from '$lib/api/client';
-import type { BackupTarget, BackupTargetSummary } from '$lib/types/backups';
+import { apiFetch } from '#lib/api/client.ts';
+import type { BackupTarget, BackupTargetSummary } from '#lib/types/backups.ts';
 import type { PageLoad } from './$types';
 
 // Admin only, like every system page: the API already answers 403 to

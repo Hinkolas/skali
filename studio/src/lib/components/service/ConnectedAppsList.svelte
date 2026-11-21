@@ -1,15 +1,15 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
-	import type { ServiceView } from '$lib/models/service';
-	import { envStatus } from '$lib/stores/envstatus.svelte';
-	import { HEALTH_META } from '$lib/service-types';
-	import { withEnv } from '$lib/urls';
-	import Card from '$lib/components/ui/Card.svelte';
-	import EmptyState from '$lib/components/ui/EmptyState.svelte';
-	import Skeleton from '$lib/components/ui/Skeleton.svelte';
+	import type { ServiceView } from '#lib/models/service.ts';
+	import { envStatus } from '#lib/stores/envstatus.svelte.ts';
+	import { HEALTH_META } from '#lib/service-types.ts';
+	import { withEnv } from '#lib/urls.ts';
+	import Card from '#lib/components/ui/Card.svelte';
+	import EmptyState from '#lib/components/ui/EmptyState.svelte';
+	import Skeleton from '#lib/components/ui/Skeleton.svelte';
 	import Container from '@lucide/svelte/icons/container';
-	import TypeBadge from '$lib/components/ui/TypeBadge.svelte';
+	import TypeBadge from '#lib/components/ui/TypeBadge.svelte';
 
 	// Applications whose declared dependencies include this service.
 	let { service, services }: { service: ServiceView; services: ServiceView[] } = $props();
@@ -33,7 +33,7 @@
 	<Card class="overflow-hidden">
 		{#each apps as app (app.key)}
 			{@const meta = HEALTH_META[envStatus.service('application', app.key)?.health ?? 'unknown']}
-			<!-- eslint-disable svelte/no-navigation-without-resolve -- path built with resolve(), env appended by $lib/urls -->
+			<!-- eslint-disable svelte/no-navigation-without-resolve -- path built with resolve(), env appended by #lib/urls -->
 			<a
 				href={withEnv(
 					resolve('/(app)/projects/[project]/services/[service]', {

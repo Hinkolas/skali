@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { relativeTime } from '$lib/format';
-	import type { DatabasePoolMember } from '$lib/types/pools';
-	import Pill from '$lib/components/ui/Pill.svelte';
+	import { relativeTime } from '#lib/format.ts';
+	import type { DatabasePoolMember } from '#lib/types/pools.ts';
+	import Pill from '#lib/components/ui/Pill.svelte';
 
 	// The instance pods of one pool: their role, node, restarts and age.
 	// The primary sorts first; the API already orders that way, this keeps

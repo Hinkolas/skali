@@ -14,19 +14,19 @@
 	import RefreshCw from '@lucide/svelte/icons/refresh-cw';
 	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
 	import type { Component } from 'svelte';
-	import { api, ApiError } from '$lib/api/client';
-	import { formatDateTime, relativeTime } from '$lib/format';
-	import { dialog } from '$lib/stores/dialog.svelte';
-	import { sidepanel } from '$lib/stores/sidepanel.svelte';
-	import { toast } from '$lib/stores/toast.svelte';
-	import PageHeader from '$lib/components/shell/PageHeader.svelte';
-	import Button from '$lib/components/ui/Button.svelte';
-	import Card from '$lib/components/ui/Card.svelte';
-	import KeyValueRow from '$lib/components/ui/KeyValueRow.svelte';
-	import Pill from '$lib/components/ui/Pill.svelte';
-	import ProgressBar from '$lib/components/ui/ProgressBar.svelte';
-	import Toggle from '$lib/components/ui/Toggle.svelte';
-	import UpdateDetailsPanel from '$lib/components/system/UpdateDetailsPanel.svelte';
+	import { api, ApiError } from '#lib/api/client.ts';
+	import { formatDateTime, relativeTime } from '#lib/format.ts';
+	import { dialog } from '#lib/stores/dialog.svelte.ts';
+	import { sidepanel } from '#lib/stores/sidepanel.svelte.ts';
+	import { toast } from '#lib/stores/toast.svelte.ts';
+	import PageHeader from '#lib/components/shell/PageHeader.svelte';
+	import Button from '#lib/components/ui/Button.svelte';
+	import Card from '#lib/components/ui/Card.svelte';
+	import KeyValueRow from '#lib/components/ui/KeyValueRow.svelte';
+	import Pill from '#lib/components/ui/Pill.svelte';
+	import ProgressBar from '#lib/components/ui/ProgressBar.svelte';
+	import Toggle from '#lib/components/ui/Toggle.svelte';
+	import UpdateDetailsPanel from '#lib/components/system/UpdateDetailsPanel.svelte';
 	import {
 		FEED_ERROR_HINT,
 		FEED_ERROR_TITLE,
@@ -36,7 +36,7 @@
 		type UpdateStatus,
 		updatePresentation,
 		updateSummary
-	} from '$lib/types/updates';
+	} from '#lib/types/updates.ts';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();

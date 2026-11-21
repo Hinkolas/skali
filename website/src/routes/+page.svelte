@@ -1,10 +1,10 @@
 <script lang="ts">
-	import Footer from '$lib/sections/Footer.svelte';
-	import Hero from '$lib/sections/Hero.svelte';
-	import Install from '$lib/sections/Install.svelte';
-	import Platform from '$lib/sections/Platform.svelte';
-	import UnderTheHood from '$lib/sections/UnderTheHood.svelte';
-	import Workflow from '$lib/sections/Workflow.svelte';
+	import Footer from '#lib/sections/Footer.svelte';
+	import Hero from '#lib/sections/Hero.svelte';
+	import Install from '#lib/sections/Install.svelte';
+	import Platform from '#lib/sections/Platform.svelte';
+	import UnderTheHood from '#lib/sections/UnderTheHood.svelte';
+	import Workflow from '#lib/sections/Workflow.svelte';
 
 	let { data } = $props();
 

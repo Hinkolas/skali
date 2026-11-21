@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import type { ServiceView } from '$lib/models/service';
-	import type { Project } from '$lib/types/project';
-	import { SERVICE_TABS, shipped } from '$lib/navigation';
-	import { withEnv } from '$lib/urls';
+	import type { ServiceView } from '#lib/models/service.ts';
+	import type { Project } from '#lib/types/project.ts';
+	import { SERVICE_TABS, shipped } from '#lib/navigation.ts';
+	import { withEnv } from '#lib/urls.ts';
 
 	let { project, service }: { project: Project; service: ServiceView } = $props();
 
@@ -32,7 +32,7 @@
 		{@const path = tab.slug ? `${base}/${tab.slug}` : base}
 		{@const active = tab.slug ? pathname.startsWith(path) : pathname === base}
 		{@const Icon = tab.icon}
-		<!-- eslint-disable svelte/no-navigation-without-resolve -- path mirrors the route params, env appended by $lib/urls -->
+		<!-- eslint-disable svelte/no-navigation-without-resolve -- path mirrors the route params, env appended by #lib/urls -->
 		<a
 			href={withEnv(path, env)}
 			class="relative flex flex-none items-center gap-2 px-3 py-2.5 text-lg transition-colors {active

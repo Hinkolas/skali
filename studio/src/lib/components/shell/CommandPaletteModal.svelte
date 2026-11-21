@@ -1,5 +1,5 @@
 <script module lang="ts">
-	import type { ModalOptions } from '$lib/stores/modal.svelte';
+	import type { ModalOptions } from '#lib/stores/modal.svelte.ts';
 
 	export const modalOptions = {
 		label: 'Command palette',
@@ -14,11 +14,11 @@
 	import { page } from '$app/state';
 	import Search from '@lucide/svelte/icons/search';
 	import FolderKanban from '@lucide/svelte/icons/folder-kanban';
-	import type { ServiceKind } from '$lib/service-types';
-	import type { ServiceView } from '$lib/models/service';
-	import { projectEnvironmentCount } from '$lib/models/project';
-	import type { Project } from '$lib/types/project';
-	import TypeBadge from '$lib/components/ui/TypeBadge.svelte';
+	import type { ServiceKind } from '#lib/service-types.ts';
+	import type { ServiceView } from '#lib/models/service.ts';
+	import { projectEnvironmentCount } from '#lib/models/project.ts';
+	import type { Project } from '#lib/types/project.ts';
+	import TypeBadge from '#lib/components/ui/TypeBadge.svelte';
 
 	let { close }: { close: () => void } = $props();
 
@@ -69,7 +69,6 @@
 
 	function go(href: string) {
 		close();
-		// eslint-disable-next-line svelte/no-navigation-without-resolve -- result hrefs are built with resolve() above
 		void goto(href);
 	}
 

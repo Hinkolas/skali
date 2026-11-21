@@ -1,5 +1,5 @@
 <script module lang="ts">
-	import type { ModalOptions } from '$lib/stores/modal.svelte';
+	import type { ModalOptions } from '#lib/stores/modal.svelte.ts';
 
 	// Not dismissable: Esc/backdrop would lose the codes forever.
 	export const modalOptions = {
@@ -9,9 +9,9 @@
 </script>
 
 <script lang="ts">
-	import Button from '$lib/components/ui/Button.svelte';
-	import ModalHeader from '$lib/components/ui/ModalHeader.svelte';
-	import BackupCodes from '$lib/components/security/BackupCodes.svelte';
+	import Button from '#lib/components/ui/Button.svelte';
+	import ModalHeader from '#lib/components/ui/ModalHeader.svelte';
+	import BackupCodes from '#lib/components/security/BackupCodes.svelte';
 
 	let { codes, close }: { codes: string[]; close: (saved?: boolean) => void } = $props();
 </script>

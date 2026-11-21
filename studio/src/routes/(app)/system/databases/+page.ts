@@ -1,6 +1,6 @@
 import { error } from '@sveltejs/kit';
-import { apiFetch } from '$lib/api/client';
-import type { DatabasePoolsResponse } from '$lib/types/pools';
+import { apiFetch } from '#lib/api/client.ts';
+import type { DatabasePoolsResponse } from '#lib/types/pools.ts';
 import type { PageLoad } from './$types';
 
 // Admin only, like every system page: the API already answers 403 to

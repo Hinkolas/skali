@@ -2,7 +2,7 @@
 // guards); this just exposes the current user to components and handles
 // sign-out. Hydrated from layout data via setUser in the (app) layout.
 
-import type { AuthUser } from '$lib/types/auth';
+import type { AuthUser } from '#lib/types/auth.ts';
 
 let user = $state<AuthUser | null>(null);
 

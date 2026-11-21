@@ -5,15 +5,15 @@
 // declares something to snapshot; the helpers only word the refusal the
 // Studio can already see.
 
-import { api, ApiError } from '$lib/api/client';
-import { requiredTitle, roleAtLeast } from '$lib/access';
-import { hasStatefulServices } from '$lib/models/service';
-import { dialog } from '$lib/stores/dialog.svelte';
-import { sidepanel } from '$lib/stores/sidepanel.svelte';
-import { toast } from '$lib/stores/toast.svelte';
-import RunDetailPanel from '$lib/components/run/RunDetailPanel.svelte';
-import type { ProjectDefinition } from '$lib/types/definition';
-import type { Environment } from '$lib/types/project';
+import { api, ApiError } from '#lib/api/client.ts';
+import { requiredTitle, roleAtLeast } from '#lib/access.ts';
+import { hasStatefulServices } from '#lib/models/service.ts';
+import { dialog } from '#lib/stores/dialog.svelte.ts';
+import { sidepanel } from '#lib/stores/sidepanel.svelte.ts';
+import { toast } from '#lib/stores/toast.svelte.ts';
+import RunDetailPanel from '#lib/components/run/RunDetailPanel.svelte';
+import type { ProjectDefinition } from '#lib/types/definition.ts';
+import type { Environment } from '#lib/types/project.ts';
 
 /** Wording of the refusal when the project declares nothing stateful. */
 export const NOTHING_TO_BACK_UP = 'nothing to back up: no database, bucket, or volume is declared';

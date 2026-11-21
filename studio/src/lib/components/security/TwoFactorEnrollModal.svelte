@@ -1,5 +1,5 @@
 <script module lang="ts">
-	import type { ModalOptions } from '$lib/stores/modal.svelte';
+	import type { ModalOptions } from '#lib/stores/modal.svelte.ts';
 
 	// Not dismissable: Esc/backdrop on the backup-codes step would lose them
 	// forever. Only the explicit buttons close this modal.
@@ -11,12 +11,12 @@
 
 <script lang="ts">
 	import { renderSVG } from 'uqr';
-	import { api, ApiError } from '$lib/api/client';
-	import type { TwoFactorEnrollment } from '$lib/types/auth';
-	import Button from '$lib/components/ui/Button.svelte';
-	import CopyField from '$lib/components/ui/CopyField.svelte';
-	import ModalHeader from '$lib/components/ui/ModalHeader.svelte';
-	import BackupCodes from '$lib/components/security/BackupCodes.svelte';
+	import { api, ApiError } from '#lib/api/client.ts';
+	import type { TwoFactorEnrollment } from '#lib/types/auth.ts';
+	import Button from '#lib/components/ui/Button.svelte';
+	import CopyField from '#lib/components/ui/CopyField.svelte';
+	import ModalHeader from '#lib/components/ui/ModalHeader.svelte';
+	import BackupCodes from '#lib/components/security/BackupCodes.svelte';
 
 	let {
 		enrollment,

@@ -1,5 +1,5 @@
 <script module lang="ts">
-	import type { ModalOptions } from '$lib/stores/modal.svelte';
+	import type { ModalOptions } from '#lib/stores/modal.svelte.ts';
 
 	export const modalOptions = {
 		label: 'Environment settings',
@@ -23,27 +23,27 @@
 	import Plus from '@lucide/svelte/icons/plus';
 	import X from '@lucide/svelte/icons/x';
 	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
-	import { api, ApiError } from '$lib/api/client';
-	import { ROLES, ROLE_RANK, ROLE_HINT, requiredTitle } from '$lib/access';
-	import { SCHEDULE_IDLE_DETAIL } from '$lib/backups';
-	import { describeCron, describeSeconds, isValidCron, nextCronFire } from '$lib/cron';
-	import { formatDateTime } from '$lib/format';
-	import { hasStatefulServices } from '$lib/models/service';
-	import { toast } from '$lib/stores/toast.svelte';
-	import Button from '$lib/components/ui/Button.svelte';
-	import Menu from '$lib/components/ui/Menu.svelte';
-	import MenuItem from '$lib/components/ui/MenuItem.svelte';
-	import ModalHeader from '$lib/components/ui/ModalHeader.svelte';
-	import Select from '$lib/components/ui/Select.svelte';
-	import Switch from '$lib/components/ui/Switch.svelte';
-	import TextInput from '$lib/components/ui/TextInput.svelte';
-	import type { ProjectDefinition } from '$lib/types/definition';
+	import { api, ApiError } from '#lib/api/client.ts';
+	import { ROLES, ROLE_RANK, ROLE_HINT, requiredTitle } from '#lib/access.ts';
+	import { SCHEDULE_IDLE_DETAIL } from '#lib/backups.ts';
+	import { describeCron, describeSeconds, isValidCron, nextCronFire } from '#lib/cron.ts';
+	import { formatDateTime } from '#lib/format.ts';
+	import { hasStatefulServices } from '#lib/models/service.ts';
+	import { toast } from '#lib/stores/toast.svelte.ts';
+	import Button from '#lib/components/ui/Button.svelte';
+	import Menu from '#lib/components/ui/Menu.svelte';
+	import MenuItem from '#lib/components/ui/MenuItem.svelte';
+	import ModalHeader from '#lib/components/ui/ModalHeader.svelte';
+	import Select from '#lib/components/ui/Select.svelte';
+	import Switch from '#lib/components/ui/Switch.svelte';
+	import TextInput from '#lib/components/ui/TextInput.svelte';
+	import type { ProjectDefinition } from '#lib/types/definition.ts';
 	import type {
 		AccessRole,
 		BackupSchedule,
 		Environment,
 		EnvironmentSettings
-	} from '$lib/types/project';
+	} from '#lib/types/project.ts';
 
 	let {
 		environment,
@@ -101,14 +101,13 @@
 		try {
 			await api.patch(`/v1/environments/${environment.id}`, { name: newName });
 			toast.success(`Renamed ${environment.name} to ${newName}`);
-			const url = new URL(page.url);
+			const url = new URL(page.url.href);
 			if (
 				url.searchParams.get('env') === environment.name ||
 				environment.previous_names?.includes(url.searchParams.get('env') ?? '')
 			) {
 				url.searchParams.set('env', newName);
-				// eslint-disable-next-line svelte/no-navigation-without-resolve -- only changes the current URL's environment query
-				await goto(url, { replaceState: true, invalidateAll: true });
+				await goto(url, { replace: true, invalidateAll: true });
 			} else {
 				await invalidateAll();
 			}

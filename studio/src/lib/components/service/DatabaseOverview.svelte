@@ -1,21 +1,21 @@
 <script lang="ts">
-	import type { DatabaseView, ServiceView } from '$lib/models/service';
-	import type { StatCardData } from '$lib/models/view';
-	import type { DatabaseConnection } from '$lib/types/connections';
-	import type { BackupSchedule } from '$lib/types/project';
-	import type { ServiceStorage } from '$lib/types/metrics';
-	import type { Run } from '$lib/types/runs';
-	import { envStatus } from '$lib/stores/envstatus.svelte';
-	import { describeCron } from '$lib/cron';
+	import type { DatabaseView, ServiceView } from '#lib/models/service.ts';
+	import type { StatCardData } from '#lib/models/view.ts';
+	import type { DatabaseConnection } from '#lib/types/connections.ts';
+	import type { BackupSchedule } from '#lib/types/project.ts';
+	import type { ServiceStorage } from '#lib/types/metrics.ts';
+	import type { Run } from '#lib/types/runs.ts';
+	import { envStatus } from '#lib/stores/envstatus.svelte.ts';
+	import { describeCron } from '#lib/cron.ts';
 	import {
 		connectedStat,
 		dependents,
 		footprintStat,
 		lastBackupStat,
 		phaseStat
-	} from '$lib/models/claims';
-	import StatCard from '$lib/components/ui/StatCard.svelte';
-	import RunsSection from '$lib/components/run/RunsSection.svelte';
+	} from '#lib/models/claims.ts';
+	import StatCard from '#lib/components/ui/StatCard.svelte';
+	import RunsSection from '#lib/components/run/RunsSection.svelte';
 	import ConnectedAppsList from './ConnectedAppsList.svelte';
 	import DbConnectionPanel from './DbConnectionPanel.svelte';
 	import DbInstancePanel from './DbInstancePanel.svelte';

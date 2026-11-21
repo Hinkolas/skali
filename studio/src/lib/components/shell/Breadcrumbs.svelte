@@ -6,24 +6,29 @@
 	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
 	import Lock from '@lucide/svelte/icons/lock';
 	import Plus from '@lucide/svelte/icons/plus';
-	import { CREATE_PROJECTS_TITLE, canCreateProject, requiredTitle, roleAtLeast } from '$lib/access';
-	import type { OrgView } from '$lib/models/org';
-	import type { ServiceView } from '$lib/models/service';
-	import type { Environment, Project } from '$lib/types/project';
-	import { withEnv } from '$lib/urls';
-	import { modal } from '$lib/stores/modal.svelte';
-	import Menu from '$lib/components/ui/Menu.svelte';
-	import MenuItem from '$lib/components/ui/MenuItem.svelte';
-	import MenuSeparator from '$lib/components/ui/MenuSeparator.svelte';
-	import Pill from '$lib/components/ui/Pill.svelte';
-	import TypeBadge from '$lib/components/ui/TypeBadge.svelte';
-	import type { AuthUser } from '$lib/types/auth';
+	import {
+		CREATE_PROJECTS_TITLE,
+		canCreateProject,
+		requiredTitle,
+		roleAtLeast
+	} from '#lib/access.ts';
+	import type { OrgView } from '#lib/models/org.ts';
+	import type { ServiceView } from '#lib/models/service.ts';
+	import type { Environment, Project } from '#lib/types/project.ts';
+	import { withEnv } from '#lib/urls.ts';
+	import { modal } from '#lib/stores/modal.svelte.ts';
+	import Menu from '#lib/components/ui/Menu.svelte';
+	import MenuItem from '#lib/components/ui/MenuItem.svelte';
+	import MenuSeparator from '#lib/components/ui/MenuSeparator.svelte';
+	import Pill from '#lib/components/ui/Pill.svelte';
+	import TypeBadge from '#lib/components/ui/TypeBadge.svelte';
+	import type { AuthUser } from '#lib/types/auth.ts';
 	import NewProjectModal, {
 		modalOptions as newProjectModalOptions
-	} from '$lib/components/project/NewProjectModal.svelte';
+	} from '#lib/components/project/NewProjectModal.svelte';
 	import NewEnvironmentModal, {
 		modalOptions as newEnvironmentModalOptions
-	} from '$lib/components/project/NewEnvironmentModal.svelte';
+	} from '#lib/components/project/NewEnvironmentModal.svelte';
 
 	// Same merged `page.data` contract the Sidebar reads: nested layouts set
 	// `project`/`environments`/`env`/`services`/`service`; loads that
@@ -54,8 +59,7 @@
 		'flex cursor-pointer items-center gap-1 rounded-lg px-2 py-1 text-base font-medium transition-colors hover:bg-white/4';
 
 	function switchEnv(name: string) {
-		// eslint-disable-next-line svelte/no-navigation-without-resolve -- same pathname, env param rewritten in place
-		void goto(withEnv(page.url.pathname, name), { noScroll: true, keepFocus: true });
+		void goto(withEnv(page.url.pathname, name), { reset: false });
 	}
 </script>
 
