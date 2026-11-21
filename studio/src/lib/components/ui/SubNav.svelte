@@ -1,5 +1,5 @@
 <script lang="ts" module>
-	import type { NavIcon } from '$lib/navigation';
+	import type { NavIcon } from '#lib/navigation.ts';
 
 	export type SubNavTab = {
 		label: string;
@@ -13,7 +13,7 @@
 
 <script lang="ts">
 	import { page } from '$app/state';
-	import { withEnv } from '$lib/urls';
+	import { withEnv } from '#lib/urls.ts';
 
 	// In-page sub-navigation between the routes of one entity (a project's
 	// settings surfaces, a database pool's tabs): an underlined tab bar
@@ -46,7 +46,7 @@
 	{#each tabs as tab (tab.path)}
 		{@const active = isActive(tab)}
 		{@const Icon = tab.icon}
-		<!-- eslint-disable svelte/no-navigation-without-resolve -- path mirrors the route params, env appended by $lib/urls -->
+		<!-- eslint-disable svelte/no-navigation-without-resolve -- path mirrors the route params, env appended by #lib/urls -->
 		<a
 			href={withEnv(tab.path, env)}
 			aria-current={active ? 'page' : undefined}

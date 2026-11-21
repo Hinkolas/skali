@@ -1,6 +1,6 @@
 // Shapes mirror the skali API (api/openapi.yaml), snake_case included.
 
-import type { ChartPoint } from '$lib/charts';
+import type { ChartPoint } from '#lib/charts.ts';
 
 export type MetricsWindow = '1h' | '24h' | '7d';
 

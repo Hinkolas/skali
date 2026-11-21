@@ -4,12 +4,12 @@
 // exporter view. The headline is the newest sample, the sparkline the
 // whole window.
 
-import type { ChartSeries } from '$lib/charts';
-import type { StatCardData } from '$lib/models/view';
-import { footprintStat } from '$lib/models/claims';
-import { formatBytes, formatCount } from '$lib/format';
-import { seriesAverage, seriesPeak, toChartPoints } from '$lib/types/metrics';
-import type { DatabasePool, PoolMetrics } from '$lib/types/pools';
+import type { ChartSeries } from '#lib/charts.ts';
+import type { StatCardData } from '#lib/models/view.ts';
+import { footprintStat } from '#lib/models/claims.ts';
+import { formatBytes, formatCount } from '#lib/format.ts';
+import { seriesAverage, seriesPeak, toChartPoints } from '#lib/types/metrics.ts';
+import type { DatabasePool, PoolMetrics } from '#lib/types/pools.ts';
 
 /** Per-bucket transactions: commits plus rollbacks; null where either is a gap. */
 export function transactionSeries(m: PoolMetrics): (number | null)[] {

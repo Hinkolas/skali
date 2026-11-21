@@ -1,6 +1,6 @@
 <script lang="ts">
-	import type { SummaryEnvironment } from '$lib/types/project';
-	import Pill from '$lib/components/ui/Pill.svelte';
+	import type { SummaryEnvironment } from '#lib/types/project.ts';
+	import Pill from '#lib/components/ui/Pill.svelte';
 
 	// The project listings' environment rollup: the first environment and a
 	// +N for the rest, so a project with many environments stays one line.

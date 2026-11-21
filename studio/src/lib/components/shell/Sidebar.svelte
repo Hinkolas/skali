@@ -1,11 +1,11 @@
 <script lang="ts">
-	import LogoMark from '$lib/components/ui/LogoMark.svelte';
+	import LogoMark from '#lib/components/ui/LogoMark.svelte';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
-	import type { OrgView } from '$lib/models/org';
-	import type { ServiceView } from '$lib/models/service';
-	import type { ClusterNode } from '$lib/types/nodes';
-	import type { Project } from '$lib/types/project';
+	import type { OrgView } from '#lib/models/org.ts';
+	import type { ServiceView } from '#lib/models/service.ts';
+	import type { ClusterNode } from '#lib/types/nodes.ts';
+	import type { Project } from '#lib/types/project.ts';
 	import SidebarOrgNav from './SidebarOrgNav.svelte';
 	import SidebarProjectNav from './SidebarProjectNav.svelte';
 	import SidebarStatus from './SidebarStatus.svelte';

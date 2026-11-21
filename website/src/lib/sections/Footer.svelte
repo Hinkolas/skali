@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import LogoMark from '$lib/components/LogoMark.svelte';
-	import { links } from '$lib/links';
+	import LogoMark from '#lib/components/LogoMark.svelte';
+	import { links } from '#lib/links.ts';
 
 	// Pages of this site link by route, through resolve(); everything else
 	// is external.

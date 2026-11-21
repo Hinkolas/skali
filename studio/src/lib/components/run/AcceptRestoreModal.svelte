@@ -1,5 +1,5 @@
 <script module lang="ts">
-	import type { ModalOptions } from '$lib/stores/modal.svelte';
+	import type { ModalOptions } from '#lib/stores/modal.svelte.ts';
 
 	export const modalOptions = {
 		label: 'Accept incomplete restore',
@@ -16,14 +16,14 @@
 	// environment stays down until the next deploy. Sudo-gated: the API
 	// client replays after a fresh login on its own.
 	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
-	import { api, ApiError } from '$lib/api/client';
-	import { formatDateTime } from '$lib/format';
-	import { toast } from '$lib/stores/toast.svelte';
-	import Button from '$lib/components/ui/Button.svelte';
-	import ModalHeader from '$lib/components/ui/ModalHeader.svelte';
-	import TextInput from '$lib/components/ui/TextInput.svelte';
-	import type { Environment } from '$lib/types/project';
-	import type { IncompleteRestore } from '$lib/types/status';
+	import { api, ApiError } from '#lib/api/client.ts';
+	import { formatDateTime } from '#lib/format.ts';
+	import { toast } from '#lib/stores/toast.svelte.ts';
+	import Button from '#lib/components/ui/Button.svelte';
+	import ModalHeader from '#lib/components/ui/ModalHeader.svelte';
+	import TextInput from '#lib/components/ui/TextInput.svelte';
+	import type { Environment } from '#lib/types/project.ts';
+	import type { IncompleteRestore } from '#lib/types/status.ts';
 
 	let {
 		env,

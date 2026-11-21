@@ -1,7 +1,7 @@
 <script lang="ts">
-	import NavBar from '$lib/components/NavBar.svelte';
-	import { links } from '$lib/links';
-	import Footer from '$lib/sections/Footer.svelte';
+	import NavBar from '#lib/components/NavBar.svelte';
+	import { links } from '#lib/links.ts';
+	import Footer from '#lib/sections/Footer.svelte';
 
 	let { data } = $props();
 

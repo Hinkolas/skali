@@ -3,13 +3,13 @@
 // depends on them, and where their claim stands. Both overviews build the
 // same four tiles from these so the two pages read alike.
 
-import type { StatCardData } from '$lib/models/view';
-import type { ServiceView } from '$lib/models/service';
-import type { BackupSchedule } from '$lib/types/project';
-import type { Run } from '$lib/types/runs';
-import type { ServiceStatus } from '$lib/types/status';
-import { describeCron, describeSeconds } from '$lib/cron';
-import { formatBytes, relativeTime } from '$lib/format';
+import type { StatCardData } from '#lib/models/view.ts';
+import type { ServiceView } from '#lib/models/service.ts';
+import type { BackupSchedule } from '#lib/types/project.ts';
+import type { Run } from '#lib/types/runs.ts';
+import type { ServiceStatus } from '#lib/types/status.ts';
+import { describeCron, describeSeconds } from '#lib/cron.ts';
+import { formatBytes, relativeTime } from '#lib/format.ts';
 
 export type ClaimKind = 'database' | 'bucket';
 

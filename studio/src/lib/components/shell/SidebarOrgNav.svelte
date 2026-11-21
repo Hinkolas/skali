@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { ORG_NAV, shipped } from '$lib/navigation';
+	import { ORG_NAV, shipped } from '#lib/navigation.ts';
 	import NavItem from './NavItem.svelte';
 	import NavSection from './NavSection.svelte';
 

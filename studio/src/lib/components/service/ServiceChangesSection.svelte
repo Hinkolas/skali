@@ -2,10 +2,10 @@
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import ArrowRight from '@lucide/svelte/icons/arrow-right';
-	import type { ServiceView } from '$lib/models/service';
-	import type { Run } from '$lib/types/runs';
-	import { withEnv } from '$lib/urls';
-	import RunsSection from '$lib/components/run/RunsSection.svelte';
+	import type { ServiceView } from '#lib/models/service.ts';
+	import type { Run } from '#lib/types/runs.ts';
+	import { withEnv } from '#lib/urls.ts';
+	import RunsSection from '#lib/components/run/RunsSection.svelte';
 
 	// A service's own history: the newest deploys, rollbacks, and restarts
 	// that changed it, each saying what it did to this service. The
@@ -37,7 +37,7 @@
 		<h2 class="text-text-primary text-xl font-semibold">Recent changes</h2>
 		<div class="text-text-muted text-md">deploys, rollbacks, and restarts that changed it</div>
 	</div>
-	<!-- eslint-disable svelte/no-navigation-without-resolve -- path built with resolve(), env appended by $lib/urls -->
+	<!-- eslint-disable svelte/no-navigation-without-resolve -- path built with resolve(), env appended by #lib/urls -->
 	<a
 		href={withEnv(
 			resolve('/(app)/projects/[project]/deployments', { project: projectName }),

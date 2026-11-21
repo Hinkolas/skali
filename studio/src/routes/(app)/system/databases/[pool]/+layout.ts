@@ -1,7 +1,7 @@
 import { error } from '@sveltejs/kit';
 import { resolve } from '$app/paths';
-import { apiFetch } from '$lib/api/client';
-import type { DatabasePoolDetailResponse } from '$lib/types/pools';
+import { apiFetch } from '#lib/api/client.ts';
+import type { DatabasePoolDetailResponse } from '#lib/types/pools.ts';
 import type { LayoutLoad } from './$types';
 
 // One pool's pages share the pool document: the header and tabs render

@@ -6,10 +6,10 @@
 // route parameter.
 
 import { error } from '@sveltejs/kit';
-import { apiFetch } from '$lib/api/client';
-import type { BucketConnection, DatabaseConnection } from '$lib/types/connections';
-import type { EnvironmentMetrics, ProjectStorage, ServiceStorage } from '$lib/types/metrics';
-import type { Run } from '$lib/types/runs';
+import { apiFetch } from '#lib/api/client.ts';
+import type { BucketConnection, DatabaseConnection } from '#lib/types/connections.ts';
+import type { EnvironmentMetrics, ProjectStorage, ServiceStorage } from '#lib/types/metrics.ts';
+import type { Run } from '#lib/types/runs.ts';
 import type { PageLoad } from './$types';
 
 // The stored storage key of one service: databases and buckets carry their

@@ -1,9 +1,9 @@
 <script lang="ts">
 	import ChevronRight from '@lucide/svelte/icons/chevron-right';
-	import { formatDuration } from '$lib/format';
-	import type { ServiceProgress } from '$lib/models/runservices';
-	import { SERVICE_KIND_META } from '$lib/service-types';
-	import { clock } from '$lib/stores/clock.svelte';
+	import { formatDuration } from '#lib/format.ts';
+	import type { ServiceProgress } from '#lib/models/runservices.ts';
+	import { SERVICE_KIND_META } from '#lib/service-types.ts';
+	import { clock } from '#lib/stores/clock.svelte.ts';
 	import RunStepTree from './RunStepTree.svelte';
 	import { deferredTLS, STEP_META } from './stepmeta';
 

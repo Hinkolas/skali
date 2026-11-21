@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { HEALTH_META } from '$lib/service-types';
-	import type { ServiceHealth } from '$lib/types/project';
+	import { HEALTH_META } from '#lib/service-types.ts';
+	import type { ServiceHealth } from '#lib/types/project.ts';
 
 	// Service health from the status projection (unknown/progressing/
 	// healthy/degraded/unhealthy).

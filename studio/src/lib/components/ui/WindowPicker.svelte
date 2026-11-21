@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { MetricsWindow } from '$lib/types/metrics';
+	import type { MetricsWindow } from '#lib/types/metrics.ts';
 
 	// The metrics window switch: the three fixed windows the API serves.
 	let { value, onchange }: { value: MetricsWindow; onchange: (window: MetricsWindow) => void } =

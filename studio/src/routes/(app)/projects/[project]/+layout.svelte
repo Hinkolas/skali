@@ -7,13 +7,13 @@
 	import { onDestroy, untrack, type Snippet } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { envRuns } from '$lib/stores/envruns.svelte';
-	import { envStatus } from '$lib/stores/envstatus.svelte';
-	import { toast } from '$lib/stores/toast.svelte';
-	import { followProject } from '$lib/projectstream';
-	import LockedEnvironment from '$lib/components/access/LockedEnvironment.svelte';
-	import EnvironmentDeleting from '$lib/components/project/EnvironmentDeleting.svelte';
-	import ProjectDeleting from '$lib/components/project/ProjectDeleting.svelte';
+	import { envRuns } from '#lib/stores/envruns.svelte.ts';
+	import { envStatus } from '#lib/stores/envstatus.svelte.ts';
+	import { toast } from '#lib/stores/toast.svelte.ts';
+	import { followProject } from '#lib/projectstream.ts';
+	import LockedEnvironment from '#lib/components/access/LockedEnvironment.svelte';
+	import EnvironmentDeleting from '#lib/components/project/EnvironmentDeleting.svelte';
+	import ProjectDeleting from '#lib/components/project/ProjectDeleting.svelte';
 	import type { LayoutData } from './$types';
 
 	let { data, children }: { data: LayoutData; children: Snippet } = $props();
@@ -72,11 +72,10 @@
 						? `No environment named ${missing}; showing ${fallback}`
 						: `No environment named ${missing}`
 				);
-			const url = new URL(page.url);
+			const url = new URL(page.url.href);
 			if (fallback) url.searchParams.set('env', fallback);
 			else url.searchParams.delete('env');
-			// eslint-disable-next-line svelte/no-navigation-without-resolve -- same page, only ?env= rewritten
-			void goto(url, { replaceState: true, noScroll: true, keepFocus: true });
+			void goto(url, { replace: true, reset: false });
 		});
 	});
 </script>

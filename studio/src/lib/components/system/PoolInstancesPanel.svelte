@@ -1,14 +1,14 @@
 <script lang="ts">
-	import { formatBytes, formatDateTime } from '$lib/format';
+	import { formatBytes, formatDateTime } from '#lib/format.ts';
 	import {
 		POOL_CLASS_TEXT,
 		memberSummary,
 		poolBudgetText,
 		poolPhase,
 		type DatabasePoolDetail
-	} from '$lib/types/pools';
-	import Card from '$lib/components/ui/Card.svelte';
-	import KeyValueRow from '$lib/components/ui/KeyValueRow.svelte';
+	} from '#lib/types/pools.ts';
+	import Card from '#lib/components/ui/Card.svelte';
+	import KeyValueRow from '#lib/components/ui/KeyValueRow.svelte';
 	import PoolMemberList from './PoolMemberList.svelte';
 
 	// The server behind one pool: what it runs, how it is sized, and the

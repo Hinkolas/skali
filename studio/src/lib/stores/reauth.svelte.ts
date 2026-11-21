@@ -4,10 +4,10 @@
 // Pushed onto the modal stack so it layers above whatever gated modal
 // triggered the call instead of replacing it.
 
-import { modal } from '$lib/stores/modal.svelte';
+import { modal } from '#lib/stores/modal.svelte.ts';
 import ReauthModal, {
 	modalOptions as reauthModalOptions
-} from '$lib/components/auth/ReauthModal.svelte';
+} from '#lib/components/auth/ReauthModal.svelte';
 
 let inflight: Promise<boolean> | null = null;
 

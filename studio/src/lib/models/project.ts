@@ -1,5 +1,5 @@
-import type { Project, ServiceHealth, SummaryEnvironment } from '$lib/types/project';
-import { relativeTime } from '$lib/format';
+import type { Project, ServiceHealth, SummaryEnvironment } from '#lib/types/project.ts';
+import { relativeTime } from '#lib/format.ts';
 
 // Rollups over a project summary, shared by every listing of projects
 // (cards, list rows) so the two never disagree.

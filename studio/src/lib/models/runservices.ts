@@ -3,8 +3,8 @@
 // CLI's deploy view lists them. Steps without a service are the
 // environment's own work (validate, render, prune, verify, activate).
 
-import type { ServiceKind } from '$lib/service-types';
-import type { Step, StepStatus } from '$lib/types/runs';
+import type { ServiceKind } from '#lib/service-types.ts';
+import type { Step, StepStatus } from '#lib/types/runs.ts';
 
 export interface ServiceProgress {
 	/** Dotted name, e.g. "applications.web"; null for the environment's own work. */

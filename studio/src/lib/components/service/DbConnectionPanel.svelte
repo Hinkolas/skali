@@ -1,22 +1,22 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { api, ApiError } from '$lib/api/client';
-	import { requiredTitle, roleAtLeast } from '$lib/access';
-	import type { Environment } from '$lib/types/project';
-	import type { DatabaseView } from '$lib/models/service';
-	import type { DatabaseConnection, DatabaseCredentials } from '$lib/types/connections';
-	import { modal } from '$lib/stores/modal.svelte';
-	import { toast } from '$lib/stores/toast.svelte';
-	import Button from '$lib/components/ui/Button.svelte';
-	import Card from '$lib/components/ui/Card.svelte';
-	import CopyField from '$lib/components/ui/CopyField.svelte';
+	import { api, ApiError } from '#lib/api/client.ts';
+	import { requiredTitle, roleAtLeast } from '#lib/access.ts';
+	import type { Environment } from '#lib/types/project.ts';
+	import type { DatabaseView } from '#lib/models/service.ts';
+	import type { DatabaseConnection, DatabaseCredentials } from '#lib/types/connections.ts';
+	import { modal } from '#lib/stores/modal.svelte.ts';
+	import { toast } from '#lib/stores/toast.svelte.ts';
+	import Button from '#lib/components/ui/Button.svelte';
+	import Card from '#lib/components/ui/Card.svelte';
+	import CopyField from '#lib/components/ui/CopyField.svelte';
 	import RevealCredentialsModal, {
 		modalOptions as revealModalOptions
 	} from './RevealCredentialsModal.svelte';
 	import RotateCredentialsModal, {
 		modalOptions as rotateModalOptions
 	} from './RotateCredentialsModal.svelte';
-	import { formatDateTime } from '$lib/format';
+	import { formatDateTime } from '#lib/format.ts';
 
 	let {
 		service,

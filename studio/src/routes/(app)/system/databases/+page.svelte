@@ -2,13 +2,13 @@
 	import { resolve } from '$app/paths';
 	import ChevronRight from '@lucide/svelte/icons/chevron-right';
 	import Database from '@lucide/svelte/icons/database';
-	import PageHeader from '$lib/components/shell/PageHeader.svelte';
-	import Button from '$lib/components/ui/Button.svelte';
-	import EmptyState from '$lib/components/ui/EmptyState.svelte';
-	import Pill from '$lib/components/ui/Pill.svelte';
-	import Table from '$lib/components/ui/Table.svelte';
-	import { formatBytes } from '$lib/format';
-	import { poolConnections, poolPhase, type DatabasePool } from '$lib/types/pools';
+	import PageHeader from '#lib/components/shell/PageHeader.svelte';
+	import Button from '#lib/components/ui/Button.svelte';
+	import EmptyState from '#lib/components/ui/EmptyState.svelte';
+	import Pill from '#lib/components/ui/Pill.svelte';
+	import Table from '#lib/components/ui/Table.svelte';
+	import { formatBytes } from '#lib/format.ts';
+	import { poolConnections, poolPhase, type DatabasePool } from '#lib/types/pools.ts';
 	import type { PageData } from './$types';
 
 	// Every managed pool with its budget; each row opens the pool's own

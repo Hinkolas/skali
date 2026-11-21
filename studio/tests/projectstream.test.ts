@@ -7,7 +7,7 @@ const navigation = vi.hoisted(() => ({
 const toast = vi.hoisted(() => ({ info: vi.fn(), success: vi.fn() }));
 vi.mock('$app/navigation', () => navigation);
 vi.mock('$app/paths', () => ({ resolve: (path: string) => path }));
-vi.mock('$lib/stores/toast.svelte', () => ({ toast }));
+vi.mock('#lib/stores/toast.svelte.ts', () => ({ toast }));
 
 import { followProject } from '../src/lib/projectstream';
 

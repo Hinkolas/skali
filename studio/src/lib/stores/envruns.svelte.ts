@@ -4,8 +4,8 @@
 // drives sync() next to the status stream. Consumers read of(envId) and use
 // their load's seed until the first document arrives.
 
-import { openStream, type StreamHandle } from '$lib/sse';
-import { activeRun, type Run, type RunsList } from '$lib/types/runs';
+import { openStream, type StreamHandle } from '#lib/sse.ts';
+import { activeRun, type Run, type RunsList } from '#lib/types/runs.ts';
 
 class EnvRunsStore {
 	private runs = $state<Run[] | null>(null);

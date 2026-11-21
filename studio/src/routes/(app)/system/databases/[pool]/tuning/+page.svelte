@@ -1,5 +1,5 @@
 <script lang="ts">
-	import PoolTuningForm from '$lib/components/system/PoolTuningForm.svelte';
+	import PoolTuningForm from '#lib/components/system/PoolTuningForm.svelte';
 	import type { PageData } from './$types';
 
 	// The key remounts the form on the pool the layout reloaded after a

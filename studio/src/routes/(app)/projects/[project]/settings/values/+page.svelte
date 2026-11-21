@@ -2,24 +2,24 @@
 	import { invalidateAll } from '$app/navigation';
 	import KeyRound from '@lucide/svelte/icons/key-round';
 	import Lock from '@lucide/svelte/icons/lock';
-	import { api, ApiError } from '$lib/api/client';
-	import { requiredTitle, roleAtLeast } from '$lib/access';
+	import { api, ApiError } from '#lib/api/client.ts';
+	import { requiredTitle, roleAtLeast } from '#lib/access.ts';
 	import { resolve } from '$app/paths';
-	import type { Expression } from '$lib/types/definition';
-	import type { StageValuesResult } from '$lib/types/values';
-	import { withEnv } from '$lib/urls';
-	import { toast } from '$lib/stores/toast.svelte';
-	import { dialog } from '$lib/stores/dialog.svelte';
+	import type { Expression } from '#lib/types/definition.ts';
+	import type { StageValuesResult } from '#lib/types/values.ts';
+	import { withEnv } from '#lib/urls.ts';
+	import { toast } from '#lib/stores/toast.svelte.ts';
+	import { dialog } from '#lib/stores/dialog.svelte.ts';
 	import Ellipsis from '@lucide/svelte/icons/ellipsis';
-	import PageHeader from '$lib/components/shell/PageHeader.svelte';
-	import Button from '$lib/components/ui/Button.svelte';
-	import Card from '$lib/components/ui/Card.svelte';
-	import EmptyState from '$lib/components/ui/EmptyState.svelte';
-	import Pill from '$lib/components/ui/Pill.svelte';
-	import Menu from '$lib/components/ui/Menu.svelte';
-	import MenuItem from '$lib/components/ui/MenuItem.svelte';
-	import SecretInput from '$lib/components/ui/SecretInput.svelte';
-	import SettingsNav from '$lib/components/project/SettingsNav.svelte';
+	import PageHeader from '#lib/components/shell/PageHeader.svelte';
+	import Button from '#lib/components/ui/Button.svelte';
+	import Card from '#lib/components/ui/Card.svelte';
+	import EmptyState from '#lib/components/ui/EmptyState.svelte';
+	import Pill from '#lib/components/ui/Pill.svelte';
+	import Menu from '#lib/components/ui/Menu.svelte';
+	import MenuItem from '#lib/components/ui/MenuItem.svelte';
+	import SecretInput from '#lib/components/ui/SecretInput.svelte';
+	import SettingsNav from '#lib/components/project/SettingsNav.svelte';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -214,7 +214,7 @@
 							<span class="font-mono text-text-primary truncate text-md">{variable.name}</span>
 							<div class="flex flex-wrap items-center gap-1">
 								{#each users as app (app)}
-									<!-- eslint-disable svelte/no-navigation-without-resolve -- path built with resolve(), env appended by $lib/urls -->
+									<!-- eslint-disable svelte/no-navigation-without-resolve -- path built with resolve(), env appended by #lib/urls -->
 									<a
 										href={withEnv(
 											resolve('/(app)/projects/[project]/services/[service]', {

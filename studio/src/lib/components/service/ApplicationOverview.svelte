@@ -1,12 +1,12 @@
 <script lang="ts">
-	import type { ApplicationView, ServiceView } from '$lib/models/service';
-	import { usageLimits, usageStats } from '$lib/models/usage';
-	import type { StatCardData } from '$lib/models/view';
-	import type { EnvironmentMetrics, ServiceStorage } from '$lib/types/metrics';
-	import type { Run } from '$lib/types/runs';
-	import { envStatus } from '$lib/stores/envstatus.svelte';
-	import Skeleton from '$lib/components/ui/Skeleton.svelte';
-	import StatCard from '$lib/components/ui/StatCard.svelte';
+	import type { ApplicationView, ServiceView } from '#lib/models/service.ts';
+	import { usageLimits, usageStats } from '#lib/models/usage.ts';
+	import type { StatCardData } from '#lib/models/view.ts';
+	import type { EnvironmentMetrics, ServiceStorage } from '#lib/types/metrics.ts';
+	import type { Run } from '#lib/types/runs.ts';
+	import { envStatus } from '#lib/stores/envstatus.svelte.ts';
+	import Skeleton from '#lib/components/ui/Skeleton.svelte';
+	import StatCard from '#lib/components/ui/StatCard.svelte';
 	import ApplicationStoragePanel from './ApplicationStoragePanel.svelte';
 	import ConnectedServicesPanel from './ConnectedServicesPanel.svelte';
 	import RoutesPanel from './RoutesPanel.svelte';

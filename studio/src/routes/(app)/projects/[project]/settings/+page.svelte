@@ -7,57 +7,57 @@
 	import Lock from '@lucide/svelte/icons/lock';
 	import Plus from '@lucide/svelte/icons/plus';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
-	import { api, ApiError } from '$lib/api/client';
-	import { isInstanceAdmin, requiredTitle, roleAtLeast } from '$lib/access';
-	import { SCHEDULE_IDLE } from '$lib/backups';
-	import { describeCron, describeSeconds } from '$lib/cron';
+	import { api, ApiError } from '#lib/api/client.ts';
+	import { isInstanceAdmin, requiredTitle, roleAtLeast } from '#lib/access.ts';
+	import { SCHEDULE_IDLE } from '#lib/backups.ts';
+	import { describeCron, describeSeconds } from '#lib/cron.ts';
 	import {
 		confirmDeleteEnvironment,
 		confirmStopEnvironment,
 		DELETE_ENVIRONMENT_TITLE,
 		STOP_ENVIRONMENT_TITLE,
 		STOPPED_ENVIRONMENT_TITLE
-	} from '$lib/environments';
-	import { describeActor, formatDateTime, relativeTime } from '$lib/format';
-	import { hasStatefulServices } from '$lib/models/service';
-	import { HEALTH_META } from '$lib/service-types';
-	import { withEnv } from '$lib/urls';
-	import type { RevisionSummary } from '$lib/types/revisions';
-	import { dialog } from '$lib/stores/dialog.svelte';
-	import { envStatus } from '$lib/stores/envstatus.svelte';
-	import { modal } from '$lib/stores/modal.svelte';
-	import { sidepanel } from '$lib/stores/sidepanel.svelte';
-	import { toast } from '$lib/stores/toast.svelte';
-	import { users } from '$lib/stores/users.svelte';
-	import PageHeader from '$lib/components/shell/PageHeader.svelte';
-	import Button from '$lib/components/ui/Button.svelte';
-	import Card from '$lib/components/ui/Card.svelte';
-	import Field from '$lib/components/ui/Field.svelte';
-	import KeyValueRow from '$lib/components/ui/KeyValueRow.svelte';
-	import Menu from '$lib/components/ui/Menu.svelte';
-	import MenuItem from '$lib/components/ui/MenuItem.svelte';
-	import MenuSeparator from '$lib/components/ui/MenuSeparator.svelte';
-	import Pill from '$lib/components/ui/Pill.svelte';
-	import TextInput from '$lib/components/ui/TextInput.svelte';
-	import RunDetailPanel from '$lib/components/run/RunDetailPanel.svelte';
+	} from '#lib/environments.ts';
+	import { describeActor, formatDateTime, relativeTime } from '#lib/format.ts';
+	import { hasStatefulServices } from '#lib/models/service.ts';
+	import { HEALTH_META } from '#lib/service-types.ts';
+	import { withEnv } from '#lib/urls.ts';
+	import type { RevisionSummary } from '#lib/types/revisions.ts';
+	import { dialog } from '#lib/stores/dialog.svelte.ts';
+	import { envStatus } from '#lib/stores/envstatus.svelte.ts';
+	import { modal } from '#lib/stores/modal.svelte.ts';
+	import { sidepanel } from '#lib/stores/sidepanel.svelte.ts';
+	import { toast } from '#lib/stores/toast.svelte.ts';
+	import { users } from '#lib/stores/users.svelte.ts';
+	import PageHeader from '#lib/components/shell/PageHeader.svelte';
+	import Button from '#lib/components/ui/Button.svelte';
+	import Card from '#lib/components/ui/Card.svelte';
+	import Field from '#lib/components/ui/Field.svelte';
+	import KeyValueRow from '#lib/components/ui/KeyValueRow.svelte';
+	import Menu from '#lib/components/ui/Menu.svelte';
+	import MenuItem from '#lib/components/ui/MenuItem.svelte';
+	import MenuSeparator from '#lib/components/ui/MenuSeparator.svelte';
+	import Pill from '#lib/components/ui/Pill.svelte';
+	import TextInput from '#lib/components/ui/TextInput.svelte';
+	import RunDetailPanel from '#lib/components/run/RunDetailPanel.svelte';
 	import DeleteProjectModal, {
 		modalOptions as deleteProjectModalOptions
-	} from '$lib/components/project/DeleteProjectModal.svelte';
+	} from '#lib/components/project/DeleteProjectModal.svelte';
 	import NewEnvironmentModal, {
 		modalOptions as newEnvironmentModalOptions
-	} from '$lib/components/project/NewEnvironmentModal.svelte';
-	import SettingsNav from '$lib/components/project/SettingsNav.svelte';
+	} from '#lib/components/project/NewEnvironmentModal.svelte';
+	import SettingsNav from '#lib/components/project/SettingsNav.svelte';
 	import EnvironmentSettingsModal, {
 		modalOptions as environmentSettingsModalOptions
-	} from '$lib/components/access/EnvironmentSettingsModal.svelte';
-	import type { AuthUser } from '$lib/types/auth';
+	} from '#lib/components/access/EnvironmentSettingsModal.svelte';
+	import type { AuthUser } from '#lib/types/auth.ts';
 	import {
 		ENVIRONMENT_STATE_LABEL,
 		type Environment,
 		type ServiceHealth
-	} from '$lib/types/project';
-	import type { Target } from '$lib/types/revisions';
-	import { runKindLabel, type Run } from '$lib/types/runs';
+	} from '#lib/types/project.ts';
+	import type { Target } from '#lib/types/revisions.ts';
+	import { runKindLabel, type Run } from '#lib/types/runs.ts';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -416,7 +416,7 @@
 								<Lock size={13} class="text-text-ghost flex-none" />
 								<span class="font-mono text-text-primary text-md">{environment.name}</span>
 							{:else}
-								<!-- eslint-disable svelte/no-navigation-without-resolve -- same page, env switched by $lib/urls -->
+								<!-- eslint-disable svelte/no-navigation-without-resolve -- same page, env switched by #lib/urls -->
 								<a
 									href={withEnv(page.url.pathname, environment.name)}
 									class="font-mono text-text-primary text-md hover:underline"

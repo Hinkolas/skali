@@ -1,8 +1,8 @@
 <script lang="ts">
-	import PageHeader from '$lib/components/shell/PageHeader.svelte';
-	import PasswordCard from '$lib/components/security/PasswordCard.svelte';
-	import TwoFactorCard from '$lib/components/security/TwoFactorCard.svelte';
-	import SessionsCard from '$lib/components/security/SessionsCard.svelte';
+	import PageHeader from '#lib/components/shell/PageHeader.svelte';
+	import PasswordCard from '#lib/components/security/PasswordCard.svelte';
+	import TwoFactorCard from '#lib/components/security/TwoFactorCard.svelte';
+	import SessionsCard from '#lib/components/security/SessionsCard.svelte';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();

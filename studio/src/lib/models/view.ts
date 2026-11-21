@@ -1,4 +1,4 @@
-import type { ChartPoint } from '$lib/charts';
+import type { ChartPoint } from '#lib/charts.ts';
 
 // Pure UI shapes shared across pages, independent of any data source.
 

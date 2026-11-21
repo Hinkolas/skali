@@ -1,18 +1,18 @@
 <script lang="ts">
 	import Gauge from '@lucide/svelte/icons/gauge';
-	import { api } from '$lib/api/client';
-	import { pollMetrics } from '$lib/metrics-poll.svelte';
-	import { poolCharts, poolStats } from '$lib/models/pools';
-	import type { MetricsWindow } from '$lib/types/metrics';
-	import type { PoolMetrics } from '$lib/types/pools';
-	import PoolConnectionsCard from '$lib/components/system/PoolConnectionsCard.svelte';
-	import PoolDatabasesCard from '$lib/components/system/PoolDatabasesCard.svelte';
-	import PoolInstancesPanel from '$lib/components/system/PoolInstancesPanel.svelte';
-	import Card from '$lib/components/ui/Card.svelte';
-	import EmptyState from '$lib/components/ui/EmptyState.svelte';
-	import StatCard from '$lib/components/ui/StatCard.svelte';
-	import TimeSeriesChart from '$lib/components/ui/TimeSeriesChart.svelte';
-	import WindowPicker from '$lib/components/ui/WindowPicker.svelte';
+	import { api } from '#lib/api/client.ts';
+	import { pollMetrics } from '#lib/metrics-poll.svelte.ts';
+	import { poolCharts, poolStats } from '#lib/models/pools.ts';
+	import type { MetricsWindow } from '#lib/types/metrics.ts';
+	import type { PoolMetrics } from '#lib/types/pools.ts';
+	import PoolConnectionsCard from '#lib/components/system/PoolConnectionsCard.svelte';
+	import PoolDatabasesCard from '#lib/components/system/PoolDatabasesCard.svelte';
+	import PoolInstancesPanel from '#lib/components/system/PoolInstancesPanel.svelte';
+	import Card from '#lib/components/ui/Card.svelte';
+	import EmptyState from '#lib/components/ui/EmptyState.svelte';
+	import StatCard from '#lib/components/ui/StatCard.svelte';
+	import TimeSeriesChart from '#lib/components/ui/TimeSeriesChart.svelte';
+	import WindowPicker from '#lib/components/ui/WindowPicker.svelte';
 	import type { PageData } from './$types';
 
 	// The pool's overview: usage headlines, the instances and the databases

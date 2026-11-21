@@ -2,8 +2,8 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { api, apiFetch } from '../src/lib/api/client';
 
 const modal = vi.hoisted(() => ({ push: vi.fn() }));
-vi.mock('$lib/stores/modal.svelte', () => ({ modal }));
-vi.mock('$lib/components/auth/ReauthModal.svelte', () => ({
+vi.mock('#lib/stores/modal.svelte.ts', () => ({ modal }));
+vi.mock('#lib/components/auth/ReauthModal.svelte', () => ({
 	default: {},
 	modalOptions: {}
 }));

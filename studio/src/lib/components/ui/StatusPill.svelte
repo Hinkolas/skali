@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { HEALTH_META } from '$lib/service-types';
-	import type { ServiceHealth } from '$lib/types/project';
-	import type { HealthDiagnostic } from '$lib/types/status';
+	import { HEALTH_META } from '#lib/service-types.ts';
+	import type { ServiceHealth } from '#lib/types/project.ts';
+	import type { HealthDiagnostic } from '#lib/types/status.ts';
 	import StatusDot from './StatusDot.svelte';
 	import Tooltip from './Tooltip.svelte';
 

@@ -1,14 +1,14 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
-	import type { ServiceView } from '$lib/models/service';
-	import type { Project } from '$lib/types/project';
-	import { envStatus } from '$lib/stores/envstatus.svelte';
-	import { formatBytes } from '$lib/format';
-	import { withEnv } from '$lib/urls';
-	import Skeleton from '$lib/components/ui/Skeleton.svelte';
-	import StatusPill from '$lib/components/ui/StatusPill.svelte';
-	import TypeBadge from '$lib/components/ui/TypeBadge.svelte';
+	import type { ServiceView } from '#lib/models/service.ts';
+	import type { Project } from '#lib/types/project.ts';
+	import { envStatus } from '#lib/stores/envstatus.svelte.ts';
+	import { formatBytes } from '#lib/format.ts';
+	import { withEnv } from '#lib/urls.ts';
+	import Skeleton from '#lib/components/ui/Skeleton.svelte';
+	import StatusPill from '#lib/components/ui/StatusPill.svelte';
+	import TypeBadge from '#lib/components/ui/TypeBadge.svelte';
 
 	let { project, service }: { project: Project; service: ServiceView } = $props();
 
@@ -30,7 +30,7 @@
 	});
 </script>
 
-<!-- eslint-disable svelte/no-navigation-without-resolve -- path built with resolve(), env appended by $lib/urls -->
+<!-- eslint-disable svelte/no-navigation-without-resolve -- path built with resolve(), env appended by #lib/urls -->
 <a
 	href={withEnv(
 		resolve('/(app)/projects/[project]/services/[service]', {

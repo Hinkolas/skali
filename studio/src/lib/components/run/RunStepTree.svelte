@@ -1,10 +1,10 @@
 <script lang="ts">
-	import { formatDuration } from '$lib/format';
-	import { clock } from '$lib/stores/clock.svelte';
+	import { formatDuration } from '#lib/format.ts';
+	import { clock } from '#lib/stores/clock.svelte.ts';
 	import RunStepTree from './RunStepTree.svelte';
 	import StepLogView from './StepLogView.svelte';
 	import BuildInsightsView from './BuildInsightsView.svelte';
-	import { isBuildStep, type Step } from '$lib/types/runs';
+	import { isBuildStep, type Step } from '#lib/types/runs.ts';
 	import { deferredTLS, STEP_META } from './stepmeta';
 
 	let { steps, depth = 0 }: { steps: Step[]; depth?: number } = $props();

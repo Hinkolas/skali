@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { StatCardData } from '$lib/models/view';
+	import type { StatCardData } from '#lib/models/view.ts';
 	import Card from './Card.svelte';
 	import ProgressBar from './ProgressBar.svelte';
 	import Sparkline from './Sparkline.svelte';

@@ -2,8 +2,8 @@
 // literal so Tailwind v4 can see them statically. This file is the home of
 // the kind/status unions.
 
-import type { NavIcon } from '$lib/navigation';
-import type { ServiceHealth } from '$lib/types/project';
+import type { NavIcon } from '#lib/navigation.ts';
+import type { ServiceHealth } from '#lib/types/project.ts';
 
 import Container from '@lucide/svelte/icons/container';
 import Database from '@lucide/svelte/icons/database';

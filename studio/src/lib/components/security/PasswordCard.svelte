@@ -1,12 +1,12 @@
 <script lang="ts">
 	import KeyRound from '@lucide/svelte/icons/key-round';
 	import { invalidateAll } from '$app/navigation';
-	import { modal } from '$lib/stores/modal.svelte';
-	import Card from '$lib/components/ui/Card.svelte';
-	import Button from '$lib/components/ui/Button.svelte';
+	import { modal } from '#lib/stores/modal.svelte.ts';
+	import Card from '#lib/components/ui/Card.svelte';
+	import Button from '#lib/components/ui/Button.svelte';
 	import ChangePasswordModal, {
 		modalOptions as changePasswordOptions
-	} from '$lib/components/security/ChangePasswordModal.svelte';
+	} from '#lib/components/security/ChangePasswordModal.svelte';
 
 	async function changePassword() {
 		if (await modal.open<boolean>(ChangePasswordModal, {}, changePasswordOptions).result) {

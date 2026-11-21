@@ -1,5 +1,5 @@
-import { apiFetch } from '$lib/api/client';
-import type { EnvironmentMetrics, ProjectStorage } from '$lib/types/metrics';
+import { apiFetch } from '#lib/api/client.ts';
+import type { EnvironmentMetrics, ProjectStorage } from '#lib/types/metrics.ts';
 import type { PageLoad } from './$types';
 
 // Usage tiles for the selected environment plus the project's current

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { decimate, type ChartPoint } from '$lib/charts';
+	import { decimate, type ChartPoint } from '#lib/charts.ts';
 
 	// Axis-free trend preview for stat tiles: a 1.5px line over an area that
 	// fades to the card surface. Gaps (null) break the line, same as the

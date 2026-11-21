@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import SectionHeader from '$lib/components/SectionHeader.svelte';
-	import { reveal } from '$lib/motion';
+	import SectionHeader from '#lib/components/SectionHeader.svelte';
+	import { reveal } from '#lib/motion.ts';
 
 	const steps = [
 		{

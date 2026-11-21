@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
-	import ServiceHeader from '$lib/components/service/ServiceHeader.svelte';
-	import ServiceTabs from '$lib/components/service/ServiceTabs.svelte';
+	import ServiceHeader from '#lib/components/service/ServiceHeader.svelte';
+	import ServiceTabs from '#lib/components/service/ServiceTabs.svelte';
 	import type { LayoutData } from './$types';
 
 	let { data, children }: { data: LayoutData; children: Snippet } = $props();

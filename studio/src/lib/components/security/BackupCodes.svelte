@@ -1,7 +1,7 @@
 <script lang="ts">
 	import Copy from '@lucide/svelte/icons/copy';
 	import Check from '@lucide/svelte/icons/check';
-	import { toast } from '$lib/stores/toast.svelte';
+	import { toast } from '#lib/stores/toast.svelte.ts';
 
 	// The one-time backup-code reveal: a mono grid plus copy-all. Used by both
 	// the enrollment modal and the regenerate flow.

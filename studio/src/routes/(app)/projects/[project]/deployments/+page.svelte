@@ -1,12 +1,12 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import { afterNavigate, replaceState } from '$app/navigation';
+	import { afterNavigate, goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import Rocket from '@lucide/svelte/icons/rocket';
-	import { relativeTime } from '$lib/format';
-	import { readPref, writePref } from '$lib/prefs';
-	import { envRuns } from '$lib/stores/envruns.svelte';
-	import { sidepanel } from '$lib/stores/sidepanel.svelte';
+	import { relativeTime } from '#lib/format.ts';
+	import { readPref, writePref } from '#lib/prefs.ts';
+	import { envRuns } from '#lib/stores/envruns.svelte.ts';
+	import { sidepanel } from '#lib/stores/sidepanel.svelte.ts';
 	import {
 		activeRun,
 		followRun,
@@ -14,13 +14,13 @@
 		runUnsettled,
 		type FollowedRun,
 		type RunKind
-	} from '$lib/types/runs';
-	import PageHeader from '$lib/components/shell/PageHeader.svelte';
-	import Card from '$lib/components/ui/Card.svelte';
-	import EmptyState from '$lib/components/ui/EmptyState.svelte';
-	import Segmented from '$lib/components/ui/Segmented.svelte';
-	import RunDetailPanel from '$lib/components/run/RunDetailPanel.svelte';
-	import RunsSection from '$lib/components/run/RunsSection.svelte';
+	} from '#lib/types/runs.ts';
+	import PageHeader from '#lib/components/shell/PageHeader.svelte';
+	import Card from '#lib/components/ui/Card.svelte';
+	import EmptyState from '#lib/components/ui/EmptyState.svelte';
+	import Segmented from '#lib/components/ui/Segmented.svelte';
+	import RunDetailPanel from '#lib/components/run/RunDetailPanel.svelte';
+	import RunsSection from '#lib/components/run/RunsSection.svelte';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -74,7 +74,8 @@
 	// runs again, and page.url (also what Back restores) keeps the navigated
 	// URL: the location is the one to read.
 	let here = $state<string | null>(null);
-	afterNavigate(() => {
+	afterNavigate(({ shallow, type }) => {
+		if (shallow && type === 'goto') return;
 		const url = new URL(window.location.href);
 		here = url.pathname;
 		const runId = url.searchParams.get('run');
@@ -100,8 +101,7 @@
 			if (url.pathname !== path || url.searchParams.get('run') === runId) return;
 			if (runId) url.searchParams.set('run', runId);
 			else url.searchParams.delete('run');
-			// eslint-disable-next-line svelte/no-navigation-without-resolve -- same page, only ?run= rewritten
-			replaceState(url, page.state);
+			goto(url, { shallow: true, replace: true, state: page.state });
 		});
 	});
 

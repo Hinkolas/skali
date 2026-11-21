@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { fade } from 'svelte/transition';
 	import { cubicOut, quintOut } from 'svelte/easing';
-	import { modal, type ModalArchetype } from '$lib/stores/modal.svelte';
+	import { modal, type ModalArchetype } from '#lib/stores/modal.svelte.ts';
 
 	// Global host for the component-based modal system. Mounted once in the root
 	// layout; renders the modal stack (`modal.open`/`modal.push`). The shell

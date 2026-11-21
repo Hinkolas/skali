@@ -1,13 +1,13 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import Server from '@lucide/svelte/icons/server';
-	import PageHeader from '$lib/components/shell/PageHeader.svelte';
-	import EmptyState from '$lib/components/ui/EmptyState.svelte';
-	import StackedBar from '$lib/components/ui/StackedBar.svelte';
-	import Table from '$lib/components/ui/Table.svelte';
-	import { NODE_ROLE_META, NODE_STATE_META, STORAGE_CATEGORY_META } from '$lib/service-types';
-	import { formatBytes, formatCores, relativeTime } from '$lib/format';
-	import { lastValue, type NodeStorage } from '$lib/types/metrics';
+	import PageHeader from '#lib/components/shell/PageHeader.svelte';
+	import EmptyState from '#lib/components/ui/EmptyState.svelte';
+	import StackedBar from '#lib/components/ui/StackedBar.svelte';
+	import Table from '#lib/components/ui/Table.svelte';
+	import { NODE_ROLE_META, NODE_STATE_META, STORAGE_CATEGORY_META } from '#lib/service-types.ts';
+	import { formatBytes, formatCores, relativeTime } from '#lib/format.ts';
+	import { lastValue, type NodeStorage } from '#lib/types/metrics.ts';
 	import type { PageData } from './$types';
 
 	// Node rows come from the (app) shell layout load; this page adds usage and

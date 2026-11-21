@@ -63,7 +63,7 @@
 
 	<div class="mt-6 flex items-center gap-2.5">
 		<Button variant="secondary" onclick={() => history.back()}>Go back</Button>
-		<Button variant="primary" href={resolve('/')}>Go to home</Button>
+		<Button variant="primary" href={resolve('')}>Go to home</Button>
 	</div>
 
 	<div class="font-mono text-text-faint mt-7 text-xs">{page.url.pathname}</div>

@@ -6,10 +6,10 @@
 // and consumers show a pending state until it lands (envStatus.pending).
 
 import { error } from '@sveltejs/kit';
-import { apiFetch } from '$lib/api/client';
-import { servicesFromDefinition } from '$lib/models/service';
-import type { DraftResponse } from '$lib/types/definition';
-import type { Environment } from '$lib/types/project';
+import { apiFetch } from '#lib/api/client.ts';
+import { servicesFromDefinition } from '#lib/models/service.ts';
+import type { DraftResponse } from '#lib/types/definition.ts';
+import type { Environment } from '#lib/types/project.ts';
 import type { LayoutLoad } from './$types';
 
 export const load: LayoutLoad = async ({ params, url, parent, fetch }) => {

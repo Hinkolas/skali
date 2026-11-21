@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { updated } from '$app/state';
 	import RefreshCw from '@lucide/svelte/icons/refresh-cw';
-	import Button from '$lib/components/ui/Button.svelte';
+	import Button from '#lib/components/ui/Button.svelte';
 
 	// Shown once SvelteKit's version poll sees a newer bundle than the one
 	// this tab runs: a platform update replaced skalid, and with it the

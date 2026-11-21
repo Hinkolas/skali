@@ -1,21 +1,21 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
-	import type { Project } from '$lib/types/project';
-	import { relativeTime } from '$lib/format';
-	import { HEALTH_META } from '$lib/service-types';
+	import type { Project } from '#lib/types/project.ts';
+	import { relativeTime } from '#lib/format.ts';
+	import { HEALTH_META } from '#lib/service-types.ts';
 	import {
 		projectEnvironmentRollup,
 		projectHealthTitle,
 		projectServiceCount,
 		projectUpdatedAt,
 		projectWorstHealth
-	} from '$lib/models/project';
-	import EnvironmentRollup from '$lib/components/project/EnvironmentRollup.svelte';
-	import Pill from '$lib/components/ui/Pill.svelte';
-	import Skeleton from '$lib/components/ui/Skeleton.svelte';
-	import Table from '$lib/components/ui/Table.svelte';
-	import TypeBadge from '$lib/components/ui/TypeBadge.svelte';
+	} from '#lib/models/project.ts';
+	import EnvironmentRollup from '#lib/components/project/EnvironmentRollup.svelte';
+	import Pill from '#lib/components/ui/Pill.svelte';
+	import Skeleton from '#lib/components/ui/Skeleton.svelte';
+	import Table from '#lib/components/ui/Table.svelte';
+	import TypeBadge from '#lib/components/ui/TypeBadge.svelte';
 
 	// The dense counterpart of the card grid: one row per project, the same
 	// facts. Follows the Table contract: grid cells on a wide pane, a

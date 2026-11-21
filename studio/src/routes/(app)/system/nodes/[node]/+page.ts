@@ -1,8 +1,8 @@
 import { error } from '@sveltejs/kit';
 import { resolve } from '$app/paths';
-import { apiFetch } from '$lib/api/client';
-import type { NodeMetrics, NodesStorage } from '$lib/types/metrics';
-import type { UpdateStatus } from '$lib/types/updates';
+import { apiFetch } from '#lib/api/client.ts';
+import type { NodeMetrics, NodesStorage } from '#lib/types/metrics.ts';
+import type { UpdateStatus } from '#lib/types/updates.ts';
 import type { PageLoad } from './$types';
 
 // One node, admin only like every system page. The node itself comes from

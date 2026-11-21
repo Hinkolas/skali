@@ -7,30 +7,30 @@
 	import RotateCw from '@lucide/svelte/icons/rotate-cw';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import { page } from '$app/state';
-	import { api, ApiError } from '$lib/api/client';
-	import { requiredTitle, roleAtLeast } from '$lib/access';
+	import { api, ApiError } from '#lib/api/client.ts';
+	import { requiredTitle, roleAtLeast } from '#lib/access.ts';
 	import {
 		confirmDeleteEnvironment,
 		confirmStopEnvironment,
 		DELETE_ENVIRONMENT_TITLE,
 		STOP_ENVIRONMENT_TITLE,
 		STOPPED_ENVIRONMENT_TITLE
-	} from '$lib/environments';
-	import type { Environment, Project } from '$lib/types/project';
-	import { dialog } from '$lib/stores/dialog.svelte';
-	import { modal } from '$lib/stores/modal.svelte';
-	import { sidepanel } from '$lib/stores/sidepanel.svelte';
-	import { toast } from '$lib/stores/toast.svelte';
-	import Menu from '$lib/components/ui/Menu.svelte';
-	import MenuItem from '$lib/components/ui/MenuItem.svelte';
-	import MenuSeparator from '$lib/components/ui/MenuSeparator.svelte';
+	} from '#lib/environments.ts';
+	import type { Environment, Project } from '#lib/types/project.ts';
+	import { dialog } from '#lib/stores/dialog.svelte.ts';
+	import { modal } from '#lib/stores/modal.svelte.ts';
+	import { sidepanel } from '#lib/stores/sidepanel.svelte.ts';
+	import { toast } from '#lib/stores/toast.svelte.ts';
+	import Menu from '#lib/components/ui/Menu.svelte';
+	import MenuItem from '#lib/components/ui/MenuItem.svelte';
+	import MenuSeparator from '#lib/components/ui/MenuSeparator.svelte';
 	import PromoteModal, {
 		modalOptions as promoteModalOptions
-	} from '$lib/components/run/PromoteModal.svelte';
+	} from '#lib/components/run/PromoteModal.svelte';
 	import RedeployModal, {
 		modalOptions as redeployModalOptions
-	} from '$lib/components/run/RedeployModal.svelte';
-	import RunDetailPanel from '$lib/components/run/RunDetailPanel.svelte';
+	} from '#lib/components/run/RedeployModal.svelte';
+	import RunDetailPanel from '#lib/components/run/RunDetailPanel.svelte';
 
 	// Environment actions collected under one quiet topbar menu: everything
 	// here acts on the whole environment the breadcrumb names, is used

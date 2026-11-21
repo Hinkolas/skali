@@ -1,6 +1,6 @@
 import { error } from '@sveltejs/kit';
-import { apiFetch } from '$lib/api/client';
-import type { AuthUser } from '$lib/types/auth';
+import { apiFetch } from '#lib/api/client.ts';
+import type { AuthUser } from '#lib/types/auth.ts';
 import type { PageLoad } from './$types';
 
 // First real-data page: the user list is loaded per navigation;

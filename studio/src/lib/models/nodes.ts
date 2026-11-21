@@ -4,9 +4,9 @@
 // way the Apple app's node screen shows them; the charts keep absolute
 // units with the allocatable amount as the ceiling.
 
-import type { ChartSeries } from '$lib/charts';
-import type { StatCardData } from '$lib/models/view';
-import { formatBytes, formatCores, formatPct } from '$lib/format';
+import type { ChartSeries } from '#lib/charts.ts';
+import type { StatCardData } from '#lib/models/view.ts';
+import { formatBytes, formatCores, formatPct } from '#lib/format.ts';
 import {
 	lastValue,
 	seriesAverage,
@@ -15,8 +15,8 @@ import {
 	type NodeMetrics,
 	type NodeSeries,
 	type NodeStorage
-} from '$lib/types/metrics';
-import type { ClusterNode } from '$lib/types/nodes';
+} from '#lib/types/metrics.ts';
+import type { ClusterNode } from '#lib/types/nodes.ts';
 
 export interface NodeStatus {
 	text: string;

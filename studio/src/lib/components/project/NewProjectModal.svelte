@@ -1,5 +1,5 @@
 <script module lang="ts">
-	import type { ModalOptions } from '$lib/stores/modal.svelte';
+	import type { ModalOptions } from '#lib/stores/modal.svelte.ts';
 
 	export const modalOptions = {
 		label: 'New project'
@@ -9,13 +9,13 @@
 <script lang="ts">
 	import { goto, invalidateAll } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { api, ApiError } from '$lib/api/client';
-	import type { Environment, Project } from '$lib/types/project';
-	import { toast } from '$lib/stores/toast.svelte';
-	import Button from '$lib/components/ui/Button.svelte';
-	import Field from '$lib/components/ui/Field.svelte';
-	import ModalHeader from '$lib/components/ui/ModalHeader.svelte';
-	import TextInput from '$lib/components/ui/TextInput.svelte';
+	import { api, ApiError } from '#lib/api/client.ts';
+	import type { Environment, Project } from '#lib/types/project.ts';
+	import { toast } from '#lib/stores/toast.svelte.ts';
+	import Button from '#lib/components/ui/Button.svelte';
+	import Field from '#lib/components/ui/Field.svelte';
+	import ModalHeader from '#lib/components/ui/ModalHeader.svelte';
+	import TextInput from '#lib/components/ui/TextInput.svelte';
 
 	let { close }: { close: (created?: boolean) => void } = $props();
 

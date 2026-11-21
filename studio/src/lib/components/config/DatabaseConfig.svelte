@@ -1,8 +1,8 @@
 <script lang="ts">
-	import type { DatabaseView } from '$lib/models/service';
-	import { formatBytes } from '$lib/format';
-	import { describeSeconds } from '$lib/cron';
-	import Pill from '$lib/components/ui/Pill.svelte';
+	import type { DatabaseView } from '#lib/models/service.ts';
+	import { formatBytes } from '#lib/format.ts';
+	import { describeSeconds } from '#lib/cron.ts';
+	import Pill from '#lib/components/ui/Pill.svelte';
 	import Choice from './Choice.svelte';
 	import ConfigCard from './ConfigCard.svelte';
 

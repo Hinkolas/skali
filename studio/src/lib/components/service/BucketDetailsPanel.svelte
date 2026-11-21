@@ -1,12 +1,12 @@
 <script lang="ts">
-	import type { BucketView } from '$lib/models/service';
-	import { envStatus } from '$lib/stores/envstatus.svelte';
-	import { HEALTH_META } from '$lib/service-types';
-	import { formatBytes, formatCount } from '$lib/format';
-	import { describeSeconds } from '$lib/cron';
-	import Card from '$lib/components/ui/Card.svelte';
-	import KeyValueRow from '$lib/components/ui/KeyValueRow.svelte';
-	import Skeleton from '$lib/components/ui/Skeleton.svelte';
+	import type { BucketView } from '#lib/models/service.ts';
+	import { envStatus } from '#lib/stores/envstatus.svelte.ts';
+	import { HEALTH_META } from '#lib/service-types.ts';
+	import { formatBytes, formatCount } from '#lib/format.ts';
+	import { describeSeconds } from '#lib/cron.ts';
+	import Card from '#lib/components/ui/Card.svelte';
+	import KeyValueRow from '#lib/components/ui/KeyValueRow.svelte';
+	import Skeleton from '#lib/components/ui/Skeleton.svelte';
 
 	// What the bucket claim asked for: who may read it, whether versions are
 	// kept, the quotas that cap it, and the lifecycle rules that clean up

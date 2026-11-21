@@ -2,7 +2,7 @@
 	import Database from '@lucide/svelte/icons/database';
 	import LayoutDashboard from '@lucide/svelte/icons/layout-dashboard';
 	import SlidersHorizontal from '@lucide/svelte/icons/sliders-horizontal';
-	import SubNav, { type SubNavTab } from '$lib/components/ui/SubNav.svelte';
+	import SubNav, { type SubNavTab } from '#lib/components/ui/SubNav.svelte';
 
 	// The tabs of one database pool's pages; system pages carry no
 	// environment, so the links are plain.

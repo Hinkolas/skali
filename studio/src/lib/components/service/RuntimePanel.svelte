@@ -1,10 +1,10 @@
 <script lang="ts">
-	import type { ApplicationView } from '$lib/models/service';
-	import { envStatus } from '$lib/stores/envstatus.svelte';
-	import { HEALTH_META } from '$lib/service-types';
-	import Card from '$lib/components/ui/Card.svelte';
-	import KeyValueRow from '$lib/components/ui/KeyValueRow.svelte';
-	import Skeleton from '$lib/components/ui/Skeleton.svelte';
+	import type { ApplicationView } from '#lib/models/service.ts';
+	import { envStatus } from '#lib/stores/envstatus.svelte.ts';
+	import { HEALTH_META } from '#lib/service-types.ts';
+	import Card from '#lib/components/ui/Card.svelte';
+	import KeyValueRow from '#lib/components/ui/KeyValueRow.svelte';
+	import Skeleton from '#lib/components/ui/Skeleton.svelte';
 	import PodList from './PodList.svelte';
 
 	// The running process of one application: how it is built and started

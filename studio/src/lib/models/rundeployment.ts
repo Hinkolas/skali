@@ -3,8 +3,8 @@
 // run for the environment's history, and what each run did to one service
 // for that service's own history.
 
-import { shortId } from '$lib/format';
-import type { Run } from '$lib/types/runs';
+import { shortId } from '#lib/format.ts';
+import type { Run } from '#lib/types/runs.ts';
 import { splitService } from './runservices';
 
 // Service changes read in this order, the everyday ones first.

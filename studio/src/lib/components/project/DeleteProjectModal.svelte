@@ -1,5 +1,5 @@
 <script module lang="ts">
-	import type { ModalOptions } from '$lib/stores/modal.svelte';
+	import type { ModalOptions } from '#lib/stores/modal.svelte.ts';
 
 	export const modalOptions = {
 		label: 'Delete project',
@@ -10,12 +10,12 @@
 <script lang="ts">
 	import { invalidateAll } from '$app/navigation';
 	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
-	import { api, ApiError } from '$lib/api/client';
-	import { leaveDeletedProject } from '$lib/projectstream';
-	import type { Environment, Project } from '$lib/types/project';
-	import { toast } from '$lib/stores/toast.svelte';
-	import Button from '$lib/components/ui/Button.svelte';
-	import TextInput from '$lib/components/ui/TextInput.svelte';
+	import { api, ApiError } from '#lib/api/client.ts';
+	import { leaveDeletedProject } from '#lib/projectstream.ts';
+	import type { Environment, Project } from '#lib/types/project.ts';
+	import { toast } from '#lib/stores/toast.svelte.ts';
+	import Button from '#lib/components/ui/Button.svelte';
+	import TextInput from '#lib/components/ui/TextInput.svelte';
 
 	// The stop moment before the one-way door: hazard anatomy, the
 	// consequence stated, the project's name typed before the button arms.

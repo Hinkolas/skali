@@ -1,13 +1,13 @@
 <script lang="ts">
-	import { api, ApiError } from '$lib/api/client';
+	import { api, ApiError } from '#lib/api/client.ts';
 	import StepLogView from './StepLogView.svelte';
 	import {
 		INSIGHTS_RETRY_MS,
 		reportMayArrive,
 		slowestBuildSteps,
 		type BuildInsights
-	} from '$lib/types/runs';
-	import { formatCount, formatMillis } from '$lib/format';
+	} from '#lib/types/runs.ts';
+	import { formatCount, formatMillis } from '#lib/format.ts';
 
 	// A build step's insights: the report the client uploads once the build
 	// ended. Build output never streams into the step's log, so a running

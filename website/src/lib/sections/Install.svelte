@@ -2,8 +2,8 @@
 	import ArrowRight from '@lucide/svelte/icons/arrow-right';
 	import Check from '@lucide/svelte/icons/check';
 	import Copy from '@lucide/svelte/icons/copy';
-	import { links } from '$lib/links';
-	import { reveal } from '$lib/motion';
+	import { links } from '#lib/links.ts';
+	import { reveal } from '#lib/motion.ts';
 
 	const url = 'https://skali.dev/install.sh';
 	const command = `curl -fsSL ${url} | sh`;

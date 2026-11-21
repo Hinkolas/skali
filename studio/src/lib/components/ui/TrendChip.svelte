@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { ChipTone } from '$lib/models/view';
+	import type { ChipTone } from '#lib/models/view.ts';
 
 	let { text, tone = 'neutral' }: { text: string; tone?: ChipTone } = $props();
 

@@ -1,7 +1,7 @@
 // Shapes mirror the skali API (api/openapi.yaml), snake_case included.
 
-import type { MetricsWindow } from '$lib/types/metrics';
-import { formatBytes } from '$lib/format';
+import type { MetricsWindow } from '#lib/types/metrics.ts';
+import { formatBytes } from '#lib/format.ts';
 
 export type DatabasePoolClass = 'shared' | 'environment' | 'dedicated';
 

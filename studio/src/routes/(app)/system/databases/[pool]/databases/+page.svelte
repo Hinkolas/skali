@@ -1,13 +1,13 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import Database from '@lucide/svelte/icons/database';
-	import { formatBytes, formatDateTime, relativeTime } from '$lib/format';
-	import { withEnv } from '$lib/urls';
-	import { databasePhase, type DatabasePoolDatabase } from '$lib/types/pools';
-	import EmptyState from '$lib/components/ui/EmptyState.svelte';
-	import Pill from '$lib/components/ui/Pill.svelte';
-	import Table from '$lib/components/ui/Table.svelte';
-	import TypeBadge from '$lib/components/ui/TypeBadge.svelte';
+	import { formatBytes, formatDateTime, relativeTime } from '#lib/format.ts';
+	import { withEnv } from '#lib/urls.ts';
+	import { databasePhase, type DatabasePoolDatabase } from '#lib/types/pools.ts';
+	import EmptyState from '#lib/components/ui/EmptyState.svelte';
+	import Pill from '#lib/components/ui/Pill.svelte';
+	import Table from '#lib/components/ui/Table.svelte';
+	import TypeBadge from '#lib/components/ui/TypeBadge.svelte';
 	import type { PageData } from './$types';
 
 	// Every logical database on the pool with who owns it and how big it
@@ -75,7 +75,7 @@
 					>
 						<div class="flex min-w-0 items-center gap-2 pr-3">
 							{#if database.project && project}
-								<!-- eslint-disable svelte/no-navigation-without-resolve -- resolved path, env appended by $lib/urls -->
+								<!-- eslint-disable svelte/no-navigation-without-resolve -- resolved path, env appended by #lib/urls -->
 								<a href={project} class="text-text-secondary truncate text-md hover:underline">
 									{database.project.display_name || database.project.name}
 								</a>
@@ -90,7 +90,7 @@
 						<div class="flex min-w-0 items-center gap-2 pr-3">
 							{#if service}
 								<TypeBadge kind="database" />
-								<!-- eslint-disable svelte/no-navigation-without-resolve -- resolved path, env appended by $lib/urls -->
+								<!-- eslint-disable svelte/no-navigation-without-resolve -- resolved path, env appended by #lib/urls -->
 								<a
 									href={service}
 									class="text-text-secondary truncate font-mono text-md hover:underline"

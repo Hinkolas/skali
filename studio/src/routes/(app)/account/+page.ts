@@ -1,6 +1,6 @@
 import { error } from '@sveltejs/kit';
-import { apiFetch } from '$lib/api/client';
-import type { SessionInfo } from '$lib/types/auth';
+import { apiFetch } from '#lib/api/client.ts';
+import type { SessionInfo } from '#lib/types/auth.ts';
 import type { PageLoad } from './$types';
 
 // Self-service security page: open to every role. Sessions are loaded

@@ -6,8 +6,8 @@
 // instead of rendering the absence of a document as unknown health or an
 // empty workload.
 
-import { openStream, type StreamHandle, type StreamState } from '$lib/sse';
-import type { EnvironmentStatus, ServiceStatus } from '$lib/types/status';
+import { openStream, type StreamHandle, type StreamState } from '#lib/sse.ts';
+import type { EnvironmentStatus, ServiceStatus } from '#lib/types/status.ts';
 
 class EnvStatusStore {
 	doc = $state<EnvironmentStatus | null>(null);

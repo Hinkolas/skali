@@ -1,6 +1,6 @@
 <script lang="ts">
 	// The approved v5 app icon, resized for web use. Callers size the full tile.
-	import logo from '$lib/assets/logo.png';
+	import logo from '#lib/assets/logo.png';
 
 	let { class: cls = '' }: { class?: string } = $props();
 </script>

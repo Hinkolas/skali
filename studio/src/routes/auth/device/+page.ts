@@ -1,6 +1,6 @@
-import { apiFetch } from '$lib/api/client';
-import { requireUser } from '$lib/session';
-import type { DeviceInfo } from '$lib/types/device';
+import { apiFetch } from '#lib/api/client.ts';
+import { requireUser } from '#lib/session.ts';
+import type { DeviceInfo } from '#lib/types/device.ts';
 import type { PageLoad } from './$types';
 
 // Browser device authorization: the CLI sent the person here with

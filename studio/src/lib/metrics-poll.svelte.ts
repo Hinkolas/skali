@@ -1,5 +1,5 @@
 import { untrack } from 'svelte';
-import type { MetricsWindow } from '$lib/types/metrics';
+import type { MetricsWindow } from '#lib/types/metrics.ts';
 
 /**
  * Keeps a windowed metrics document fresh: the route load seeds one window;

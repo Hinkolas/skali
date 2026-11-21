@@ -5,17 +5,17 @@
 	// leaves for the project list once the project itself is gone.
 	import { invalidateAll } from '$app/navigation';
 	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
-	import { api, ApiError } from '$lib/api/client';
-	import { roleAtLeast } from '$lib/access';
-	import { runUnsettled, type RunsList } from '$lib/types/runs';
-	import type { Environment, Project } from '$lib/types/project';
-	import { sidepanel } from '$lib/stores/sidepanel.svelte';
-	import { toast } from '$lib/stores/toast.svelte';
-	import PageHeader from '$lib/components/shell/PageHeader.svelte';
-	import Button from '$lib/components/ui/Button.svelte';
-	import Card from '$lib/components/ui/Card.svelte';
-	import Pill from '$lib/components/ui/Pill.svelte';
-	import RunDetailPanel from '$lib/components/run/RunDetailPanel.svelte';
+	import { api, ApiError } from '#lib/api/client.ts';
+	import { roleAtLeast } from '#lib/access.ts';
+	import { runUnsettled, type RunsList } from '#lib/types/runs.ts';
+	import type { Environment, Project } from '#lib/types/project.ts';
+	import { sidepanel } from '#lib/stores/sidepanel.svelte.ts';
+	import { toast } from '#lib/stores/toast.svelte.ts';
+	import PageHeader from '#lib/components/shell/PageHeader.svelte';
+	import Button from '#lib/components/ui/Button.svelte';
+	import Card from '#lib/components/ui/Card.svelte';
+	import Pill from '#lib/components/ui/Pill.svelte';
+	import RunDetailPanel from '#lib/components/run/RunDetailPanel.svelte';
 
 	let { project, environments }: { project: Project; environments: Environment[] } = $props();
 

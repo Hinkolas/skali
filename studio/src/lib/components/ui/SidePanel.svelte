@@ -2,14 +2,15 @@
 	import { slide } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
 	import { afterNavigate } from '$app/navigation';
-	import { sidepanel } from '$lib/stores/sidepanel.svelte';
-	import { modal } from '$lib/stores/modal.svelte';
+	import { sidepanel } from '#lib/stores/sidepanel.svelte.ts';
+	import { modal } from '#lib/stores/modal.svelte.ts';
 
 	// Panel content is route-coupled, so leaving the page closes it. Compare
 	// pathnames only: same-path search-param navigations (?node= selection
-	// sync) must not close the panel that was just opened. Shallow
-	// replaceState doesn't fire afterNavigate at all, so it's safe either way.
-	afterNavigate(({ from, to }) => {
+	// sync) must not close the panel that was just opened. Shallow goto()
+	// navigations keep the page, so they are skipped either way.
+	afterNavigate(({ from, to, shallow, type }) => {
+		if (shallow && type === 'goto') return;
 		if (from?.url && to?.url && from.url.pathname !== to.url.pathname) sidepanel.close();
 	});
 </script>

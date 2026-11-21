@@ -1,7 +1,7 @@
 <script lang="ts">
-	import ApplicationConfig from '$lib/components/config/ApplicationConfig.svelte';
-	import BucketConfig from '$lib/components/config/BucketConfig.svelte';
-	import DatabaseConfig from '$lib/components/config/DatabaseConfig.svelte';
+	import ApplicationConfig from '#lib/components/config/ApplicationConfig.svelte';
+	import BucketConfig from '#lib/components/config/BucketConfig.svelte';
+	import DatabaseConfig from '#lib/components/config/DatabaseConfig.svelte';
 	import type { PageData } from './$types';
 
 	// The compiled definition of one service, read-only: the manifest owns

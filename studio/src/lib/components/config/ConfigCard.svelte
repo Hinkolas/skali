@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
-	import Card from '$lib/components/ui/Card.svelte';
+	import Card from '#lib/components/ui/Card.svelte';
 
 	// One section of a configuration page: a titled card with an optional
 	// one-line hint next to the title. `class` places it in the page grid.

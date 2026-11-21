@@ -8,8 +8,8 @@ import CircleSlash from '@lucide/svelte/icons/circle-slash';
 import CircleX from '@lucide/svelte/icons/circle-x';
 import Clock from '@lucide/svelte/icons/clock';
 import LoaderCircle from '@lucide/svelte/icons/loader-circle';
-import type { NavIcon } from '$lib/navigation';
-import type { Step, StepStatus } from '$lib/types/runs';
+import type { NavIcon } from '#lib/navigation.ts';
+import type { Step, StepStatus } from '#lib/types/runs.ts';
 
 export const STEP_META: Record<
 	StepStatus,

@@ -3,8 +3,8 @@
 	import KeyRound from '@lucide/svelte/icons/key-round';
 	import SlidersHorizontal from '@lucide/svelte/icons/sliders-horizontal';
 	import Users from '@lucide/svelte/icons/users';
-	import type { Project } from '$lib/types/project';
-	import SubNav, { type SubNavTab } from '$lib/components/ui/SubNav.svelte';
+	import type { Project } from '#lib/types/project.ts';
+	import SubNav, { type SubNavTab } from '#lib/components/ui/SubNav.svelte';
 
 	// Sub-navigation between the settings surfaces of a project, drawn like
 	// the service tab bar so the two read as the same control.

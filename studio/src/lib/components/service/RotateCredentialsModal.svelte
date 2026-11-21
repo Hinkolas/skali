@@ -1,5 +1,5 @@
 <script module lang="ts">
-	import type { ModalOptions } from '$lib/stores/modal.svelte';
+	import type { ModalOptions } from '#lib/stores/modal.svelte.ts';
 
 	export const modalOptions = {
 		label: 'Rotate credentials',
@@ -17,13 +17,13 @@
 	// role is dropped. Sudo-gated: the API client replays after a fresh
 	// login.
 	import KeyRound from '@lucide/svelte/icons/key-round';
-	import { api, ApiError } from '$lib/api/client';
-	import { sidepanel } from '$lib/stores/sidepanel.svelte';
-	import { toast } from '$lib/stores/toast.svelte';
-	import Button from '$lib/components/ui/Button.svelte';
-	import ModalHeader from '$lib/components/ui/ModalHeader.svelte';
-	import Select from '$lib/components/ui/Select.svelte';
-	import RunDetailPanel from '$lib/components/run/RunDetailPanel.svelte';
+	import { api, ApiError } from '#lib/api/client.ts';
+	import { sidepanel } from '#lib/stores/sidepanel.svelte.ts';
+	import { toast } from '#lib/stores/toast.svelte.ts';
+	import Button from '#lib/components/ui/Button.svelte';
+	import ModalHeader from '#lib/components/ui/ModalHeader.svelte';
+	import Select from '#lib/components/ui/Select.svelte';
+	import RunDetailPanel from '#lib/components/run/RunDetailPanel.svelte';
 
 	let {
 		collection,

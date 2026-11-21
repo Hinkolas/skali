@@ -5,13 +5,13 @@
 	import SquareTerminal from '@lucide/svelte/icons/square-terminal';
 	import Tablet from '@lucide/svelte/icons/tablet';
 	import X from '@lucide/svelte/icons/x';
-	import { api, ApiError } from '$lib/api/client';
-	import { dialog } from '$lib/stores/dialog.svelte';
-	import { toast } from '$lib/stores/toast.svelte';
-	import { relativeTime } from '$lib/format';
-	import { describeUserAgent } from '$lib/useragent';
-	import type { SessionInfo } from '$lib/types/auth';
-	import Table from '$lib/components/ui/Table.svelte';
+	import { api, ApiError } from '#lib/api/client.ts';
+	import { dialog } from '#lib/stores/dialog.svelte.ts';
+	import { toast } from '#lib/stores/toast.svelte.ts';
+	import { relativeTime } from '#lib/format.ts';
+	import { describeUserAgent } from '#lib/useragent.ts';
+	import type { SessionInfo } from '#lib/types/auth.ts';
+	import Table from '#lib/components/ui/Table.svelte';
 
 	let { sessions }: { sessions: SessionInfo[] } = $props();
 

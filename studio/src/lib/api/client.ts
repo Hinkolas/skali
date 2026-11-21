@@ -42,7 +42,7 @@ async function request<T>(
 		// real execution. `retried` stops a second rejection from looping.
 		// Dynamic import: client → reauth store → ReauthModal → client is a cycle.
 		if (res.status === 403 && detail?.code === 'reauth_required' && !retried) {
-			const { requireReauth } = await import('$lib/stores/reauth.svelte');
+			const { requireReauth } = await import('#lib/stores/reauth.svelte.ts');
 			if (await requireReauth()) return request<T>(method, path, body, true);
 		}
 		// A 401 usually means the session died mid-use — a full navigation lands

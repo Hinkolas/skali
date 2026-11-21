@@ -1,5 +1,5 @@
 import { modal, type ModalHandle } from './modal.svelte';
-import Dialog from '$lib/components/ui/Dialog.svelte';
+import Dialog from '#lib/components/ui/Dialog.svelte';
 
 // Thin sugar over the modal system for title/description confirm and alert
 // boxes. For bespoke content, write a component and open it with

@@ -1,5 +1,5 @@
-import { apiFetch } from '$lib/api/client';
-import type { ValueEntry } from '$lib/types/values';
+import { apiFetch } from '#lib/api/client.ts';
+import type { ValueEntry } from '#lib/types/values.ts';
 import type { PageLoad } from './$types';
 
 export const load: PageLoad = async ({ parent, fetch }) => {

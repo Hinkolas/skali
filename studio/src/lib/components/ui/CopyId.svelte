@@ -1,8 +1,8 @@
 <script lang="ts">
 	import Copy from '@lucide/svelte/icons/copy';
 	import Check from '@lucide/svelte/icons/check';
-	import { shortId } from '$lib/format';
-	import { toast } from '$lib/stores/toast.svelte';
+	import { shortId } from '#lib/format.ts';
+	import { toast } from '#lib/stores/toast.svelte.ts';
 
 	// An inline id chip: the short form on screen, the full id on the
 	// clipboard (the CLI wants the whole UUID). `hint` is the toast's

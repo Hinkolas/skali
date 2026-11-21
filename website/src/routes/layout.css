@@ -3,7 +3,7 @@
  *
  * Colors and fonts follow studio/src/routes/layout.css so the product
  * excerpts on the site look like Skali Studio. Spacing and type use
- * Tailwind's stock scale; the Studio mocks under $lib/mock reproduce the
+ * Tailwind's stock scale; the Studio mocks under #lib/mock reproduce the
  * Studio's own sizes with arbitrary values where they differ.
  */
 
@@ -96,7 +96,7 @@
 	mask-image: linear-gradient(#000 70%, transparent);
 }
 
-/* $lib/motion's reveal: held below the fold, then risen into place once. */
+/* #lib/motion's reveal: held below the fold, then risen into place once. */
 [data-reveal] {
 	transition:
 		opacity 0.9s cubic-bezier(0.16, 1, 0.3, 1),
