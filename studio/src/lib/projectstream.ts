@@ -6,7 +6,7 @@
 // data therefore follows changes made in another tab, by the CLI, or by
 // the reconciler finishing a run, without any page polling for it.
 
-import { goto, invalidateAll } from '$app/navigation';
+import { goto, refreshAll } from '$app/navigation';
 import { resolve } from '$app/paths';
 import { api, ApiError } from '#lib/api/client.ts';
 import { openStream, type StreamHandle } from '#lib/sse.ts';
@@ -27,7 +27,7 @@ export function followProject(project: ProjectRef): StreamHandle {
 		if (timer) return;
 		timer = setTimeout(() => {
 			timer = null;
-			void invalidateAll();
+			void refreshAll();
 		}, REFRESH_DEBOUNCE_MS);
 	};
 	const close = () => {
@@ -88,7 +88,7 @@ function label(project: ProjectRef) {
 
 async function leaveProject() {
 	await goto(resolve('/(app)/projects'));
-	await invalidateAll();
+	await refreshAll();
 }
 
 // Both the delete dialog (a project without environments goes at once) and

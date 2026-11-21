@@ -5,7 +5,7 @@ import type { PageLoad } from './$types';
 
 // Self-service security page: open to every role. Sessions are loaded
 // per navigation; mutations happen client-side through the API and
-// re-run this load via invalidateAll().
+// re-run this load via refreshAll().
 export const load: PageLoad = async ({ fetch }) => {
 	const res = await apiFetch(fetch, '/v1/auth/sessions');
 	if (!res.ok) {

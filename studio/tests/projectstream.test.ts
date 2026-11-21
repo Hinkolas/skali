@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 const navigation = vi.hoisted(() => ({
 	goto: vi.fn(async () => {}),
-	invalidateAll: vi.fn(async () => {})
+	refreshAll: vi.fn(async () => {})
 }));
 const toast = vi.hoisted(() => ({ info: vi.fn(), success: vi.fn() }));
 vi.mock('$app/navigation', () => navigation);
@@ -65,7 +65,7 @@ test('the first ready re-reads what changed before the stream opened', () => {
 	const handle = followProject(project);
 	sources[0].emit('ready');
 	vi.advanceTimersByTime(250);
-	expect(navigation.invalidateAll).toHaveBeenCalledOnce();
+	expect(navigation.refreshAll).toHaveBeenCalledOnce();
 	handle.close();
 });
 
@@ -93,6 +93,6 @@ test('a stream that fails while the project is there keeps retrying', async () =
 	expect(navigation.goto).not.toHaveBeenCalled();
 	sources[1].emit('ready');
 	vi.advanceTimersByTime(250);
-	expect(navigation.invalidateAll).toHaveBeenCalledOnce();
+	expect(navigation.refreshAll).toHaveBeenCalledOnce();
 	handle.close();
 });

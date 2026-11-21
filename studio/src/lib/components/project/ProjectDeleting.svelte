@@ -3,7 +3,7 @@
 	// environment is purging and the project goes with the last of them.
 	// The project stream refreshes the list as environments disappear and
 	// leaves for the project list once the project itself is gone.
-	import { invalidateAll } from '$app/navigation';
+	import { refreshAll } from '$app/navigation';
 	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
 	import { api, ApiError } from '#lib/api/client.ts';
 	import { roleAtLeast } from '#lib/access.ts';
@@ -32,7 +32,7 @@
 		resuming = true;
 		try {
 			await api.del(`/v1/projects/${project.id}`);
-			await invalidateAll();
+			await refreshAll();
 		} catch (err) {
 			toast.error(err instanceof ApiError ? err.message : 'Could not resume the delete');
 		} finally {

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { invalidateAll } from '$app/navigation';
+	import { refreshAll } from '$app/navigation';
 	import Monitor from '@lucide/svelte/icons/monitor';
 	import Smartphone from '@lucide/svelte/icons/smartphone';
 	import SquareTerminal from '@lucide/svelte/icons/square-terminal';
@@ -35,7 +35,7 @@
 				try {
 					await api.del(`/v1/auth/sessions/${session.id}`);
 					toast.success('Session revoked');
-					await invalidateAll();
+					await refreshAll();
 				} catch (err) {
 					toast.error(err instanceof ApiError ? err.message : 'Could not revoke the session');
 					throw err; // keep the dialog open

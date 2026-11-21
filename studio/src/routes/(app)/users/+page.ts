@@ -5,7 +5,7 @@ import type { PageLoad } from './$types';
 
 // First real-data page: the user list is loaded per navigation;
 // mutations happen client-side through the API and re-run this load
-// via invalidateAll().
+// via refreshAll().
 export const load: PageLoad = async ({ fetch, parent }) => {
 	const { user } = await parent();
 	if (user?.role !== 'admin') {

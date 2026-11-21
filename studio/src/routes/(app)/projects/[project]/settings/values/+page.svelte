@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { invalidateAll } from '$app/navigation';
+	import { refreshAll } from '$app/navigation';
 	import KeyRound from '@lucide/svelte/icons/key-round';
 	import Lock from '@lucide/svelte/icons/lock';
 	import { api, ApiError } from '#lib/api/client.ts';
@@ -89,7 +89,7 @@
 				});
 			}
 			dirty = {};
-			await invalidateAll();
+			await refreshAll();
 		} catch (err) {
 			errorMessage = err instanceof ApiError ? err.message : 'Could not stage the values.';
 		} finally {
@@ -113,7 +113,7 @@
 				if (!data.env) return;
 				await api.del(`/v1/environments/${data.env.id}/values/${name}`);
 				toast.success('Value unset');
-				await invalidateAll();
+				await refreshAll();
 			}
 		});
 	}
@@ -129,7 +129,7 @@
 				if (!data.env) return;
 				await api.del(`/v1/environments/${data.env.id}/values/${name}`);
 				toast.success('Value deleted');
-				await invalidateAll();
+				await refreshAll();
 			}
 		});
 	}

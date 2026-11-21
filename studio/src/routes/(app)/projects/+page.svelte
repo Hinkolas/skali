@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { invalidateAll } from '$app/navigation';
+	import { refreshAll } from '$app/navigation';
 	import ArrowUpDown from '@lucide/svelte/icons/arrow-up-down';
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import FolderKanban from '@lucide/svelte/icons/folder-kanban';
@@ -42,7 +42,7 @@
 	const anyDeleting = $derived(source.some((p) => p.deleting_at));
 	$effect(() => {
 		if (!anyDeleting) return;
-		const timer = setInterval(() => void invalidateAll(), DELETING_REFRESH_MS);
+		const timer = setInterval(() => void refreshAll(), DELETING_REFRESH_MS);
 		return () => clearInterval(timer);
 	});
 

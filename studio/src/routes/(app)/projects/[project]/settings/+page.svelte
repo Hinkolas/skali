@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { invalidateAll } from '$app/navigation';
+	import { refreshAll } from '$app/navigation';
 	import { page } from '$app/state';
 	import CircleStop from '@lucide/svelte/icons/circle-stop';
 	import Ellipsis from '@lucide/svelte/icons/ellipsis';
@@ -239,7 +239,7 @@
 		try {
 			await api.patch(`/v1/projects/${data.project.id}`, { display_name: displayName.trim() });
 			toast.success('Display name updated');
-			await invalidateAll();
+			await refreshAll();
 		} catch (err) {
 			toast.error(err instanceof ApiError ? err.message : 'Could not update the project');
 		} finally {
@@ -309,7 +309,7 @@
 		);
 		toast.success('Rollback started');
 		sidepanel.open(RunDetailPanel, { runId: result.run_id }, { label: 'Run details' });
-		await invalidateAll();
+		await refreshAll();
 	}
 </script>
 

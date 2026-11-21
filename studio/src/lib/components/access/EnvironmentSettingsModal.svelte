@@ -18,7 +18,7 @@
 	// the sudo reauth prompt layers above this modal on the stack.
 	import { slide } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
-	import { goto, invalidateAll } from '$app/navigation';
+	import { goto, refreshAll } from '$app/navigation';
 	import { page } from '$app/state';
 	import Plus from '@lucide/svelte/icons/plus';
 	import X from '@lucide/svelte/icons/x';
@@ -107,9 +107,9 @@
 				environment.previous_names?.includes(url.searchParams.get('env') ?? '')
 			) {
 				url.searchParams.set('env', newName);
-				await goto(url, { replace: true, invalidateAll: true });
+				await goto(url, { replace: true, refreshAll: true });
 			} else {
-				await invalidateAll();
+				await refreshAll();
 			}
 			close(true);
 		} catch (err) {
@@ -244,7 +244,7 @@
 						: 'Automatic backups are off; existing snapshots stay and no longer expire.'
 					: undefined;
 			toast.success(`Updated ${environment.name}`, description ? { description } : undefined);
-			await invalidateAll();
+			await refreshAll();
 			close(true);
 		} catch (err) {
 			toast.error(err instanceof ApiError ? err.message : 'Could not update the environment');

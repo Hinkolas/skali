@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { invalidateAll } from '$app/navigation';
+	import { refreshAll } from '$app/navigation';
 	import Archive from '@lucide/svelte/icons/archive';
 	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
 	import { api, ApiError } from '#lib/api/client.ts';
@@ -110,7 +110,7 @@
 			{ target: current },
 			backupTargetModalOptions
 		).result;
-		if (saved) await invalidateAll();
+		if (saved) await refreshAll();
 	}
 
 	function remove() {
@@ -126,7 +126,7 @@
 				try {
 					await api.del('/v1/system/backup-target');
 					toast.success('Backup target removed');
-					await invalidateAll();
+					await refreshAll();
 				} catch (err) {
 					toast.error(err instanceof ApiError ? err.message : 'Could not remove the backup target');
 					throw err;

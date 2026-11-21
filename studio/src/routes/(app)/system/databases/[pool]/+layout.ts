@@ -5,7 +5,7 @@ import type { DatabasePoolDetailResponse } from '#lib/types/pools.ts';
 import type { LayoutLoad } from './$types';
 
 // One pool's pages share the pool document: the header and tabs render
-// from it and every tab reads it. invalidateAll() after a save re-runs
+// from it and every tab reads it. refreshAll() after a save re-runs
 // this load, which is how the tuning form sees its own write land.
 export const load: LayoutLoad = async ({ fetch, params, parent }) => {
 	const { user } = await parent();

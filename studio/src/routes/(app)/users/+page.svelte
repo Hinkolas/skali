@@ -5,7 +5,7 @@
 	import KeyRound from '@lucide/svelte/icons/key-round';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import ShieldCheck from '@lucide/svelte/icons/shield-check';
-	import { invalidateAll } from '$app/navigation';
+	import { refreshAll } from '$app/navigation';
 	import { api, ApiError } from '#lib/api/client.ts';
 	import { modal } from '#lib/stores/modal.svelte.ts';
 	import { dialog } from '#lib/stores/dialog.svelte.ts';
@@ -60,14 +60,14 @@
 
 	async function newUser() {
 		if (await modal.open<boolean>(NewUserModal, {}, newUserOptions).result) {
-			await invalidateAll();
+			await refreshAll();
 		}
 	}
 
 	async function editUser(user: AuthUser) {
 		const props = { user, self: user.id === data.user.id };
 		if (await modal.open<boolean>(EditUserModal, props, editUserOptions).result) {
-			await invalidateAll();
+			await refreshAll();
 		}
 	}
 
@@ -86,7 +86,7 @@
 				try {
 					await api.del(`/v1/users/${user.id}`);
 					toast.success(`Deleted ${user.email}`);
-					await invalidateAll();
+					await refreshAll();
 				} catch (err) {
 					toast.error(err instanceof ApiError ? err.message : 'Could not delete the user');
 					throw err; // keep the dialog open

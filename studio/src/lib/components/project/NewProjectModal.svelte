@@ -7,7 +7,7 @@
 </script>
 
 <script lang="ts">
-	import { goto, invalidateAll } from '$app/navigation';
+	import { goto, refreshAll } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { api, ApiError } from '#lib/api/client.ts';
 	import type { Environment, Project } from '#lib/types/project.ts';
@@ -43,7 +43,7 @@
 				});
 			}
 			toast.success(`Project "${trimmed}" created`);
-			await invalidateAll();
+			await refreshAll();
 			close(true);
 			await goto(resolve('/(app)/projects/[project]', { project: project.name }));
 		} catch (err) {

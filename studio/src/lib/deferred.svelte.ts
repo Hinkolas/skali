@@ -5,7 +5,7 @@
 // SvelteKit does not await promises a universal load returns at the top
 // level, so a page that returns `{ summary: fetchSummary() }` paints as
 // soon as the shell is ready and fills in when the promise settles. On
-// invalidateAll() the load runs again and hands over a fresh promise; the
+// refreshAll() the load runs again and hands over a fresh promise; the
 // previous value stays on screen while it is pending (the same rule the
 // metrics poller follows), so a reload never flashes back to a skeleton.
 // Show a Skeleton only while `pending && value === null`.

@@ -6,7 +6,7 @@
 	// reload the pool; the host remounts this form on the new document.
 	import { slide } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
-	import { invalidateAll } from '$app/navigation';
+	import { refreshAll } from '$app/navigation';
 	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
 	import X from '@lucide/svelte/icons/x';
 	import { api, ApiError } from '#lib/api/client.ts';
@@ -107,7 +107,7 @@
 					? `Pool ${pool.name} retuned; its instances restart for ${restarts.join(', ')}`
 					: `Pool ${pool.name} retuned`
 			);
-			await invalidateAll();
+			await refreshAll();
 		} catch (e) {
 			toast.error(e instanceof ApiError ? e.message : 'Could not save the pool settings');
 		} finally {

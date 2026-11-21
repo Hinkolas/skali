@@ -1,6 +1,6 @@
 <script lang="ts">
 	import KeyRound from '@lucide/svelte/icons/key-round';
-	import { invalidateAll } from '$app/navigation';
+	import { refreshAll } from '$app/navigation';
 	import { modal } from '#lib/stores/modal.svelte.ts';
 	import Card from '#lib/components/ui/Card.svelte';
 	import Button from '#lib/components/ui/Button.svelte';
@@ -10,7 +10,7 @@
 
 	async function changePassword() {
 		if (await modal.open<boolean>(ChangePasswordModal, {}, changePasswordOptions).result) {
-			await invalidateAll(); // the session list shrinks to just this one
+			await refreshAll(); // the session list shrinks to just this one
 		}
 	}
 </script>
