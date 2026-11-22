@@ -61,6 +61,9 @@ Launch arguments (Edit Scheme > Run > Arguments):
   update the demo runs advances with the clock, about a minute and a half
   from the first node to verified.
 - `-SkaliDemoBackups none` starts the demo cluster without a backup target.
+- `-SkaliDemoObjectStorage full` starts the demo cluster's object store out
+  of room for buckets (8 GB volumes on small disks, as in issue #289); the
+  default is a roomy store at the 256 MB default.
 - `-SkaliTab settings` (Debug builds only) opens on the given tab: `projects`,
   `settings` or `search`.
 - `-SkaliProject birefnet-proxy` (Debug builds only) opens the project with
@@ -71,14 +74,16 @@ Launch arguments (Edit Scheme > Run > Arguments):
   `delete`, or `accept` where a failed restore holds the environment, as in
   the demo's `nordlicht-api` staging) opens that sheet on the overview.
 - `-SkaliRoute softwareUpdate` (Debug builds only) pushes a Settings screen:
-  `account`, `users`, `nodes`, `databases`, `backups`, `softwareUpdate`,
+  `account`, `users`, `nodes`, `databases`, `objectStorage`, `volumeSize`,
+  `backups`, `softwareUpdate`,
   `node:<name>` for one node, `pool:<name>` for one database pool, or
   `user:<id>` for one user.
 
 ## Admins and members
 
 The second tab follows the instance role. Instance admins get **Settings**,
-which has the cluster's administration (nodes, databases, backups, updates)
+which has the cluster's administration (nodes, databases, object storage,
+backups, updates)
 and links to their account. Members get **Account** as the tab itself,
 because everything else under Settings is admin-only on the daemon.
 

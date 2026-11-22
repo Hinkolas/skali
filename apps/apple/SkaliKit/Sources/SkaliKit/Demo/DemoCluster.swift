@@ -9,16 +9,21 @@ public struct DemoCluster: ClusterAPI {
     private let updates: DemoUpdates
     private let directory: DemoUsers
     let backups: DemoBackups
+    let objectStorage: DemoObjectStorage
     /// Schedules, snapshots and runs the demo changed or started.
     let activity = DemoActivity()
 
     /// `update` picks where the cluster's update stands at launch; an
     /// update the demo runs advances with the clock.
-    public init(member: Bool = false, update: DemoUpdates.Scenario = .current, backups: DemoBackups.Scenario = .configured) {
+    public init(
+        member: Bool = false, update: DemoUpdates.Scenario = .current, backups: DemoBackups.Scenario = .configured,
+        objectStorage: DemoObjectStorage.Scenario = .roomy
+    ) {
         user = member ? Self.member : Self.user
         updates = DemoUpdates(scenario: update)
         directory = DemoUsers(signedIn: member ? Self.member : Self.user)
         self.backups = DemoBackups(scenario: backups)
+        self.objectStorage = DemoObjectStorage(scenario: objectStorage)
     }
 
     public static let address = ClusterAddress(userInput: "skali.example.com")!
@@ -144,6 +149,21 @@ public struct DemoCluster: ClusterAPI {
     public func databasePoolMetrics(name: String, window: NodeMetrics.Window) async throws -> DatabasePoolMetrics {
         try requireAdmin()
         return DemoPools.metrics(name, window: window)
+    }
+
+    public func objectStore() async throws -> ObjectStore? {
+        try requireAdmin()
+        return objectStorage.store()
+    }
+
+    public func objectStoreBuckets() async throws -> ObjectStoreBuckets? {
+        try requireAdmin()
+        return objectStorage.buckets()
+    }
+
+    public func saveObjectStorageSettings(_ settings: ObjectStorageSettings) async throws -> ObjectStore {
+        try requireAdmin()
+        return try objectStorage.save(settings)
     }
 
     public func backupTarget() async throws -> BackupTarget? {

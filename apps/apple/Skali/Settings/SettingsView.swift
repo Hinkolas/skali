@@ -27,6 +27,8 @@ struct SettingsView: View {
             case .node(let name): NodeDetailView(name: name)
             case .databases: DatabasePoolsView()
             case .pool(let name): DatabasePoolView(name: name)
+            case .objectStorage: ObjectStorageView()
+            case .volumeSize: VolumeSizeView()
             case .backups: BackupsView()
             case .softwareUpdate: SoftwareUpdateView()
             }
@@ -58,6 +60,15 @@ struct SettingsView: View {
                     Label { Text("Databases") } icon: { SettingsIcon(systemImage: "cylinder", tint: .cyan) }
                 }
             }
+            NavigationLink(value: SettingsRoute.objectStorage) {
+                LabeledContent {
+                    objectStorageSummary
+                } label: {
+                    Label { Text("Object Storage") } icon: {
+                        SettingsIcon(systemImage: ServiceKind.bucket.systemImage, tint: ServiceKind.bucket.tint)
+                    }
+                }
+            }
             NavigationLink(value: SettingsRoute.backups) {
                 LabeledContent {
                     Text(backupSummary).monospaced()
@@ -81,6 +92,19 @@ struct SettingsView: View {
         case 0: return "no pools"
         case 1: return "1 pool"
         case let count: return "\(count) pools"
+        }
+    }
+
+    /// How many buckets the store holds, or that it is out of room.
+    @ViewBuilder private var objectStorageSummary: some View {
+        switch session.system.objectStore {
+        case .unknown: Text("")
+        case .unavailable: Text("unavailable")
+        case .none: Text("no store")
+        case .set(let store):
+            let summary = store.summary
+            Text(summary.tint == .green || summary.tint == .secondary ? summary.text : summary.text.lowercased())
+                .foregroundStyle(summary.tint == .green || summary.tint == .secondary ? Color.secondary : summary.tint)
         }
     }
 
@@ -224,7 +248,7 @@ extension ReleaseChannel {
 /// The screens under Settings, as navigation values so they can be opened
 /// from elsewhere (a notification, a deep link) by setting the path.
 enum SettingsRoute: Hashable {
-    case account, users, nodes, databases, backups, softwareUpdate
+    case account, users, nodes, databases, objectStorage, volumeSize, backups, softwareUpdate
     /// One node, by name.
     case node(String)
     /// One database pool, by name.
@@ -249,6 +273,7 @@ enum SettingsRoute: Hashable {
         }
         let simple: [String: SettingsRoute] = [
             "account": .account, "users": .users, "nodes": .nodes, "databases": .databases,
+            "objectStorage": .objectStorage, "volumeSize": .volumeSize,
             "backups": .backups, "softwareUpdate": .softwareUpdate,
         ]
         guard let route = simple[argument] else { return nil }

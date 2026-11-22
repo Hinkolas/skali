@@ -31,6 +31,10 @@ final class ClusterSession {
     /// Each opened pool's instances, databases and incidents, by name.
     private(set) var poolDetails: [String: DatabasePoolDetail] = [:]
 
+    /// Every bucket on the object store with its usage; nil until read,
+    /// or when the master did not answer.
+    private(set) var objectStoreBuckets: ObjectStoreBuckets?
+
     /// Current CPU, memory and disk per node name.
     private(set) var nodeUsage: [String: NodeUsage] = [:]
 
@@ -90,13 +94,15 @@ final class ClusterSession {
         async let pools = try? api.databasePools()
         async let updates = try? api.updateStatus()
         async let backup = Result { try await api.backupTarget() }
+        async let objectStore = Result { try await api.objectStore() }
         let target: SystemOverview.Backup = switch await backup {
         case .success(let target?): .set(target)
         case .success(nil): .none
         case .failure: .unavailable
         }
         system = SystemOverview(
-            nodes: await nodes, pools: await pools, updates: await updates, backup: target)
+            nodes: await nodes, pools: await pools, updates: await updates, backup: target,
+            objectStore: SystemOverview.ObjectStorage(await objectStore))
         if let users = await users { self.users = users }
         if let meta = await meta { self.meta = meta }
     }
@@ -159,6 +165,29 @@ final class ClusterSession {
         async let metrics = try? api.databasePoolMetrics(name: name, window: .hour)
         if let detail = await detail { poolDetails[name] = detail }
         if let current = await metrics?.current { poolUsage[name] = current }
+    }
+
+    /// The object store and its buckets. A failed read keeps what is on
+    /// screen; the store's absence is remembered.
+    func loadObjectStorage() async {
+        async let buckets = try? api.objectStoreBuckets()
+        do {
+            system.objectStore = SystemOverview.ObjectStorage(.success(try await api.objectStore()))
+        } catch is CancellationError {
+        } catch {
+            if handleUnauthorized(error) { return }
+            if case .unknown = system.objectStore { system.objectStore = .unavailable }
+        }
+        if let buckets = await buckets { objectStoreBuckets = buckets }
+    }
+
+    /// Sets the volume size limit; nil returns it to the default. The
+    /// masters restart to apply it.
+    func saveVolumeSize(_ megabytes: Int?) async throws {
+        let store = try await gated {
+            try await self.api.saveObjectStorageSettings(.init(volumeSizeLimitMb: megabytes))
+        }
+        system.objectStore = .set(store)
     }
 
     /// Re-reads the update document, keeping the last one when the cluster
@@ -337,10 +366,31 @@ struct SystemOverview {
         case set(BackupTarget)
     }
 
+    /// The object store: unknown before the first read, none on an
+    /// installation without the object-storage capability.
+    enum ObjectStorage {
+        case unknown, unavailable, none
+        case set(ObjectStore)
+
+        init(_ result: Result<ObjectStore?, any Error>) {
+            switch result {
+            case .success(let store?): self = .set(store)
+            case .success(nil): self = .none
+            case .failure: self = .unavailable
+            }
+        }
+
+        var store: ObjectStore? {
+            if case .set(let store) = self { return store }
+            return nil
+        }
+    }
+
     var nodes: [ClusterNode]?
     var pools: [DatabasePool]?
     var updates: UpdateStatus?
     var backup: Backup = .unknown
+    var objectStore: ObjectStorage = .unknown
 }
 
 private extension Result where Failure == any Error {
