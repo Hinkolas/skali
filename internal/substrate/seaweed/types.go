@@ -132,6 +132,7 @@ type volumeInfo struct {
 	FileCount        int64            `json:"FileCount"`
 	DeleteCount      int64            `json:"DeleteCount"`
 	DeletedByteCount int64            `json:"DeletedByteCount"`
+	ReadOnly         bool             `json:"ReadOnly"`
 	ReplicaPlacement replicaPlacement `json:"ReplicaPlacement"`
 }
 
@@ -250,6 +251,13 @@ type ServerSlots struct {
 	URL     string
 	Max     int
 	Volumes int
+	// Node is the Kubernetes node the server runs on, when known.
+	Node string
+	// WritableVolumeBytes lists the sizes of the server's writable
+	// volumes, when read: a server derives its slots from its free disk
+	// less the room these may still grow into under the limit, which is
+	// what an estimate for another limit needs.
+	WritableVolumeBytes []int64
 }
 
 // Free is the slots the server has left.

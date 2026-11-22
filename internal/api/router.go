@@ -529,13 +529,14 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 						}
 					}
 
-					// The object store: its volume size setting and live
-					// slot capacity are a plain admin read; changing the
-					// setting is a write below.
+					// The object store: its volume size setting, live slot
+					// capacity and bucket inventory are plain admin reads;
+					// changing the setting is a write below.
 					var osh *objectStorageHandlers
 					if d.Databases != nil {
-						osh = &objectStorageHandlers{db: d.Databases, storage: d.ObjectStorage, reconcile: d.Reconcile, managed: d.ManagedCluster}
+						osh = &objectStorageHandlers{db: d.Databases, storage: d.ObjectStorage, reconcile: d.Reconcile, metrics: d.Metrics, managed: d.ManagedCluster}
 						ac.route(r, "GET", "/system/object-storage", classInstanceAdmin, osh.get)
+						ac.route(r, "GET", "/system/object-storage/buckets", classInstanceAdmin, osh.buckets)
 					}
 
 					// Writes additionally need sudo mode. RequireAdmin sits

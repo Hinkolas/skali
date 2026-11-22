@@ -331,8 +331,10 @@ an empty volume costs next to nothing on disk, but it still takes a slot.
 
 The limit defaults to 256 MB, which leaves a 40 GB node about 130 slots;
 at replication `001` a small bucket takes two of them. Admins can change
-it with `PUT /v1/system/object-storage/settings`, between 64 MB and
-30000 MB.
+it in Studio under System, Object storage, or with
+`PUT /v1/system/object-storage/settings`, between 64 MB and 30000 MB.
+Studio estimates the buckets each size would still fit from every volume
+server's free disk.
 A change re-renders the masters, which restart one at a time (with a
 single master, writes pause briefly); the volume servers pick the new
 limit up from their next heartbeat and recompute their slots without a
@@ -344,7 +346,12 @@ large buckets on big disks; a smaller one suits many small buckets.
 
 `GET /v1/system/object-storage` reports the slots, how many are free, and
 an estimate of how many more buckets can be created before a new
-bucket's first write finds no room. When no volume can grow any more
+bucket's first write finds no room; Studio's Object storage page shows
+the same next to every bucket with its owner, what it stores and the
+slots it holds (`GET /v1/system/object-storage/buckets`), largest first.
+Collections no live bucket claims (left behind by a deletion that did not
+finish, or created outside Skali) are listed apart: they hold their slots
+until removed in the SeaweedFS shell. When no volume can grow any more
 (no server has a free slot, or fewer servers than the replication needs
 copies), every bucket reports `store-degraded`: new buckets, and buckets
 whose volumes are full, refuse writes until the limit is lowered or disk

@@ -102,3 +102,23 @@ func TestCollectionSizesDedupes(t *testing.T) {
 	_, ok := stats[""]
 	require.False(t, ok, "the default collection is not a bucket")
 }
+
+// WritableVolumeSizes lists every writable volume per server, replicas and
+// the default collection included (they all reserve room on the disk), and
+// leaves out read-only volumes, which reserve none.
+func TestWritableVolumeSizes(t *testing.T) {
+	t.Parallel()
+	fixture := `{"Volumes":{"DataCenters":{"dc":{"rack":{
+		"10.42.0.80:8080":[
+			{"Id":1,"Collection":"bucket-a","Size":1000},
+			{"Id":7,"Collection":"","Size":50},
+			{"Id":9,"Collection":"bucket-c","Size":9000,"ReadOnly":true}],
+		"10.42.1.12:8080":[
+			{"Id":1,"Collection":"bucket-a","Size":1000}]
+	}}}}}`
+	client := NewClient(&fakeDoer{body: []byte(fixture), status: 200}, "skali-platform")
+	sizes, err := client.WritableVolumeSizes(context.Background())
+	require.NoError(t, err)
+	require.ElementsMatch(t, []int64{1000, 50}, sizes["10.42.0.80:8080"])
+	require.Equal(t, []int64{1000}, sizes["10.42.1.12:8080"])
+}

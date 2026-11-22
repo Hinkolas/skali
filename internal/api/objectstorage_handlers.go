@@ -6,9 +6,12 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/Hinkolas/skali/internal/dbstore"
+	"github.com/Hinkolas/skali/internal/metrics"
 	"github.com/Hinkolas/skali/internal/module"
 	"github.com/Hinkolas/skali/internal/reconcile"
 	"github.com/Hinkolas/skali/internal/store"
@@ -23,6 +26,9 @@ type ObjectStorage interface {
 	// ObjectStoreSlots reads the volume servers' slot accounting from the
 	// master.
 	ObjectStoreSlots(ctx context.Context) (seaweed.SlotReport, error)
+	// ObjectStoreCollections reads every bucket collection's footprint
+	// from the master.
+	ObjectStoreCollections(ctx context.Context) (map[string]seaweed.CollectionStat, error)
 	// EnqueueObjectStoreSettings re-applies the store now instead of at
 	// the next resync.
 	EnqueueObjectStoreSettings()
@@ -33,7 +39,9 @@ type objectStorageHandlers struct {
 	storage ObjectStorage
 	// reconcile serves the provider observation; nil reports none.
 	reconcile *reconcile.Kernel
-	managed   bool
+	// metrics serves the nodes' newest free disk; nil leaves it out.
+	metrics *metrics.Service
+	managed bool
 }
 
 // objectStoreVolumeSizePayload is the volume size limit: what the masters
@@ -47,12 +55,19 @@ type objectStoreVolumeSizePayload struct {
 	MaxMB     int  `json:"max_mb"`
 }
 
-// objectStoreServerPayload is one volume server's slots.
+// objectStoreServerPayload is one volume server's slots, with the inputs
+// of an estimate under another volume size limit: a server offers its
+// volumes plus (free disk - the room its writable volumes may still grow
+// into) / limit. free_disk_bytes is its node's newest sampled free disk,
+// null when unknown; writable_volume_bytes null when unread.
 type objectStoreServerPayload struct {
-	URL       string `json:"url"`
-	Slots     int    `json:"slots"`
-	UsedSlots int    `json:"used_slots"`
-	FreeSlots int    `json:"free_slots"`
+	URL                 string  `json:"url"`
+	Node                string  `json:"node,omitempty"`
+	Slots               int     `json:"slots"`
+	UsedSlots           int     `json:"used_slots"`
+	FreeSlots           int     `json:"free_slots"`
+	FreeDiskBytes       *int64  `json:"free_disk_bytes"`
+	WritableVolumeBytes []int64 `json:"writable_volume_bytes"`
 }
 
 // objectStoreCapacityPayload is the store's live slot accounting. Every
@@ -154,7 +169,7 @@ func (h *objectStorageHandlers) payload(r *http.Request, row store.ObjectStore) 
 		if err != nil {
 			slog.WarnContext(r.Context(), "read object store slots", "err", err)
 		} else {
-			out.Capacity = capacityPayload(slots, row.Replication, h.managed)
+			out.Capacity = capacityPayload(slots, row.Replication, h.managed, h.freeDisk(r))
 		}
 	}
 	if h.reconcile != nil {
@@ -180,7 +195,25 @@ func (h *objectStorageHandlers) payload(r *http.Request, row store.ObjectStore) 
 	return out, nil
 }
 
-func capacityPayload(slots seaweed.SlotReport, replication string, managed bool) *objectStoreCapacityPayload {
+// freeDisk maps node names to their newest sampled free disk; empty when
+// no sampler runs or the read fails.
+func (h *objectStorageHandlers) freeDisk(r *http.Request) map[string]int64 {
+	free := map[string]int64{}
+	if h.metrics == nil {
+		return free
+	}
+	nodes, err := h.metrics.NodesStorage(r.Context(), time.Now())
+	if err != nil {
+		slog.WarnContext(r.Context(), "read node storage", "err", err)
+		return free
+	}
+	for _, node := range nodes {
+		free[node.Name] = node.AvailableBytes
+	}
+	return free
+}
+
+func capacityPayload(slots seaweed.SlotReport, replication string, managed bool, freeDisk map[string]int64) *objectStoreCapacityPayload {
 	copies := seaweed.ReplicationCopies(replication)
 	perBucket := seaweed.VolumesPerBucket(managed)
 	out := &objectStoreCapacityPayload{
@@ -194,9 +227,14 @@ func capacityPayload(slots seaweed.SlotReport, replication string, managed bool)
 		Servers:          make([]objectStoreServerPayload, 0, len(slots.Servers)),
 	}
 	for _, server := range slots.Servers {
-		out.Servers = append(out.Servers, objectStoreServerPayload{
-			URL: server.URL, Slots: server.Max, UsedSlots: server.Volumes, FreeSlots: server.Free(),
-		})
+		entry := objectStoreServerPayload{
+			URL: server.URL, Node: server.Node, Slots: server.Max, UsedSlots: server.Volumes, FreeSlots: server.Free(),
+			WritableVolumeBytes: server.WritableVolumeBytes,
+		}
+		if free, ok := freeDisk[server.Node]; ok && server.Node != "" {
+			entry.FreeDiskBytes = &free
+		}
+		out.Servers = append(out.Servers, entry)
 	}
 	return out
 }
@@ -281,4 +319,134 @@ func (h *objectStorageHandlers) putSettings(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, struct {
 		Store objectStorePayload `json:"store"`
 	}{payload})
+}
+
+// objectStoreUsagePayload is one collection's footprint on the volume
+// servers. used_bytes is what the quota is judged on (deleted objects no
+// longer count), disk_bytes what the volumes hold until the vacuum
+// reclaims the deleted bytes, both counted once however many copies
+// exist. volumes are the collection's distinct volumes, slots their
+// copies: the volume slots it holds.
+type objectStoreUsagePayload struct {
+	UsedBytes    int64 `json:"used_bytes"`
+	DiskBytes    int64 `json:"disk_bytes"`
+	DeletedBytes int64 `json:"deleted_bytes"`
+	EntryCount   int64 `json:"entry_count"`
+	Volumes      int   `json:"volumes"`
+	Slots        int   `json:"slots"`
+}
+
+func usagePayload(stat seaweed.CollectionStat) *objectStoreUsagePayload {
+	return &objectStoreUsagePayload{
+		UsedBytes:    stat.LiveBytes,
+		DiskBytes:    stat.SizeBytes,
+		DeletedBytes: stat.DeletedBytes,
+		EntryCount:   stat.EntryCount,
+		Volumes:      stat.Volumes,
+		Slots:        stat.Replicas,
+	}
+}
+
+// objectStoreBucketPayload is one live bucket with its owner. Project and
+// environment are null for system-owned buckets; usage is null when the
+// master could not be read. A bucket that has not been written to holds
+// no volume yet and reports zero usage.
+type objectStoreBucketPayload struct {
+	BucketName  string                   `json:"bucket_name"`
+	Owner       string                   `json:"owner"`
+	SystemKey   string                   `json:"system_key,omitempty"`
+	ServiceKey  string                   `json:"service_key,omitempty"`
+	Project     *poolProjectRef          `json:"project"`
+	Environment *poolEnvironmentRef      `json:"environment"`
+	Phase       string                   `json:"phase"`
+	Visibility  string                   `json:"visibility"`
+	QuotaBytes  int64                    `json:"quota_bytes"`
+	Usage       *objectStoreUsagePayload `json:"usage"`
+	CreatedAt   time.Time                `json:"created_at"`
+}
+
+// objectStoreCollectionPayload is a collection on the volume servers that
+// no live bucket claims: what a deleted bucket left behind (its teardown
+// had not dropped the collection) or a bucket created outside skali. It
+// still holds its slots.
+type objectStoreCollectionPayload struct {
+	Collection string                  `json:"collection"`
+	Usage      objectStoreUsagePayload `json:"usage"`
+}
+
+type objectStoreBucketsPayload struct {
+	Buckets   []objectStoreBucketPayload     `json:"buckets"`
+	Unclaimed []objectStoreCollectionPayload `json:"unclaimed"`
+	// UsageObserved is false when the master could not be read: every
+	// usage is null and unclaimed collections are unknown.
+	UsageObserved bool `json:"usage_observed"`
+}
+
+// buckets serves every live bucket on the store with its owner and live
+// footprint, plus the collections no live bucket claims.
+func (h *objectStorageHandlers) buckets(w http.ResponseWriter, r *http.Request) {
+	row, ok := h.liveStore(w, r)
+	if !ok {
+		return
+	}
+	rows, err := h.db.ListStoreBucketDetails(r.Context(), row.ID)
+	if err != nil {
+		writeInternalError(r.Context(), w, "list object store buckets", err)
+		return
+	}
+	var stats map[string]seaweed.CollectionStat
+	if h.storage != nil {
+		stats, err = h.storage.ObjectStoreCollections(r.Context())
+		if err != nil {
+			slog.WarnContext(r.Context(), "read object store collections", "err", err)
+			stats = nil
+		}
+	}
+	payload := objectStoreBucketsPayload{
+		Buckets:       make([]objectStoreBucketPayload, 0, len(rows)),
+		Unclaimed:     []objectStoreCollectionPayload{},
+		UsageObserved: stats != nil,
+	}
+	claimed := make(map[string]bool, len(rows))
+	for _, bucket := range rows {
+		claimed[bucket.BucketName] = true
+		entry := objectStoreBucketPayload{
+			BucketName: bucket.BucketName,
+			Owner:      bucket.OwnerKind,
+			SystemKey:  bucket.SystemKey,
+			ServiceKey: bucket.ServiceKey,
+			Phase:      bucket.Phase,
+			Visibility: bucket.Visibility,
+			QuotaBytes: bucket.StorageQuotaBytes,
+			CreatedAt:  bucket.CreatedAt,
+		}
+		if stats != nil {
+			entry.Usage = usagePayload(stats[bucket.BucketName])
+		}
+		if bucket.ProjectID != nil && bucket.ProjectName != nil {
+			entry.Project = &poolProjectRef{ID: bucket.ProjectID.String(), Name: *bucket.ProjectName}
+			if bucket.ProjectDisplayName != nil {
+				entry.Project.DisplayName = *bucket.ProjectDisplayName
+			}
+		}
+		if bucket.EnvironmentID != nil && bucket.EnvironmentName != nil {
+			entry.Environment = &poolEnvironmentRef{ID: bucket.EnvironmentID.String(), Name: *bucket.EnvironmentName}
+		}
+		payload.Buckets = append(payload.Buckets, entry)
+	}
+	for collection, stat := range stats {
+		if claimed[collection] {
+			continue
+		}
+		payload.Unclaimed = append(payload.Unclaimed, objectStoreCollectionPayload{
+			Collection: collection, Usage: *usagePayload(stat),
+		})
+	}
+	slices.SortFunc(payload.Unclaimed, func(a, b objectStoreCollectionPayload) int {
+		if a.Usage.Slots != b.Usage.Slots {
+			return b.Usage.Slots - a.Usage.Slots
+		}
+		return strings.Compare(a.Collection, b.Collection)
+	})
+	writeJSON(w, http.StatusOK, payload)
 }

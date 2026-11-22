@@ -292,6 +292,78 @@ func (q *Queries) ListLiveBucketClaimOutputsByEnvironment(ctx context.Context, e
 	return items, nil
 }
 
+const listLiveBucketDetailsByStore = `-- name: ListLiveBucketDetailsByStore :many
+SELECT a.id AS allocation_id, a.bucket_name, a.created_at,
+       c.id AS claim_id, c.owner_kind, c.system_key, c.service_key, c.phase,
+       c.visibility, c.storage_quota_bytes,
+       c.project_id, c.environment_id,
+       p.name AS project_name, p.display_name AS project_display_name,
+       e.name AS environment_name
+FROM bucket_allocations a
+JOIN bucket_claims c ON c.id = a.claim_id
+LEFT JOIN projects p ON p.id = c.project_id
+LEFT JOIN environments e ON e.id = c.environment_id
+WHERE a.store_id = $1 AND a.released_at IS NULL
+ORDER BY (c.owner_kind = 'system'), p.name, e.name, c.service_key, c.system_key
+`
+
+type ListLiveBucketDetailsByStoreRow struct {
+	AllocationID       uuid.UUID
+	BucketName         string
+	CreatedAt          time.Time
+	ClaimID            uuid.UUID
+	OwnerKind          string
+	SystemKey          string
+	ServiceKey         string
+	Phase              string
+	Visibility         string
+	StorageQuotaBytes  int64
+	ProjectID          *uuid.UUID
+	EnvironmentID      *uuid.UUID
+	ProjectName        *string
+	ProjectDisplayName *string
+	EnvironmentName    *string
+}
+
+// Every live bucket on a store with its claim, the owning project and
+// environment (NULL for system claims): the object storage page's bucket
+// list in one query. Usage comes from the store itself.
+func (q *Queries) ListLiveBucketDetailsByStore(ctx context.Context, storeID uuid.UUID) ([]ListLiveBucketDetailsByStoreRow, error) {
+	rows, err := q.db.Query(ctx, listLiveBucketDetailsByStore, storeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListLiveBucketDetailsByStoreRow
+	for rows.Next() {
+		var i ListLiveBucketDetailsByStoreRow
+		if err := rows.Scan(
+			&i.AllocationID,
+			&i.BucketName,
+			&i.CreatedAt,
+			&i.ClaimID,
+			&i.OwnerKind,
+			&i.SystemKey,
+			&i.ServiceKey,
+			&i.Phase,
+			&i.Visibility,
+			&i.StorageQuotaBytes,
+			&i.ProjectID,
+			&i.EnvironmentID,
+			&i.ProjectName,
+			&i.ProjectDisplayName,
+			&i.EnvironmentName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const publishBucketAllocationOutputs = `-- name: PublishBucketAllocationOutputs :one
 UPDATE bucket_allocations
 SET endpoint = $1,

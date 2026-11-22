@@ -243,6 +243,7 @@ var notFoundAllowed = map[string]bool{
 	"GET /v1/system/database-pools/{name}":                 true,
 	"GET /v1/system/database-pools/{name}/metrics":         true,
 	"GET /v1/system/object-storage":                        true,
+	"GET /v1/system/object-storage/buckets":                true,
 	"GET /v1/steps/{id}/build-insights":                    true,
 }
 

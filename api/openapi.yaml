@@ -2878,6 +2878,36 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /v1/system/object-storage/buckets:
+    get:
+      operationId: listObjectStorageBuckets
+      summary: List every bucket on the object store with its usage
+      description: |
+        Admin only. Every live bucket on the store with its owner (project
+        and environment, null for system-owned buckets), claim phase,
+        visibility, quota and `usage`: its footprint read from the master
+        on request. used_bytes is what the quota is judged on, disk_bytes
+        what the volumes hold until the vacuum reclaims deleted objects,
+        both counted once whatever the replication; volumes are the
+        bucket's distinct volumes and slots their copies, the volume slots
+        it holds. A bucket never written to holds no volume yet.
+        `unclaimed` lists collections on the volume servers that no live
+        bucket claims (left behind by a deleted bucket, or created outside
+        skali), largest slot holders first; they still hold their slots.
+        When the master cannot be read, usage_observed is false, every
+        usage is null and unclaimed is empty. 404 when the installation
+        has no object store.
+      tags: [system]
+      responses:
+        "200":
+          description: The buckets.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ObjectStoreBuckets" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /v1/system/object-storage/settings:
     put:
       operationId: putObjectStorageSettings
@@ -6787,12 +6817,25 @@ components:
                   type: array
                   items:
                     type: object
-                    required: [url, slots, used_slots, free_slots]
+                    description: |
+                      One volume server. A server offers its volumes plus
+                      (free disk - the room its writable volumes may still
+                      grow into under the limit) / limit as slots;
+                      free_disk_bytes (its node's newest sampled free disk,
+                      null when unknown) and writable_volume_bytes (null
+                      when unread) are the inputs of an estimate under
+                      another limit.
+                    required: [url, slots, used_slots, free_slots, free_disk_bytes, writable_volume_bytes]
                     properties:
                       url: { type: string }
+                      node: { type: string }
                       slots: { type: integer }
                       used_slots: { type: integer }
                       free_slots: { type: integer }
+                      free_disk_bytes: { type: [integer, "null"], format: int64 }
+                      writable_volume_bytes:
+                        type: [array, "null"]
+                        items: { type: integer, format: int64 }
         observed:
           oneOf:
             - type: "null"
@@ -6811,6 +6854,67 @@ components:
                 volume_size_limit_mb: { type: integer, description: The limit the store was observed under; trails a change until the next pass. }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+    ObjectStoreUsage:
+      type: object
+      required: [used_bytes, disk_bytes, deleted_bytes, entry_count, volumes, slots]
+      properties:
+        used_bytes: { type: integer, format: int64 }
+        disk_bytes: { type: integer, format: int64 }
+        deleted_bytes: { type: integer, format: int64 }
+        entry_count:
+          type: integer
+          format: int64
+          description: Live entries; a large object is several entries.
+        volumes: { type: integer }
+        slots: { type: integer, description: Volume copies, the slots the collection holds. }
+    ObjectStoreBuckets:
+      type: object
+      required: [buckets, unclaimed, usage_observed]
+      properties:
+        buckets:
+          type: array
+          items:
+            type: object
+            required: [bucket_name, owner, project, environment, phase, visibility, quota_bytes, usage, created_at]
+            properties:
+              bucket_name: { type: string }
+              owner: { type: string, enum: [service, system] }
+              system_key: { type: string }
+              service_key: { type: string }
+              project:
+                oneOf:
+                  - type: "null"
+                  - type: object
+                    required: [id, name, display_name]
+                    properties:
+                      id: { type: string, format: uuid }
+                      name: { type: string }
+                      display_name: { type: string }
+              environment:
+                oneOf:
+                  - type: "null"
+                  - type: object
+                    required: [id, name]
+                    properties:
+                      id: { type: string, format: uuid }
+                      name: { type: string }
+              phase: { type: string }
+              visibility: { type: string, enum: [private, public-read] }
+              quota_bytes: { type: integer, format: int64, description: 0 means no quota. }
+              usage:
+                oneOf:
+                  - type: "null"
+                  - $ref: "#/components/schemas/ObjectStoreUsage"
+              created_at: { type: string, format: date-time }
+        unclaimed:
+          type: array
+          items:
+            type: object
+            required: [collection, usage]
+            properties:
+              collection: { type: string }
+              usage: { $ref: "#/components/schemas/ObjectStoreUsage" }
+        usage_observed: { type: boolean }
     ValueEntry:
       type: object
       description: |
