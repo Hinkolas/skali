@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Hinkolas/skali/internal/dbstore"
@@ -141,9 +142,30 @@ func (h *objectStorageHandlers) liveStore(w http.ResponseWriter, r *http.Request
 // payload projects the store with its live capacity. A failed master
 // read degrades to a null capacity: the recorded facts still answer.
 func (h *objectStorageHandlers) payload(r *http.Request, row store.ObjectStore) (objectStorePayload, error) {
-	buckets, err := h.db.CountStoreAllocations(r.Context(), row.ID)
-	if err != nil {
-		return objectStorePayload{}, err
+	// The count, the master's slots and the nodes' free disk are
+	// independent; the master read dominates, so nothing waits behind it.
+	var (
+		wg       sync.WaitGroup
+		buckets  int64
+		countErr error
+		slots    seaweed.SlotReport
+		slotsErr error
+		freeDisk map[string]int64
+	)
+	wg.Go(func() {
+		buckets, countErr = h.db.CountStoreAllocations(r.Context(), row.ID)
+	})
+	if h.storage != nil {
+		wg.Go(func() {
+			slots, slotsErr = h.storage.ObjectStoreSlots(r.Context())
+		})
+		wg.Go(func() {
+			freeDisk = h.freeDisk(r)
+		})
+	}
+	wg.Wait()
+	if countErr != nil {
+		return objectStorePayload{}, countErr
 	}
 	out := objectStorePayload{
 		Name:          row.Name,
@@ -165,11 +187,10 @@ func (h *objectStorageHandlers) payload(r *http.Request, row store.ObjectStore) 
 		UpdatedAt: row.UpdatedAt,
 	}
 	if h.storage != nil {
-		slots, err := h.storage.ObjectStoreSlots(r.Context())
-		if err != nil {
-			slog.WarnContext(r.Context(), "read object store slots", "err", err)
+		if slotsErr != nil {
+			slog.WarnContext(r.Context(), "read object store slots", "err", slotsErr)
 		} else {
-			out.Capacity = capacityPayload(slots, row.Replication, h.managed, h.freeDisk(r))
+			out.Capacity = capacityPayload(slots, row.Replication, h.managed, freeDisk)
 		}
 	}
 	if h.reconcile != nil {
@@ -389,18 +410,28 @@ func (h *objectStorageHandlers) buckets(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	rows, err := h.db.ListStoreBucketDetails(r.Context(), row.ID)
+	// The bucket rows and the master's volume listing are independent reads.
+	var (
+		wg    sync.WaitGroup
+		rows  []store.ListLiveBucketDetailsByStoreRow
+		err   error
+		stats map[string]seaweed.CollectionStat
+	)
+	if h.storage != nil {
+		wg.Go(func() {
+			var statsErr error
+			stats, statsErr = h.storage.ObjectStoreCollections(r.Context())
+			if statsErr != nil {
+				slog.WarnContext(r.Context(), "read object store collections", "err", statsErr)
+				stats = nil
+			}
+		})
+	}
+	rows, err = h.db.ListStoreBucketDetails(r.Context(), row.ID)
+	wg.Wait()
 	if err != nil {
 		writeInternalError(r.Context(), w, "list object store buckets", err)
 		return
-	}
-	var stats map[string]seaweed.CollectionStat
-	if h.storage != nil {
-		stats, err = h.storage.ObjectStoreCollections(r.Context())
-		if err != nil {
-			slog.WarnContext(r.Context(), "read object store collections", "err", err)
-			stats = nil
-		}
 	}
 	payload := objectStoreBucketsPayload{
 		Buckets:       make([]objectStoreBucketPayload, 0, len(rows)),

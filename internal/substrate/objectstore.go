@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -701,34 +702,49 @@ var errNoSeaweed = errors.New("substrate: no seaweed client configured")
 // as the volume servers have recomputed their slots. Each server carries
 // its node and its writable volumes' sizes when they can be read, the
 // inputs of an estimate under another limit; failing to read them only
-// leaves them out.
+// leaves them out. The three reads are independent and each crosses the API
+// server, so they run side by side.
 func (c *Controller) ObjectStoreSlots(ctx context.Context) (seaweed.SlotReport, error) {
 	if c.deps.Seaweed == nil {
 		return seaweed.SlotReport{}, errNoSeaweed
 	}
-	report, err := c.deps.Seaweed.Slots(ctx)
-	if err != nil {
-		return report, err
-	}
-	writable, err := c.deps.Seaweed.WritableVolumeSizes(ctx)
-	if err != nil {
-		slog.WarnContext(ctx, "substrate: read writable volume sizes", "err", err)
-	}
-	nodes := map[string]string{}
+	var (
+		wg       sync.WaitGroup
+		report   seaweed.SlotReport
+		slotsErr error
+		writable map[string][]int64
+		nodes    = map[string]string{}
+	)
+	wg.Go(func() {
+		report, slotsErr = c.deps.Seaweed.Slots(ctx)
+	})
+	wg.Go(func() {
+		var err error
+		writable, err = c.deps.Seaweed.WritableVolumeSizes(ctx)
+		if err != nil {
+			slog.WarnContext(ctx, "substrate: read writable volume sizes", "err", err)
+		}
+	})
 	if c.deps.Cluster != nil {
 		app := seaweed.AllInOneApp
 		if c.cfg.Managed {
 			app = seaweed.VolumeApp
 		}
-		pods, err := c.deps.Cluster.ListPods(ctx, Namespace, "app="+app)
-		if err != nil {
-			slog.WarnContext(ctx, "substrate: list volume server pods", "err", err)
-		}
-		for _, pod := range pods {
-			if pod.Status.PodIP != "" && pod.Spec.NodeName != "" {
-				nodes[pod.Status.PodIP] = pod.Spec.NodeName
+		wg.Go(func() {
+			pods, err := c.deps.Cluster.ListPods(ctx, Namespace, "app="+app)
+			if err != nil {
+				slog.WarnContext(ctx, "substrate: list volume server pods", "err", err)
 			}
-		}
+			for _, pod := range pods {
+				if pod.Status.PodIP != "" && pod.Spec.NodeName != "" {
+					nodes[pod.Status.PodIP] = pod.Spec.NodeName
+				}
+			}
+		})
+	}
+	wg.Wait()
+	if slotsErr != nil {
+		return report, slotsErr
 	}
 	for i := range report.Servers {
 		server := &report.Servers[i]

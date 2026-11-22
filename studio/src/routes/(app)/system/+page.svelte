@@ -9,7 +9,7 @@
 	import PageHeader from '#lib/components/shell/PageHeader.svelte';
 	import Card from '#lib/components/ui/Card.svelte';
 	import Pill from '#lib/components/ui/Pill.svelte';
-	import { storeSummary } from '#lib/types/objectstorage.ts';
+	import { storeSummary, type ObjectStore } from '#lib/types/objectstorage.ts';
 	import { updatePresentation } from '#lib/types/updates.ts';
 	import type { PageData } from './$types';
 
@@ -56,14 +56,14 @@
 	);
 
 	// One line about the object store: how many buckets it holds, or that it
-	// is running out of room for more.
-	const objectStoreSummary = $derived(
-		data.objectStore
-			? storeSummary(data.objectStore)
-			: data.objectStore === null
+	// is running out of room for more. Streamed: the pill waits, not the page.
+	function objectStoreSummary(store: ObjectStore | null | undefined) {
+		return store
+			? storeSummary(store)
+			: store === null
 				? { text: 'no store', tone: 'neutral' as const, title: undefined }
-				: { text: 'unavailable', tone: 'neutral' as const, title: undefined }
-	);
+				: { text: 'unavailable', tone: 'neutral' as const, title: undefined };
+	}
 
 	// One line about updates: running, available, up to date, or unknown.
 	const summary = $derived.by(() => {
@@ -159,11 +159,10 @@
 					>Every bucket by what it stores, room for more and the volume size</span
 				>
 			</div>
-			<Pill
-				text={objectStoreSummary.text}
-				tone={objectStoreSummary.tone}
-				title={objectStoreSummary.title}
-			/>
+			{#await data.objectStore then store}
+				{@const summary = objectStoreSummary(store)}
+				<Pill text={summary.text} tone={summary.tone} title={summary.title} />
+			{/await}
 			<ChevronRight size={16} class="text-text-faint flex-none" />
 		</a>
 	</Card>

@@ -102,9 +102,12 @@ final class ClusterSession {
         }
         system = SystemOverview(
             nodes: await nodes, pools: await pools, updates: await updates, backup: target,
-            objectStore: SystemOverview.ObjectStorage(await objectStore))
+            objectStore: system.objectStore)
         if let users = await users { self.users = users }
         if let meta = await meta { self.meta = meta }
+        // The object store reads the master live, by far the slowest of
+        // these: the other rows do not wait for it.
+        system.objectStore = SystemOverview.ObjectStorage(await objectStore)
     }
 
     /// The account screen: the user (2FA state can change elsewhere) and
