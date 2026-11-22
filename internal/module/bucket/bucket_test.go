@@ -174,6 +174,23 @@ func TestEvaluate(t *testing.T) {
 	require.Equal(t, "store-degraded", degraded.Diagnostics[0].Code)
 	require.Contains(t, degraded.Diagnostics[0].Message, "2 of the object store's filer pods share node node-a")
 	require.Contains(t, degraded.Diagnostics[0].Message, "deleting one pod reschedules it apart")
+	// No room for another volume (issue #289): every bucket that needs a
+	// new volume refuses writes, so the store degrades with the slots
+	// named. Slots that were not read this pass stay silent.
+	exhausted := module.ObservedResource{Kind: module.KindObjectStore,
+		ObjectStore: &module.ObjectStoreStatus{MastersDesired: 1, MastersReady: 1, VolumeServersDesired: 6,
+			VolumeServersReady: 6, FilerReady: true, S3Ready: true,
+			SlotsObserved: true, VolumeSlots: 26, FreeVolumeSlots: 0, VolumeHeadroom: 0}}
+	degraded = service.Evaluate([]module.ObservedResource{fresh(),
+		seaweedSource(module.SourceFresh), claimResource("provisioned", ""), exhausted, usage})
+	require.Equal(t, module.HealthDegraded, degraded.Health)
+	require.Equal(t, "store-degraded", degraded.Diagnostics[0].Code)
+	require.Contains(t, degraded.Diagnostics[0].Message, "no room for another volume (0 of 26 volume slots free)")
+	unread := exhausted
+	unread.ObjectStore = &module.ObjectStoreStatus{MastersDesired: 1, MastersReady: 1, VolumeServersDesired: 6,
+		VolumeServersReady: 6, FilerReady: true, S3Ready: true}
+	require.Equal(t, module.HealthHealthy, service.Evaluate([]module.ObservedResource{fresh(),
+		seaweedSource(module.SourceFresh), claimResource("provisioned", ""), unread, usage}).Health)
 	// Releasing reflects the persisted destructive decision.
 	releasing := service.Evaluate([]module.ObservedResource{fresh(), claimResource("releasing", "")})
 	require.Equal(t, module.HealthProgressing, releasing.Health)

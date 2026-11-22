@@ -2844,6 +2844,89 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /v1/system/object-storage:
+    get:
+      operationId: getObjectStorage
+      summary: Get the object store with its volume size setting and capacity
+      description: |
+        Admin only. The installation's SeaweedFS store: its recorded shape
+        (masters, volume servers, replication), the volume size limit the
+        masters run with (`volume_size`: the value, whether it is the
+        default, and the bounds a change must stay within), the number of
+        live buckets, and `capacity`: the volume servers' slot accounting
+        read from the master on request. Every bucket is its own
+        collection holding at least `volumes_per_bucket` volumes with
+        `copies` replicas each, and a volume server derives its slots from
+        its free disk divided by the volume size limit, so slots, not
+        bytes, decide how many buckets fit; `bucket_headroom` estimates
+        how many more buckets can be created before a new bucket's first
+        write finds no room. capacity is null when the master cannot be
+        read (or in API-only mode), observed while the provider observer
+        has not reported. 404 when the installation has no object store.
+      tags: [system]
+      responses:
+        "200":
+          description: The object store.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [store]
+                properties:
+                  store: { $ref: "#/components/schemas/ObjectStore" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/system/object-storage/settings:
+    put:
+      operationId: putObjectStorageSettings
+      summary: Change the object store's volume size limit
+      description: |
+        Admin only, sudo mode. volume_size_limit_mb null returns the limit
+        to the default, a number sets it (within volume_size.min_mb and
+        volume_size.max_mb). The substrate re-renders the masters at once;
+        they restart one at a time (a single master briefly pauses
+        writes). The volume servers pick the new limit up from their next
+        heartbeat and recompute their slots without a restart. Existing
+        volumes are not rewritten: under a lower limit, volumes at or over
+        it are sealed (still readable and deletable) and their buckets
+        grow a new volume on the next write.
+      tags: [system]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [volume_size_limit_mb]
+              properties:
+                volume_size_limit_mb:
+                  type: [integer, "null"]
+      responses:
+        "200":
+          description: The object store with the new setting.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [store]
+                properties:
+                  store: { $ref: "#/components/schemas/ObjectStore" }
+        "400":
+          description: Malformed body or nothing to update.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422":
+          description: The limit is outside the allowed range.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /v1/nodes:
     get:
       operationId: listNodes
@@ -6659,6 +6742,75 @@ components:
             memory_budget_bytes: { type: [integer, "null"], format: int64 }
             max_connections: { type: [integer, "null"] }
 
+    ObjectStore:
+      type: object
+      description: |
+        The installation's SeaweedFS object store. managed is false for
+        the local platform's all-in-one process.
+      required: [name, state, image, managed, masters, volume_servers, replication, volume_size, buckets, capacity, observed, created_at, updated_at]
+      properties:
+        name: { type: string }
+        state: { type: string, enum: [active, releasing] }
+        image: { type: string }
+        managed: { type: boolean }
+        masters: { type: integer }
+        volume_servers: { type: integer }
+        replication: { type: string, description: SeaweedFS replication code, e.g. "001". }
+        volume_size:
+          type: object
+          required: [limit_mb, default, default_mb, min_mb, max_mb]
+          properties:
+            limit_mb: { type: integer }
+            default: { type: boolean, description: The limit is the platform default; no value was set. }
+            default_mb: { type: integer }
+            min_mb: { type: integer }
+            max_mb: { type: integer }
+        buckets: { type: integer, format: int64, description: Live buckets allocated on the store. }
+        capacity:
+          oneOf:
+            - type: "null"
+            - type: object
+              required: [slots, used_slots, free_slots, volume_headroom, bucket_headroom, volumes_per_bucket, copies, servers]
+              properties:
+                slots: { type: integer }
+                used_slots: { type: integer }
+                free_slots: { type: integer }
+                volume_headroom:
+                  type: integer
+                  description: More volumes that can grow with every copy on a different server.
+                bucket_headroom:
+                  type: integer
+                  description: More buckets that can be created before a new bucket's first write finds no room; an estimate.
+                volumes_per_bucket: { type: integer }
+                copies: { type: integer }
+                servers:
+                  type: array
+                  items:
+                    type: object
+                    required: [url, slots, used_slots, free_slots]
+                    properties:
+                      url: { type: string }
+                      slots: { type: integer }
+                      used_slots: { type: integer }
+                      free_slots: { type: integer }
+        observed:
+          oneOf:
+            - type: "null"
+            - type: object
+              required: [state, stale_since, masters_ready, volume_servers_ready, filer_ready, s3_ready, under_replicated_volumes, replication_pending_volumes, volume_size_limit_mb]
+              properties:
+                state: { type: string, enum: [fresh, stale, unknown] }
+                stale_since: { type: [string, "null"], format: date-time }
+                masters_ready: { type: integer }
+                volume_servers_ready: { type: integer }
+                filer_ready: { type: boolean }
+                s3_ready: { type: boolean }
+                s3_detail: { type: string }
+                under_replicated_volumes: { type: integer }
+                replication_pending_volumes: { type: integer }
+                volume_size_limit_mb: { type: integer, description: The limit the store was observed under; trails a change until the next pass. }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
     ValueEntry:
       type: object
       description: |

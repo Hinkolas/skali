@@ -586,6 +586,19 @@ func (k *Kernel) DatabaseCluster(name string) (*module.DatabaseClusterStatus, bo
 	return &status, true
 }
 
+// ObjectStore returns the object store's newest observation and the
+// provider observer's freshness; ok is false before the first pass and in
+// API-only mode.
+func (k *Kernel) ObjectStore(sharedKey, source string) (*module.ObjectStoreStatus, module.SourceStatus, bool) {
+	status, registered := k.deps.Observed.SourceNamed(source)
+	obj, ok := k.deps.Observed.SharedObject(sharedKey, module.KindObjectStore)
+	if !registered || !ok || obj.ObjectStore == nil {
+		return nil, status, false
+	}
+	store := *obj.ObjectStore
+	return &store, status, true
+}
+
 // DatabaseConnections returns one pool's newest connection check, keyed by
 // pool name, and the connection observer's freshness. ok is false before
 // the first check, and in API-only mode where nothing checks.

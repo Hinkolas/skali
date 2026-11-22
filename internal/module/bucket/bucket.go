@@ -250,6 +250,10 @@ func storeDiagnostics(store *module.ObjectStoreStatus) []module.Diagnostic {
 	if !store.FilerReady {
 		warn("store-degraded", "the object store's metadata service is not serving")
 	}
+	if store.SlotsObserved && store.VolumeServersReady > 0 && store.VolumeHeadroom == 0 {
+		warn("store-degraded", fmt.Sprintf("the object store has no room for another volume (%d of %d volume slots free); new buckets and buckets whose volumes are full refuse writes until the volume size limit is lowered or disk is added",
+			store.FreeVolumeSlots, store.VolumeSlots))
+	}
 	return diagnostics
 }
 

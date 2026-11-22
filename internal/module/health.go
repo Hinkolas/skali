@@ -368,6 +368,20 @@ type ObjectStoreStatus struct {
 	// apart at scheduling time, but a replacement scheduled during a node
 	// outage stays where it landed when the node returns.
 	Placement []ComponentPlacement
+	// SlotsObserved reports whether the slot accounting below was read on
+	// this pass; the counts are zero, not exhausted, when it was not.
+	SlotsObserved bool
+	// VolumeSlots and FreeVolumeSlots are the volume servers' slots, all
+	// and unused. VolumeHeadroom is how many more volumes can grow with
+	// every copy on a different server; zero means a bucket that needs a
+	// new volume (every new bucket, and any bucket whose volumes are full)
+	// refuses writes. BucketHeadroom is how many more buckets fit.
+	VolumeSlots     int32
+	FreeVolumeSlots int32
+	VolumeHeadroom  int32
+	BucketHeadroom  int32
+	// VolumeSizeLimitMB is the limit the masters were rendered with.
+	VolumeSizeLimitMB int32
 }
 
 // ComponentPlacement is one node carrying more of a store component's

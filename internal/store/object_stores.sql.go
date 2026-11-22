@@ -16,7 +16,7 @@ INSERT INTO object_stores (
     id, name, masters, volume_servers, replication,
     volume_storage_bytes, image, state
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, name, masters, volume_servers, replication, volume_storage_bytes, image, state, created_at, updated_at
+RETURNING id, name, masters, volume_servers, replication, volume_storage_bytes, image, state, created_at, updated_at, volume_size_limit_mb
 `
 
 type CreateObjectStoreParams struct {
@@ -53,12 +53,13 @@ func (q *Queries) CreateObjectStore(ctx context.Context, arg CreateObjectStorePa
 		&i.State,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.VolumeSizeLimitMb,
 	)
 	return i, err
 }
 
 const getLiveObjectStore = `-- name: GetLiveObjectStore :one
-SELECT id, name, masters, volume_servers, replication, volume_storage_bytes, image, state, created_at, updated_at FROM object_stores WHERE state <> 'released'
+SELECT id, name, masters, volume_servers, replication, volume_storage_bytes, image, state, created_at, updated_at, volume_size_limit_mb FROM object_stores WHERE state <> 'released'
 `
 
 // Live means not released: a releasing store still occupies the name so a
@@ -77,12 +78,13 @@ func (q *Queries) GetLiveObjectStore(ctx context.Context) (ObjectStore, error) {
 		&i.State,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.VolumeSizeLimitMb,
 	)
 	return i, err
 }
 
 const getObjectStore = `-- name: GetObjectStore :one
-SELECT id, name, masters, volume_servers, replication, volume_storage_bytes, image, state, created_at, updated_at FROM object_stores WHERE id = $1
+SELECT id, name, masters, volume_servers, replication, volume_storage_bytes, image, state, created_at, updated_at, volume_size_limit_mb FROM object_stores WHERE id = $1
 `
 
 func (q *Queries) GetObjectStore(ctx context.Context, id uuid.UUID) (ObjectStore, error) {
@@ -99,12 +101,13 @@ func (q *Queries) GetObjectStore(ctx context.Context, id uuid.UUID) (ObjectStore
 		&i.State,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.VolumeSizeLimitMb,
 	)
 	return i, err
 }
 
 const getObjectStoreForUpdate = `-- name: GetObjectStoreForUpdate :one
-SELECT id, name, masters, volume_servers, replication, volume_storage_bytes, image, state, created_at, updated_at FROM object_stores WHERE id = $1 FOR UPDATE
+SELECT id, name, masters, volume_servers, replication, volume_storage_bytes, image, state, created_at, updated_at, volume_size_limit_mb FROM object_stores WHERE id = $1 FOR UPDATE
 `
 
 func (q *Queries) GetObjectStoreForUpdate(ctx context.Context, id uuid.UUID) (ObjectStore, error) {
@@ -121,6 +124,7 @@ func (q *Queries) GetObjectStoreForUpdate(ctx context.Context, id uuid.UUID) (Ob
 		&i.State,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.VolumeSizeLimitMb,
 	)
 	return i, err
 }
@@ -173,6 +177,26 @@ type SetObjectStoreStateParams struct {
 // race a 0-row no-op instead of an illegal jump.
 func (q *Queries) SetObjectStoreState(ctx context.Context, arg SetObjectStoreStateParams) (int64, error) {
 	result, err := q.db.Exec(ctx, setObjectStoreState, arg.ID, arg.ToState, arg.FromState)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const setObjectStoreVolumeSizeLimit = `-- name: SetObjectStoreVolumeSizeLimit :execrows
+UPDATE object_stores
+SET volume_size_limit_mb = $2, updated_at = now()
+WHERE id = $1 AND state <> 'released'
+`
+
+type SetObjectStoreVolumeSizeLimitParams struct {
+	ID                uuid.UUID
+	VolumeSizeLimitMb *int32
+}
+
+// The admin's volume size limit; NULL returns the store to the default.
+func (q *Queries) SetObjectStoreVolumeSizeLimit(ctx context.Context, arg SetObjectStoreVolumeSizeLimitParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setObjectStoreVolumeSizeLimit, arg.ID, arg.VolumeSizeLimitMb)
 	if err != nil {
 		return 0, err
 	}

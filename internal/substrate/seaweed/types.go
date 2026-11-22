@@ -3,6 +3,7 @@ package seaweed
 import (
 	"fmt"
 	"slices"
+	"strings"
 )
 
 // The wire shapes of the two single-writer documents the substrate
@@ -80,6 +81,10 @@ type CollectionStat struct {
 	LiveBytes    int64
 	DeletedBytes int64
 	EntryCount   int64
+	// Volumes counts the collection's distinct volumes; Replicas counts
+	// their copies, the volume slots the collection holds on the servers.
+	Volumes  int
+	Replicas int
 }
 
 // collectionStats folds one volume listing into per-collection footprints.
@@ -90,11 +95,17 @@ func collectionStats(vs volStatus) map[string]CollectionStat {
 		for _, rack := range dc {
 			for _, node := range rack {
 				for _, vol := range node {
-					if vol.Collection == "" || seen[vol.ID] {
+					if vol.Collection == "" {
+						continue
+					}
+					s := stats[vol.Collection]
+					s.Replicas++
+					if seen[vol.ID] {
+						stats[vol.Collection] = s
 						continue
 					}
 					seen[vol.ID] = true
-					s := stats[vol.Collection]
+					s.Volumes++
 					s.SizeBytes += vol.Size
 					s.DeletedBytes += vol.DeletedByteCount
 					s.LiveBytes += max(vol.Size-vol.DeletedByteCount, 0)
@@ -216,15 +227,137 @@ type clusterStatus struct {
 }
 
 // dirStatus is the master /dir/status answer, reduced to the volume-server
-// topology the probe counts.
+// topology the probe counts and the slots each server offers.
 type dirStatus struct {
 	Topology struct {
 		DataCenters []struct {
 			Racks []struct {
 				DataNodes []struct {
-					URL string `json:"Url"`
+					URL     string `json:"Url"`
+					Volumes int64  `json:"Volumes"`
+					Max     int64  `json:"Max"`
 				} `json:"DataNodes"`
 			} `json:"Racks"`
 		} `json:"DataCenters"`
 	} `json:"Topology"`
+}
+
+// ServerSlots is one volume server's volume slots: how many volumes it
+// may hold (Max, which a server started with -max=0 derives from its free
+// disk divided by the volume size limit and recomputes as either changes)
+// and how many it holds, replicas included.
+type ServerSlots struct {
+	URL     string
+	Max     int
+	Volumes int
+}
+
+// Free is the slots the server has left.
+func (s ServerSlots) Free() int {
+	return max(s.Max-s.Volumes, 0)
+}
+
+// SlotReport is the store's volume slot accounting from the master's
+// directory topology, one entry per connected volume server.
+type SlotReport struct {
+	Servers []ServerSlots
+}
+
+// Total is every server's slot count summed.
+func (r SlotReport) Total() int {
+	total := 0
+	for _, server := range r.Servers {
+		total += server.Max
+	}
+	return total
+}
+
+// Used is every volume replica the servers hold.
+func (r SlotReport) Used() int {
+	used := 0
+	for _, server := range r.Servers {
+		used += server.Volumes
+	}
+	return used
+}
+
+// Free is the slots left across the servers.
+func (r SlotReport) Free() int {
+	free := 0
+	for _, server := range r.Servers {
+		free += server.Free()
+	}
+	return free
+}
+
+// VolumeHeadroom is how many more volumes the servers can grow when each
+// needs a slot on `copies` different servers (the replication code's
+// copy count): the largest n with sum(min(free_i, n)) >= copies * n, the
+// condition under which n groups of distinct servers exist. A server
+// cannot hold two copies of one volume, so a single server with plenty of
+// room adds at most one copy per volume.
+func (r SlotReport) VolumeHeadroom(copies int) int {
+	copies = max(copies, 1)
+	free := make([]int, 0, len(r.Servers))
+	total := 0
+	for _, server := range r.Servers {
+		if f := server.Free(); f > 0 {
+			free = append(free, f)
+			total += f
+		}
+	}
+	if len(free) < copies {
+		return 0
+	}
+	// The condition is monotone in n; search the largest n that meets it.
+	lo, hi := 0, total/copies
+	for lo < hi {
+		n := (lo + hi + 1) / 2
+		sum := 0
+		for _, f := range free {
+			sum += min(f, n)
+		}
+		if sum >= copies*n {
+			lo = n
+		} else {
+			hi = n - 1
+		}
+	}
+	return lo
+}
+
+// BucketHeadroom is how many more buckets the store can take before a new
+// bucket's first write finds no room: each new bucket is a collection
+// whose first write grows volumesPerBucket volumes (VolumesPerBucket),
+// each with its replication's copies on different servers. An estimate:
+// existing buckets take slots as they fill their volumes, and a server's
+// slot count follows its free disk.
+func (r SlotReport) BucketHeadroom(replication string, volumesPerBucket int) int {
+	return r.VolumeHeadroom(ReplicationCopies(replication)) / max(volumesPerBucket, 1)
+}
+
+// ReplicationCopies is how many copies a replication code keeps of every
+// volume; a malformed code counts as one.
+func ReplicationCopies(code string) int {
+	placement, err := parseReplication(code)
+	if err != nil {
+		return 1
+	}
+	return placement.copies()
+}
+
+// slotReport folds the directory topology into per-server slots.
+func slotReport(ds dirStatus) SlotReport {
+	report := SlotReport{Servers: []ServerSlots{}}
+	for _, dc := range ds.Topology.DataCenters {
+		for _, rack := range dc.Racks {
+			for _, node := range rack.DataNodes {
+				report.Servers = append(report.Servers, ServerSlots{
+					URL: node.URL, Max: int(node.Max), Volumes: int(node.Volumes),
+				})
+			}
+		}
+	}
+	slices.SortFunc(report.Servers, func(a, b ServerSlots) int { return strings.Compare(a.URL, b.URL) })
+	return report
 }

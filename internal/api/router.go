@@ -97,6 +97,10 @@ type Deps struct {
 	// change; nil (API-only mode) reports budgets as unknown and leaves
 	// changes for the next resync. The pool routes need Databases.
 	Pools PoolTuner
+	// ObjectStorage reads the object store's capacity and wakes the
+	// substrate after a settings change; nil (API-only mode) reports the
+	// capacity as unknown. The object storage routes need Databases.
+	ObjectStorage ObjectStorage
 	// SecretReader is the sanctioned request-time Secret read behind
 	// credential reveal; nil (API-only mode) disables reveal.
 	SecretReader func(ctx context.Context, namespace, name string) (map[string][]byte, error)
@@ -525,6 +529,15 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 						}
 					}
 
+					// The object store: its volume size setting and live
+					// slot capacity are a plain admin read; changing the
+					// setting is a write below.
+					var osh *objectStorageHandlers
+					if d.Databases != nil {
+						osh = &objectStorageHandlers{db: d.Databases, storage: d.ObjectStorage, reconcile: d.Reconcile, managed: d.ManagedCluster}
+						ac.route(r, "GET", "/system/object-storage", classInstanceAdmin, osh.get)
+					}
+
 					// Writes additionally need sudo mode. RequireAdmin sits
 					// outside RequireFresh so non-admins get "forbidden", never a
 					// reauth prompt that would not help them.
@@ -555,6 +568,12 @@ func newRouter(d Deps) (*chi.Mux, *access) {
 						// Retuning a pool can restart its instances.
 						if plh != nil {
 							ac.route(r, "PUT", "/system/database-pools/{name}/settings", classInstanceAdmin, plh.putSettings)
+						}
+
+						// Changing the volume size limit rolls the object
+						// store's masters.
+						if osh != nil {
+							ac.route(r, "PUT", "/system/object-storage/settings", classInstanceAdmin, osh.putSettings)
 						}
 					})
 				})

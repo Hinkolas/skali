@@ -314,9 +314,41 @@ answer an authenticated request (or answers an anonymous one) or no volume
 server serves; degraded, with the shortfall named, when a master or volume
 server is down against the recorded shape, when volumes are missing
 copies or still carry a previous replication setting, when replicas of a
-component share a node, when the metadata service does not serve, or when the public
+component share a node, when the metadata service does not serve, when
+the store has no room for another volume (see below), or when the public
 endpoint's certificate is not issued yet (presigned URLs for the public
 host fail TLS until it is).
+
+### Volume size and bucket capacity
+
+SeaweedFS stores objects in volumes, and every bucket is its own
+collection with volumes of its own: deleting a bucket frees its volumes at
+once, but each bucket holds at least one volume (one per replica) however
+little it stores. A volume server offers a number of volume slots, its
+free disk divided by the store's volume size limit, so the limit decides
+how many buckets fit. The limit is a growth ceiling, not an allocation:
+an empty volume costs next to nothing on disk, but it still takes a slot.
+
+The limit defaults to 256 MB, which leaves a 40 GB node about 130 slots;
+at replication `001` a small bucket takes two of them. Admins can change
+it with `PUT /v1/system/object-storage/settings`, between 64 MB and
+30000 MB.
+A change re-renders the masters, which restart one at a time (with a
+single master, writes pause briefly); the volume servers pick the new
+limit up from their next heartbeat and recompute their slots without a
+restart. Nothing is rewritten: under a lower limit, volumes already at or
+over it are sealed (still readable and deletable) and their buckets grow
+a new volume on the next write; under a higher one, sealed volumes below
+it become writable again. A larger limit suits a store that holds a few
+large buckets on big disks; a smaller one suits many small buckets.
+
+`GET /v1/system/object-storage` reports the slots, how many are free, and
+an estimate of how many more buckets can be created before a new
+bucket's first write finds no room. When no volume can grow any more
+(no server has a free slot, or fewer servers than the replication needs
+copies), every bucket reports `store-degraded`: new buckets, and buckets
+whose volumes are full, refuse writes until the limit is lowered or disk
+is added.
 
 ## Backups and restores
 

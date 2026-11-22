@@ -24,5 +24,5 @@ func TestCollectionStatsChargesLiveBytes(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(raw), &vs))
 	stats := collectionStats(vs)
 	require.Len(t, stats, 1, "the collection-less system volume is not a bucket")
-	require.Equal(t, CollectionStat{SizeBytes: 1500, LiveBytes: 1200, DeletedBytes: 300, EntryCount: 5}, stats["b-files"])
+	require.Equal(t, CollectionStat{SizeBytes: 1500, LiveBytes: 1200, DeletedBytes: 300, EntryCount: 5, Volumes: 2, Replicas: 3}, stats["b-files"])
 }

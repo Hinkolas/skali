@@ -123,3 +123,20 @@ func (s *Service) SetObjectStoreShape(ctx context.Context, id uuid.UUID, in Stor
 	}
 	return nil
 }
+
+// SetObjectStoreVolumeSizeLimit records the admin's volume size limit in
+// megabytes; nil returns the store to the platform default. The substrate
+// renders the masters from it on its next pass.
+func (s *Service) SetObjectStoreVolumeSizeLimit(ctx context.Context, id uuid.UUID, mb *int32) error {
+	rows, err := s.st.SetObjectStoreVolumeSizeLimit(ctx, store.SetObjectStoreVolumeSizeLimitParams{
+		ID:                id,
+		VolumeSizeLimitMb: mb,
+	})
+	if err != nil {
+		return fmt.Errorf("dbstore: set object store volume size limit: %w", err)
+	}
+	if rows == 0 {
+		return ErrNotFound
+	}
+	return nil
+}

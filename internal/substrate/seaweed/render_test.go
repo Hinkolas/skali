@@ -36,6 +36,8 @@ func TestRenderProductionShape(t *testing.T) {
 	require.NotNil(t, sts)
 	require.EqualValues(t, 3, *sts.Spec.Replicas)
 	require.Contains(t, sts.Spec.Template.Spec.Containers[0].Args, "-defaultReplication=001")
+	require.Contains(t, sts.Spec.Template.Spec.Containers[0].Args, "-volumeSizeLimitMB=256",
+		"an unset limit renders the default")
 	require.Contains(t, sts.Spec.Template.Spec.Containers[0].Args,
 		"-peers=seaweed-master-0.seaweed-master.skali-platform.svc.cluster.local:9333,"+
 			"seaweed-master-1.seaweed-master.skali-platform.svc.cluster.local:9333,"+
@@ -283,4 +285,29 @@ func TestRenderFilerStorePool(t *testing.T) {
 	secret := RenderFilerStoreSecret("ns", "pg", 5432, "user", "secret", "meta")
 	require.Equal(t, "8", secret.StringData["WEED_POSTGRES2_CONNECTION_MAX_IDLE"])
 	require.Equal(t, "10", secret.StringData["WEED_POSTGRES2_CONNECTION_MAX_OPEN"])
+}
+
+// TestRenderVolumeSizeLimit: the recorded limit reaches the masters of
+// both shapes.
+func TestRenderVolumeSizeLimit(t *testing.T) {
+	t.Parallel()
+	spec := StoreSpec{Namespace: "skali-platform", Masters: 1, Replication: "000", Managed: true, VolumeSizeLimitMB: 1024}
+	found := false
+	for _, object := range RenderProduction(spec) {
+		if sts, ok := object.(*appsv1.StatefulSet); ok {
+			require.Contains(t, sts.Spec.Template.Spec.Containers[0].Args, "-volumeSizeLimitMB=1024")
+			found = true
+		}
+	}
+	require.True(t, found)
+
+	spec.Managed = false
+	found = false
+	for _, object := range RenderDev(spec) {
+		if deployment, ok := object.(*appsv1.Deployment); ok && deployment.Name == AllInOneApp {
+			require.Contains(t, deployment.Spec.Template.Spec.Containers[0].Args, "-master.volumeSizeLimitMB=1024")
+			found = true
+		}
+	}
+	require.True(t, found)
 }
