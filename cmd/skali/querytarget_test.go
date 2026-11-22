@@ -47,7 +47,7 @@ func TestResolveQueryTargetUnboundNeedsEnvironment(t *testing.T) {
 	stageRemotes(t, "r", map[string]*cliconfig.Remote{"r": {Master: install.srv.URL}})
 
 	_, err := resolveQueryTarget(context.Background(), t.TempDir(), "", "")
-	require.ErrorContains(t, err, "--environment is required")
+	require.ErrorContains(t, err, "--env is required")
 	require.ErrorContains(t, err, "checkout")
 }
 
@@ -83,7 +83,7 @@ func TestResolveQueryTargetExplicitRemoteWinsOverBinding(t *testing.T) {
 	// The override ignores the binding entirely, so the environment must be
 	// named; the bound default must not leak across remotes.
 	_, err := resolveQueryTarget(context.Background(), project.Root, "", "local")
-	require.ErrorContains(t, err, "--environment is required")
+	require.ErrorContains(t, err, "--env is required")
 
 	target, err := resolveQueryTarget(context.Background(), project.Root, "local", "local")
 	require.NoError(t, err)
@@ -141,7 +141,7 @@ func TestResolveQueryProjectFallsBackToManifestName(t *testing.T) {
 
 	// Outside any checkout the environment is the only handle.
 	_, err = resolveQueryProject(context.Background(), t.TempDir(), "", "", "local")
-	require.ErrorContains(t, err, "--environment is required")
+	require.ErrorContains(t, err, "--env is required")
 	scope, err = resolveQueryProject(context.Background(), t.TempDir(), "", "local", "local")
 	require.NoError(t, err)
 	require.Equal(t, "p9", scope.project.ID)

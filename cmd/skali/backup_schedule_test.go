@@ -57,11 +57,11 @@ func TestBackupScheduleSetShowRemove(t *testing.T) {
 	require.Contains(t, out, "schedule       daily at 03:00 UTC (0 3 * * *)")
 	require.Contains(t, out, "keep           7 days")
 	require.Contains(t, out, "next           ")
-	require.Contains(t, out, "skali backup list --environment production")
+	require.Contains(t, out, "skali backup list --env production")
 
 	// A changed schedule on another environment, without asking; the
 	// expression is normalized.
-	out, err = runCommand(t, newBackupCommand(), "", "schedule", "set", "--yes", "--environment", "staging",
+	out, err = runCommand(t, newBackupCommand(), "", "schedule", "set", "--yes", "--env", "staging",
 		"--every", "0  */6 * * *", "--keep", "36h")
 	require.NoError(t, err)
 	require.Contains(t, out, "environment    staging")

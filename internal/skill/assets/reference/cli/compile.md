@@ -13,8 +13,8 @@ Compile a Skali manifest into canonical IR, a revision, or Kubernetes objects
 
 | Flag | Type | Default | Meaning |
 | --- | --- | --- | --- |
+| `--env` | `string` | `local` | environment name recorded in revision output |
 | `--env-file` | `string` | `""` | dotenv file used to resolve project variables for revision or kubernetes output |
-| `--environment` | `string` | `local` | environment name recorded in revision output |
 | `--help`, `-h` | `bool` | `false` | help for compile |
 | `--image` | `stringArray` | `[]` | prepared image for a build application, as service=reference |
 | `--manifest` | `string` | `""` | manifest path; defaults to skali.yml or skali.yaml |

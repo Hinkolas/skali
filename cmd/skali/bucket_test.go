@@ -42,7 +42,7 @@ func TestBucketRotateConfirmsWithSummary(t *testing.T) {
 	require.Contains(t, out, "keep working for 1h, then fail")
 	require.Empty(t, install.posts)
 
-	out, err = rotate("\n", "files", "--environment", "staging", "--retire-after", "90m")
+	out, err = rotate("\n", "files", "--env", "staging", "--retire-after", "90m")
 	require.NoError(t, err)
 	require.Contains(t, out, "environment  staging")
 	require.Contains(t, out, "previous key retires after 90m")

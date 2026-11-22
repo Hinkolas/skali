@@ -12,9 +12,9 @@ import (
 	"github.com/Hinkolas/skali/internal/manifest"
 )
 
-var errEnvironmentRequired = errors.New("--environment is required (or run inside a checkout linked by skali deploy)")
+var errEnvironmentRequired = errors.New("--env is required (or run inside a checkout linked by skali deploy)")
 
-var errProjectRequired = errors.New("--project or --environment is required (or run inside a checkout)")
+var errProjectRequired = errors.New("--project or --env is required (or run inside a checkout)")
 
 // queryTarget is the resolved read-only context of an inspection command:
 // the remote to query and the environment to query it about.

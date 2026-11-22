@@ -499,7 +499,7 @@ func (d *dispatcher) runLoop(ctx context.Context, remoteName, want, path string)
 				return d.failure(err)
 			}
 		}
-		status, err := d.spawn(ctx, path, d.args, contextEnvironment(d.environ(), d.selected))
+		status, err := d.spawn(ctx, path, argsForRelease(d.args, want), contextEnvironment(d.environ(), d.selected))
 		unlock()
 		if err != nil {
 			return d.failure(fmt.Errorf("cached skali %s could not start: %w", want, err))

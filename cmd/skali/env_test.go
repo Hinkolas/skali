@@ -107,8 +107,8 @@ func TestEnvSetBuildsPatch(t *testing.T) {
 	require.Contains(t, out, "deploy policy  promote-only (from staging, qa)")
 	require.Contains(t, out, "priority       normal")
 	require.Contains(t, out, "backups        off")
-	// --promote-from any clears the list; --environment picks another.
-	out, err = runCommand(t, newEnvCommand(), "", "set", "--yes", "--environment", "staging", "--promote-from", "any", "--deploy-policy", "promote-only")
+	// --promote-from any clears the list; --env picks another.
+	out, err = runCommand(t, newEnvCommand(), "", "set", "--yes", "--env", "staging", "--promote-from", "any", "--deploy-policy", "promote-only")
 	require.NoError(t, err)
 	require.Contains(t, out, "environment    staging")
 	require.Contains(t, out, "deploy policy  promote-only (from any)")

@@ -326,7 +326,7 @@ func checkDeployPolicy(settings *client.EnvironmentSettings, access, environment
 		if len(settings.PromoteFrom) > 0 {
 			from = strings.Join(settings.PromoteFrom, " or ")
 		}
-		return false, fmt.Errorf("environment %s is promote-only: promote with skali deploy --from %s --environment %s; "+
+		return false, fmt.Errorf("environment %s is promote-only: promote with skali deploy --from %s --env %s; "+
 			"environment admins may pass --bypass-protection", environment, from, environment)
 	}
 	if !roleAtLeast(access, "admin") {
@@ -355,7 +355,7 @@ const (
 	// valuesStoredRemembered is the stored values by remembered choice.
 	valuesStoredRemembered
 	// valuesFlag is an explicit --env-file; one-shot, the memory is left
-	// alone like --environment leaves the binding alone.
+	// alone like --env leaves the binding alone.
 	valuesFlag
 	// valuesRemembered is the env file remembered for the environment.
 	valuesRemembered
@@ -1725,7 +1725,7 @@ func resolveDeployTarget(ctx context.Context, out io.Writer, in *bufio.Reader,
 	}
 	printHeader(out, style, headerRow{"project", projectName, filepath.Base(project.Path)})
 
-	// The bound environment is the default; --environment overrides it for
+	// The bound environment is the default; --env overrides it for
 	// one invocation without rewriting the binding.
 	if opts.Environment == "" && binding != nil {
 		opts.Environment = binding.Environment
@@ -1819,7 +1819,7 @@ func resolveEnvironmentTarget(ctx context.Context, out io.Writer, in *bufio.Read
 	if opts.Environment == "" {
 		switch {
 		case !prompts:
-			return nil, errors.New("--environment is required")
+			return nil, errors.New("--env is required")
 		case len(environments) == 0 && planOnly:
 			return nil, fmt.Errorf("project %s has no environments on %s; run skali deploy to create one",
 				projectName, master)

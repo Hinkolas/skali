@@ -7,11 +7,11 @@ Read with `skali skill read cli workflows access`.
   role per member and the effective role per environment (`*` marks an
   explicit per-environment role). `skali access set <email> <role>` grants
   or changes a project role (read, deploy, maintain, admin); with
-  `--environment <name>` it sets an explicit role on that environment only
+  `--env <name>` it sets an explicit role on that environment only
   (`none` locks it). `skali access remove <email>` removes a member.
 - `skali env list` lists environments with their state (active, stopped,
   removing), your access, priority, deploy policy, ceiling, and backup
-  schedule; `skali env create <name>`, `skali env set --environment <name>
+  schedule; `skali env create <name>`, `skali env set --env <name>
   --max-role read --deploy-policy promote-only`, `skali env stop <name>` (takes
   the workloads down, keeps the data; the next deploy starts it again), and
   `skali env remove <name>` (purge: deletes the environment with all its data,
@@ -31,7 +31,7 @@ Read with `skali skill read cli workflows access`.
 - A deploy needs `deploy` on the environment for an unchanged definition and
   `maintain` to change the definition or stage values; refusals name the
   required role. A promote-only environment refuses direct deploys and
-  names the way in: `skali deploy --from <source> --environment <name>`
+  names the way in: `skali deploy --from <source> --env <name>`
   promotes a source's active revision (sources limited by `--promote-from`).
   Environment admins may force a direct deploy with
   `skali deploy --bypass-protection`; it asks for the password when the

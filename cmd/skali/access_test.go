@@ -88,7 +88,7 @@ func TestAccessSetRoutesMembershipAndCells(t *testing.T) {
 	out, err := runCommand(t, newAccessCommand(), "", "set", "carol@example.com", "maintain")
 	require.NoError(t, err)
 	require.Contains(t, out, "carol@example.com  maintain on project flowdemo")
-	out, err = runCommand(t, newAccessCommand(), "", "set", "carol@example.com", "none", "--environment", "production")
+	out, err = runCommand(t, newAccessCommand(), "", "set", "carol@example.com", "none", "--env", "production")
 	require.NoError(t, err)
 	require.Contains(t, out, "carol@example.com  none on environment production")
 	require.Equal(t, []string{"member:p1:carol@example.com:maintain", "cell:p1-e1:carol@example.com:none"}, install.posts)
@@ -98,16 +98,16 @@ func TestAccessSetRoutesMembershipAndCells(t *testing.T) {
 	require.ErrorContains(t, err, "none is not a project role")
 	_, err = runCommand(t, newAccessCommand(), "", "set", "carol@example.com", "owner")
 	require.ErrorContains(t, err, "role must be one of read, deploy, maintain, admin")
-	_, err = runCommand(t, newAccessCommand(), "", "set", "dave@example.com", "deploy", "--environment", "staging")
+	_, err = runCommand(t, newAccessCommand(), "", "set", "dave@example.com", "deploy", "--env", "staging")
 	require.ErrorContains(t, err, "grant a project role first: skali access set dave@example.com read")
-	_, err = runCommand(t, newAccessCommand(), "", "set", "dave@example.com", "deploy", "--environment", "nothing")
+	_, err = runCommand(t, newAccessCommand(), "", "set", "dave@example.com", "deploy", "--env", "nothing")
 	require.ErrorContains(t, err, "environment nothing does not exist in project flowdemo")
 }
 
 func TestAccessRmConfirmsMembership(t *testing.T) {
 	install := seedAccessScope(t)
 	// Cells drop without a question; memberships ask, honoring y/N and --yes.
-	out, err := runCommand(t, newAccessCommand(), "", "rm", "bob@example.com", "--environment", "staging")
+	out, err := runCommand(t, newAccessCommand(), "", "rm", "bob@example.com", "--env", "staging")
 	require.NoError(t, err)
 	require.Contains(t, out, "removed the explicit role of bob@example.com on environment staging")
 	_, err = runCommand(t, newAccessCommand(), "n\n", "rm", "bob@example.com")

@@ -33,7 +33,7 @@ verify compatibility. `skali skill read` lists the top-level reference topics.
 
 ## Reading flags
 
-Only flags listed on a command's own page apply to it. `--remote`, `--environment`,
+Only flags listed on a command's own page apply to it. `--remote`, `--env`,
 `--manifest`, `--offline`, and `--yes` are not universal. `--` ends flag parsing
 before an exec or host command's arguments. Empty string defaults mean no
 explicit value; help explains runtime defaults. `stringSlice` accepts commas

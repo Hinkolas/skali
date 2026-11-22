@@ -41,7 +41,7 @@ func newValuesCommand() *cobra.Command {
 			return printStoredValues(ctx, command.OutOrStdout(), target.api, target.environmentID)
 		},
 	}
-	command.Flags().StringVar(&environment, "environment", "", "environment to list; defaults to the checkout binding")
+	command.Flags().StringVar(&environment, "env", "", "environment to list; defaults to the checkout binding")
 	command.Flags().StringVar(&remote, "remote", "",
 		"remote to target for this one invocation, ignoring the checkout binding and the current remote")
 	return command

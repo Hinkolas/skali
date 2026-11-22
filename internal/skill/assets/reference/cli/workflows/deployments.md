@@ -20,7 +20,7 @@ the server's plan still uses stored values until deployment stages the file.
 confirmation, builds/imports artifacts locally, uploads them, and starts a
 server-owned run. Both select the remote and environment from the checkout
 binding unless overridden. First use can prompt to create/select a project
-and environment. `--environment` names the target; the manifest's name is a
+and environment. `--env` names the target; the manifest's name is a
 project name, not an environment. There is no universal `--project` flag.
 
 - `--env-file PATH` stages the referenced keys for this run; `--pick-env-file`

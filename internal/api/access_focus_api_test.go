@@ -485,7 +485,7 @@ func TestDeployProtection(t *testing.T) {
 		status, body := a.do("POST", "/v1/environments/"+prodID+path, owner, direct)
 		require.Equal(t, http.StatusForbidden, status, "%s %v", path, body)
 		require.Equal(t, "environment_protected", errorCode(t, body))
-		require.Contains(t, errorMessage(t, body), "environment production is promote-only: promote with skali deploy --from staging --environment production")
+		require.Contains(t, errorMessage(t, body), "environment production is promote-only: promote with skali deploy --from staging --env production")
 	}
 
 	// A promotion from the listed source passes on deploy; one from

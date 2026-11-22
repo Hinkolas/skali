@@ -29,8 +29,8 @@ returns as soon as the run is handed over.
 | `--build` | `string` | `auto` | build executor: local or auto (auto follows installation policy; local today) |
 | `--bypass-protection` | `bool` | `false` | deploy into a promote-only environment anyway (environment admins with a recent login; recorded on the run) |
 | `--detach` | `bool` | `false` | return after builds and uploads hand the run to the server, without waiting for the rollout |
+| `--env` | `string` | `""` | target environment name (defaults to the checkout binding, prompted interactively otherwise) |
 | `--env-file` | `string` | `""` | dotenv file to stage as candidate values for this run only (default: remembered choice; with --from: stored target values; plan only validates the file) |
-| `--environment` | `string` | `""` | target environment name (defaults to the checkout binding, prompted interactively otherwise) |
 | `--force` | `bool` | `false` | deploy even when nothing changed; application workloads are restarted (data is untouched) |
 | `--from` | `string` | `""` | promote the active revision of another environment of this project; nothing builds and no manifest is read |
 | `--help`, `-h` | `bool` | `false` | help for deploy |

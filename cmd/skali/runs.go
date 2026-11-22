@@ -74,7 +74,7 @@ func newRunCommand() *cobra.Command {
 			return nil
 		},
 	}
-	list.Flags().StringVar(&environment, "environment", "",
+	list.Flags().StringVar(&environment, "env", "",
 		"environment name (default: the checkout binding)")
 	command.AddCommand(list)
 
@@ -264,7 +264,7 @@ func newLogsCommand() *cobra.Command {
 			return streamRuntimeLogs(command, target.api, target.environmentID, service)
 		},
 	}
-	command.Flags().StringVar(&environment, "environment", "",
+	command.Flags().StringVar(&environment, "env", "",
 		"environment name (default: the checkout binding)")
 	command.Flags().StringVar(&remote, "remote", "",
 		"remote to target for this one invocation, ignoring the checkout binding and the current remote")

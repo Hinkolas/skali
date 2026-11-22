@@ -60,7 +60,7 @@ func (d *dispatcher) help(inv invocation) (bool, int) {
 	if _, valid := installer.CachedBinary(path); !valid {
 		return home(fmt.Sprintf("target %s requires skali %s, which is not available in cache", target.Name, release))
 	}
-	status, err := d.spawn(ctx, path, helpArgs(d.args), contextEnvironment(d.environ(), d.selected))
+	status, err := d.spawn(ctx, path, argsForRelease(helpArgs(d.args), release), contextEnvironment(d.environ(), d.selected))
 	if err != nil {
 		return home(fmt.Sprintf("cached skali %s could not start: %v", release, err))
 	}

@@ -222,7 +222,7 @@ func newEnvSetCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "set",
 		Short: "Change an environment's ceiling, deploy policy, or priority",
-		Long: "Changes settings of the bound environment (or --environment); only the\n" +
+		Long: "Changes settings of the bound environment (or --env); only the\n" +
 			"flags given change. --max-role caps the roles members inherit from their\n" +
 			"project role (explicit per-environment roles and project admins are not\n" +
 			"capped). --deploy-policy promote-only refuses direct deploys; --promote-from\n" +
@@ -311,7 +311,7 @@ func newEnvSetCommand() *cobra.Command {
 		},
 	}
 	addAccessScopeFlags(command, &project, &remote)
-	command.Flags().StringVar(&environment, "environment", "", "environment to change; defaults to the checkout binding")
+	command.Flags().StringVar(&environment, "env", "", "environment to change; defaults to the checkout binding")
 	command.Flags().StringVar(&maxRole, "max-role", "", "ceiling for inherited roles: none, read, deploy, maintain, or admin")
 	command.Flags().StringVar(&deployPolicy, "deploy-policy", "", "direct or promote-only")
 	command.Flags().StringVar(&promoteFrom, "promote-from", "", "comma-separated source environments for promotions, or any")
@@ -358,7 +358,7 @@ func settingsChanges(current *client.EnvironmentSettings, patch client.Environme
 }
 
 // resolveEnvScope resolves the environment an env command changes: the
-// --environment flag, else the checkout binding's environment.
+// --env flag, else the checkout binding's environment.
 func resolveEnvScope(ctx context.Context, project, environment, remote string) (*accessScope, error) {
 	scope, err := resolveAccessScope(ctx, project, environment, remote)
 	if err != nil {

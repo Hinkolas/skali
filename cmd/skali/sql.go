@@ -105,7 +105,7 @@ func newSQLCommand() *cobra.Command {
 			return runSQLSession(command, target.api, target.environmentID, database, inv, reauth)
 		},
 	}
-	command.Flags().StringVar(&environment, "environment", "",
+	command.Flags().StringVar(&environment, "env", "",
 		"environment name (default: the checkout binding)")
 	command.Flags().StringVar(&remote, "remote", "",
 		"remote to target for this one invocation, ignoring the checkout binding and the current remote")

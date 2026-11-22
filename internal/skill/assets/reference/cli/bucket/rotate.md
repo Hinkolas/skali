@@ -28,7 +28,7 @@ way. Needs maintain on the environment and a recent login.
 | Flag | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `--detach` | `bool` | `false` | start the rotation and return without following it |
-| `--environment` | `string` | `""` | environment holding the bucket; defaults to the checkout binding |
+| `--env` | `string` | `""` | environment holding the bucket; defaults to the checkout binding |
 | `--help`, `-h` | `bool` | `false` | help for rotate |
 | `--remote` | `string` | `""` | remote to target for this one invocation, ignoring the checkout binding and the current remote |
 | `--retire-after` | `string` | `1h` | how long the previous keypair stays accepted, such as 30m, 1h, or 2d (at least 1m, at most 7d) |

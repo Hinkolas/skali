@@ -10,11 +10,11 @@ skali backup schedule show [flags]
 ```
 
 Prints whether automatic backups of the bound environment (or
---environment) are on, their schedule, retention, and next fire.
+--env) are on, their schedule, retention, and next fire.
 
 | Flag | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `--environment` | `string` | `""` | environment to show; defaults to the checkout binding |
+| `--env` | `string` | `""` | environment to show; defaults to the checkout binding |
 | `--help`, `-h` | `bool` | `false` | help for show |
 | `--project` | `string` | `""` | project to manage; defaults to the checkout's project |
 | `--remote` | `string` | `""` | remote to target for this one invocation, ignoring the checkout binding and the current remote |

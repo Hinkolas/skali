@@ -11,14 +11,14 @@ skali access remove <user> [flags]
 
 Aliases: `rm`.
 
-Without --environment removes the membership; the user's explicit
+Without --env removes the membership; the user's explicit
 per-environment roles go with it and the project disappears for them.
-With --environment drops only the explicit role there, so their project
+With --env drops only the explicit role there, so their project
 role applies again.
 
 | Flag | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `--environment` | `string` | `""` | drop only the explicit role on this environment |
+| `--env` | `string` | `""` | drop only the explicit role on this environment |
 | `--help`, `-h` | `bool` | `false` | help for remove |
 | `--project` | `string` | `""` | project to manage; defaults to the checkout's project |
 | `--remote` | `string` | `""` | remote to target for this one invocation, ignoring the checkout binding and the current remote |

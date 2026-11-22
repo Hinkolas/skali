@@ -45,6 +45,7 @@ func newRootCommand() *cobra.Command {
 	// install the script.
 	root.CompletionOptions.DisableDefaultCmd = true
 	root.PersistentPreRun = recordCompletionLine
+	root.SetFlagErrorFunc(flagError)
 
 	root.PersistentFlags().BoolVar(&verboseTranscript, "verbose", false,
 		"show every recorded detail under live steps (TLS issuance fields, health snapshots) and dev proxy relay diagnostics")

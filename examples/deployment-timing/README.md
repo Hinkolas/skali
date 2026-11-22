@@ -19,7 +19,7 @@ and generate a random `BENCH_TOKEN`. Keep `.env` private and untracked.
 
 ```sh
 skali validate --remote YOUR_REMOTE --env-file .env
-skali deploy --remote YOUR_REMOTE --environment baseline --env-file .env
+skali deploy --remote YOUR_REMOTE --env baseline --env-file .env
 ```
 
 The first interactive deployment can create the project and environment.
@@ -56,7 +56,7 @@ and Python 3. The project and environment must already exist.
 python3 -B measure.py \
   --ssh root@CONTROL_NODE \
   --remote YOUR_REMOTE \
-  --environment baseline \
+  --env baseline \
   --domain HOSTNAME_FROM_ENV_FILE \
   --output /absolute/path/to/new-results-directory
 ```

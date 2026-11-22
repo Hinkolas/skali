@@ -32,11 +32,11 @@ const completionTimeout = 2 * time.Second
 
 // flagCompleters completes value-taking flags by name, wherever a command
 // declares them. Registration walks the whole tree, so a new --remote or
-// --environment flag is completed without touching this table.
+// --env flag is completed without touching this table.
 var flagCompleters = map[string]cobra.CompletionFunc{
 	"remote":        completeRemotes,
 	"project":       completeProjects,
-	"environment":   completeEnvironments,
+	"env":           completeEnvironments,
 	"from":          completeEnvironments,
 	"promote-from":  completePromoteFrom,
 	"revision":      completeRevisions,
@@ -198,7 +198,7 @@ func completionScope(command *cobra.Command, ctx context.Context) (*queryProject
 	if err != nil {
 		return nil, err
 	}
-	return resolveQueryProject(ctx, start, flagValue(command, "project"), flagValue(command, "environment"), flagValue(command, "remote"))
+	return resolveQueryProject(ctx, start, flagValue(command, "project"), flagValue(command, "env"), flagValue(command, "remote"))
 }
 
 func environmentCompletions(scope *queryProject) []cobra.Completion {
@@ -340,7 +340,7 @@ func completionTarget(command *cobra.Command, ctx context.Context) (*queryTarget
 	if err != nil {
 		return nil, err
 	}
-	return resolveQueryTarget(ctx, start, flagValue(command, "environment"), flagValue(command, "remote"))
+	return resolveQueryTarget(ctx, start, flagValue(command, "env"), flagValue(command, "remote"))
 }
 
 // completeRunIDArg completes the environment's run ids, newest first as
@@ -476,7 +476,7 @@ func completeAccessSetArgs(command *cobra.Command, args []string, toComplete str
 		return completeMembers(command, toComplete)
 	case 1:
 		roles := projectRoles
-		if flagValue(command, "environment") != "" {
+		if flagValue(command, "env") != "" {
 			roles = cellRoles
 		}
 		return fixedCompletions(roles...)(command, args, toComplete)

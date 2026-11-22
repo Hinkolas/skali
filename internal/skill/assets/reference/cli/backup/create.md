@@ -20,7 +20,7 @@ confirmed before the snapshot starts; --yes skips the question.
 | Flag | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `--detach` | `bool` | `false` | start the backup and return without following it |
-| `--environment` | `string` | `""` | environment to back up; defaults to the checkout binding |
+| `--env` | `string` | `""` | environment to back up; defaults to the checkout binding |
 | `--help`, `-h` | `bool` | `false` | help for create |
 | `--remote` | `string` | `""` | remote to target for this one invocation, ignoring the checkout binding and the current remote |
 | `--verbose` | `bool` | `false` | show every recorded detail under live steps (TLS issuance fields, health snapshots) and dev proxy relay diagnostics (inherited) |

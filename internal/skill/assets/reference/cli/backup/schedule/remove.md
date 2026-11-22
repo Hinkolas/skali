@@ -11,13 +11,13 @@ skali backup schedule remove [flags]
 
 Aliases: `rm`.
 
-Turns automatic backups of the bound environment (or --environment)
+Turns automatic backups of the bound environment (or --env)
 off. Snapshots already taken stay on the backup target and no longer
 expire; manual backups keep working.
 
 | Flag | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `--environment` | `string` | `""` | environment to change; defaults to the checkout binding |
+| `--env` | `string` | `""` | environment to change; defaults to the checkout binding |
 | `--help`, `-h` | `bool` | `false` | help for remove |
 | `--project` | `string` | `""` | project to manage; defaults to the checkout's project |
 | `--remote` | `string` | `""` | remote to target for this one invocation, ignoring the checkout binding and the current remote |

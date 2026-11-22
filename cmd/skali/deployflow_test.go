@@ -827,7 +827,7 @@ func TestResolveDeployTargetUnboundNonInteractiveNeedsEnvironment(t *testing.T) 
 
 	var out strings.Builder
 	_, err := resolveForTest(t, &out, "", testFlowProject(t), &deployOptions{UseBinding: true}, false, false)
-	require.ErrorContains(t, err, "--environment is required")
+	require.ErrorContains(t, err, "--env is required")
 }
 
 func TestResolveDeployTargetLinksOnceAndSkipsLocal(t *testing.T) {
@@ -1229,9 +1229,9 @@ func TestCheckDeployPolicy(t *testing.T) {
 
 	_, err := checkDeployPolicy(protected, "admin", "production", "", plain)
 	require.EqualError(t, err, "environment production is promote-only: promote with skali deploy --from staging or qa "+
-		"--environment production; environment admins may pass --bypass-protection")
+		"--env production; environment admins may pass --bypass-protection")
 	_, err = checkDeployPolicy(anySource, "admin", "production", "", plain)
-	require.ErrorContains(t, err, "skali deploy --from <environment> --environment production")
+	require.ErrorContains(t, err, "skali deploy --from <environment> --env production")
 	_, err = checkDeployPolicy(protected, "admin", "production", "feat-x", plain)
 	require.EqualError(t, err, "environment production accepts promotions from staging or qa only, not from feat-x; "+
 		"environment admins may pass --bypass-protection")

@@ -18,8 +18,8 @@ With --from, previews promotion of the source's active revision instead.
 | Flag | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `--bypass-protection` | `bool` | `false` | deploy into a promote-only environment anyway (environment admins with a recent login; recorded on the run) |
+| `--env` | `string` | `""` | target environment name (defaults to the checkout binding, prompted interactively otherwise) |
 | `--env-file` | `string` | `""` | dotenv file to stage as candidate values for this run only (default: remembered choice; with --from: stored target values; plan only validates the file) |
-| `--environment` | `string` | `""` | target environment name (defaults to the checkout binding, prompted interactively otherwise) |
 | `--from` | `string` | `""` | promote the active revision of another environment of this project; nothing builds and no manifest is read |
 | `--help`, `-h` | `bool` | `false` | help for plan |
 | `--manifest` | `string` | `""` | explicit manifest path (otherwise discover skali.yaml or skali.yml up from the working directory) |
