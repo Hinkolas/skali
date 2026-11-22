@@ -698,12 +698,63 @@ var errNoSeaweed = errors.New("substrate: no seaweed client configured")
 // ObjectStoreSlots reads the store's live volume slot accounting from the
 // master: the admin page's capacity numbers, read on request rather than
 // from the probe's last pass so a changed volume size limit shows as soon
-// as the volume servers have recomputed their slots.
+// as the volume servers have recomputed their slots. Each server carries
+// its node and its writable volumes' sizes when they can be read, the
+// inputs of an estimate under another limit; failing to read them only
+// leaves them out.
 func (c *Controller) ObjectStoreSlots(ctx context.Context) (seaweed.SlotReport, error) {
 	if c.deps.Seaweed == nil {
 		return seaweed.SlotReport{}, errNoSeaweed
 	}
-	return c.deps.Seaweed.Slots(ctx)
+	report, err := c.deps.Seaweed.Slots(ctx)
+	if err != nil {
+		return report, err
+	}
+	writable, err := c.deps.Seaweed.WritableVolumeSizes(ctx)
+	if err != nil {
+		slog.WarnContext(ctx, "substrate: read writable volume sizes", "err", err)
+	}
+	nodes := map[string]string{}
+	if c.deps.Cluster != nil {
+		app := seaweed.AllInOneApp
+		if c.cfg.Managed {
+			app = seaweed.VolumeApp
+		}
+		pods, err := c.deps.Cluster.ListPods(ctx, Namespace, "app="+app)
+		if err != nil {
+			slog.WarnContext(ctx, "substrate: list volume server pods", "err", err)
+		}
+		for _, pod := range pods {
+			if pod.Status.PodIP != "" && pod.Spec.NodeName != "" {
+				nodes[pod.Status.PodIP] = pod.Spec.NodeName
+			}
+		}
+	}
+	for i := range report.Servers {
+		server := &report.Servers[i]
+		if sizes, ok := writable[server.URL]; ok {
+			server.WritableVolumeBytes = sizes
+		} else if writable != nil {
+			server.WritableVolumeBytes = []int64{}
+		}
+		host := server.URL
+		if index := strings.LastIndexByte(host, ':'); index >= 0 {
+			host = host[:index]
+		}
+		server.Node = nodes[host]
+	}
+	return report, nil
+}
+
+// ObjectStoreCollections reads every bucket collection's footprint from
+// the master's volume listing: the admin page's per-bucket usage, read on
+// request so buckets the probe does not project (system buckets, and
+// collections no live bucket claims any more) show too.
+func (c *Controller) ObjectStoreCollections(ctx context.Context) (map[string]seaweed.CollectionStat, error) {
+	if c.deps.Seaweed == nil {
+		return nil, errNoSeaweed
+	}
+	return c.deps.Seaweed.CollectionSizes(ctx)
 }
 
 // EnqueueObjectStoreSettings re-applies the store after an admin changed

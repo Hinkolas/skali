@@ -3,11 +3,13 @@
 	import Archive from '@lucide/svelte/icons/archive';
 	import ChevronRight from '@lucide/svelte/icons/chevron-right';
 	import Database from '@lucide/svelte/icons/database';
+	import HardDrive from '@lucide/svelte/icons/hard-drive';
 	import RefreshCw from '@lucide/svelte/icons/refresh-cw';
 	import Server from '@lucide/svelte/icons/server';
 	import PageHeader from '#lib/components/shell/PageHeader.svelte';
 	import Card from '#lib/components/ui/Card.svelte';
 	import Pill from '#lib/components/ui/Pill.svelte';
+	import { storeSummary } from '#lib/types/objectstorage.ts';
 	import { updatePresentation } from '#lib/types/updates.ts';
 	import type { PageData } from './$types';
 
@@ -51,6 +53,16 @@
 						text: data.pools.length === 1 ? '1 pool' : `${data.pools.length} pools`,
 						tone: 'success' as const
 					}
+	);
+
+	// One line about the object store: how many buckets it holds, or that it
+	// is running out of room for more.
+	const objectStoreSummary = $derived(
+		data.objectStore
+			? storeSummary(data.objectStore)
+			: data.objectStore === null
+				? { text: 'no store', tone: 'neutral' as const, title: undefined }
+				: { text: 'unavailable', tone: 'neutral' as const, title: undefined }
 	);
 
 	// One line about updates: running, available, up to date, or unknown.
@@ -128,6 +140,30 @@
 				>
 			</div>
 			<Pill text={poolsSummary.text} tone={poolsSummary.tone} />
+			<ChevronRight size={16} class="text-text-faint flex-none" />
+		</a>
+	</Card>
+	<Card class="flex overflow-hidden">
+		<a
+			href={resolve('/(app)/system/object-storage')}
+			class="flex flex-1 items-center gap-3.5 px-5 py-4 transition-colors hover:bg-white/2"
+		>
+			<div
+				class="bg-accent/10 text-accent-nav grid size-9 flex-none place-items-center rounded-[11px]"
+			>
+				<HardDrive size={17} strokeWidth={1.75} />
+			</div>
+			<div class="flex min-w-0 flex-1 flex-col">
+				<span class="text-text-primary text-lg font-medium">Object storage</span>
+				<span class="text-text-muted text-md"
+					>Every bucket by what it stores, room for more and the volume size</span
+				>
+			</div>
+			<Pill
+				text={objectStoreSummary.text}
+				tone={objectStoreSummary.tone}
+				title={objectStoreSummary.title}
+			/>
 			<ChevronRight size={16} class="text-text-faint flex-none" />
 		</a>
 	</Card>

@@ -832,7 +832,7 @@ func TestSpecCoversAllRoutes(t *testing.T) {
 	for route := range ac.classes {
 		require.True(t, walked[route], "classified route %s is not registered", route)
 	}
-	require.Equal(t, 111, routes, "route count changed; update the OpenAPI spec and this number")
+	require.Equal(t, 112, routes, "route count changed; update the OpenAPI spec and this number")
 }
 
 // fakeRotator is the substrate commit the API tests never reach: the

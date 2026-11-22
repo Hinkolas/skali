@@ -7,6 +7,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	"github.com/Hinkolas/skali/internal/dbstore"
@@ -16,10 +17,17 @@ import (
 // fakeObjectStorage serves a fixed slot report and records settings
 // wake-ups.
 type fakeObjectStorage struct {
-	mu       sync.Mutex
-	slots    seaweed.SlotReport
-	err      error
-	enqueued int
+	mu          sync.Mutex
+	slots       seaweed.SlotReport
+	collections map[string]seaweed.CollectionStat
+	err         error
+	enqueued    int
+}
+
+func (f *fakeObjectStorage) ObjectStoreCollections(context.Context) (map[string]seaweed.CollectionStat, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.collections, f.err
 }
 
 func (f *fakeObjectStorage) ObjectStoreSlots(context.Context) (seaweed.SlotReport, error) {
@@ -88,7 +96,7 @@ func TestObjectStorageCapacityAndVolumeSize(t *testing.T) {
 
 	seedObjectStore(t, a)
 	storage.slots = seaweed.SlotReport{Servers: []seaweed.ServerSlots{
-		{URL: "10.0.0.1:8080", Max: 20, Volumes: 6},
+		{URL: "10.0.0.1:8080", Max: 20, Volumes: 6, Node: "node-a", WritableVolumeBytes: []int64{100, 200}},
 		{URL: "10.0.0.2:8080", Max: 10, Volumes: 6},
 	}}
 
@@ -113,7 +121,13 @@ func TestObjectStorageCapacityAndVolumeSize(t *testing.T) {
 	require.EqualValues(t, 4, capacity["bucket_headroom"])
 	require.EqualValues(t, 2, capacity["copies"])
 	require.EqualValues(t, 1, capacity["volumes_per_bucket"])
-	require.Len(t, capacity["servers"], 2)
+	servers := capacity["servers"].([]any)
+	require.Len(t, servers, 2)
+	first := servers[0].(map[string]any)
+	require.Equal(t, "node-a", first["node"])
+	require.Equal(t, []any{float64(100), float64(200)}, first["writable_volume_bytes"])
+	require.Nil(t, first["free_disk_bytes"], "no storage sample for the node")
+	require.Nil(t, servers[1].(map[string]any)["writable_volume_bytes"])
 	require.Nil(t, store["observed"])
 
 	// Out of range and malformed requests change nothing.
@@ -149,4 +163,78 @@ func TestObjectStorageCapacityAndVolumeSize(t *testing.T) {
 	status, body = a.do("GET", "/v1/system/object-storage", admin, nil)
 	require.Equal(t, http.StatusOK, status, "%v", body)
 	require.Nil(t, body["store"].(map[string]any)["capacity"])
+}
+
+// TestObjectStorageBuckets: every live bucket with its owner and live
+// footprint, project buckets first; collections no live bucket claims are
+// listed apart, largest slot holders first.
+func TestObjectStorageBuckets(t *testing.T) {
+	a, storage := objectStorageTestAPI(t)
+	a.createAdmin("admin@example.com", "hunter2hunter2")
+	admin := a.login("admin@example.com", "hunter2hunter2")
+
+	status, body := a.do("GET", "/v1/system/object-storage/buckets", admin, nil)
+	require.Equal(t, http.StatusNotFound, status, "%v", body)
+
+	seedObjectStore(t, a)
+	db := dbstore.New(a.st)
+	ctx := context.Background()
+	row, err := db.LiveObjectStore(ctx)
+	require.NoError(t, err)
+
+	projectID, environmentID := a.createEnvironment(t, admin)
+	service, err := db.EnsureBucketClaim(ctx, dbstore.ServiceOwner(uuid.MustParse(projectID), uuid.MustParse(environmentID),
+		"demo", "production", "uploads"), dbstore.BucketSpec{
+		Visibility: "private", StorageQuotaBytes: 1 << 30, Versioning: "disabled",
+	})
+	require.NoError(t, err)
+	system, err := db.EnsureBucketClaim(ctx, dbstore.SystemOwner("platform/registry"), dbstore.BucketSpec{
+		Visibility: "private", Versioning: "disabled",
+	})
+	require.NoError(t, err)
+	_, err = db.RecordAllocation(ctx, dbstore.AllocationInput{ClaimID: service.ID, StoreID: row.ID,
+		BucketName: "b-uploads-1234abcd", AccessKeyID: "AKUPLOADS", CredentialSecret: "bucket-uploads", Endpoint: "http://s3"})
+	require.NoError(t, err)
+	_, err = db.RecordAllocation(ctx, dbstore.AllocationInput{ClaimID: system.ID, StoreID: row.ID,
+		BucketName: "skali-registry", AccessKeyID: "AKREGISTRY", CredentialSecret: "bucket-registry", Endpoint: "http://s3"})
+	require.NoError(t, err)
+
+	storage.collections = map[string]seaweed.CollectionStat{
+		"b-uploads-1234abcd": {SizeBytes: 900, LiveBytes: 800, DeletedBytes: 100, EntryCount: 12, Volumes: 1, Replicas: 2},
+		"b-gone-1":           {SizeBytes: 10, LiveBytes: 10, Volumes: 1, Replicas: 2},
+		"b-gone-2":           {SizeBytes: 50, LiveBytes: 50, Volumes: 2, Replicas: 4},
+	}
+	status, body = a.do("GET", "/v1/system/object-storage/buckets", admin, nil)
+	require.Equal(t, http.StatusOK, status, "%v", body)
+	require.Equal(t, true, body["usage_observed"])
+	buckets := body["buckets"].([]any)
+	require.Len(t, buckets, 2)
+	uploads := buckets[0].(map[string]any)
+	require.Equal(t, "b-uploads-1234abcd", uploads["bucket_name"])
+	require.Equal(t, "service", uploads["owner"])
+	require.Equal(t, "uploads", uploads["service_key"])
+	require.Equal(t, "demo", uploads["project"].(map[string]any)["name"])
+	require.Equal(t, "production", uploads["environment"].(map[string]any)["name"])
+	require.EqualValues(t, 1<<30, uploads["quota_bytes"])
+	usage := uploads["usage"].(map[string]any)
+	require.EqualValues(t, 800, usage["used_bytes"])
+	require.EqualValues(t, 900, usage["disk_bytes"])
+	require.EqualValues(t, 2, usage["slots"])
+	registry := buckets[1].(map[string]any)
+	require.Equal(t, "system", registry["owner"])
+	require.Equal(t, "platform/registry", registry["system_key"])
+	require.Nil(t, registry["project"])
+	require.EqualValues(t, 0, registry["usage"].(map[string]any)["slots"], "an unwritten bucket holds no volume yet")
+	unclaimed := body["unclaimed"].([]any)
+	require.Len(t, unclaimed, 2)
+	require.Equal(t, "b-gone-2", unclaimed[0].(map[string]any)["collection"])
+	require.Equal(t, "b-gone-1", unclaimed[1].(map[string]any)["collection"])
+
+	// A master that cannot be read: the buckets still list, usage unknown.
+	storage.err = errors.New("master unreachable")
+	status, body = a.do("GET", "/v1/system/object-storage/buckets", admin, nil)
+	require.Equal(t, http.StatusOK, status, "%v", body)
+	require.Equal(t, false, body["usage_observed"])
+	require.Nil(t, body["buckets"].([]any)[0].(map[string]any)["usage"])
+	require.Empty(t, body["unclaimed"])
 }

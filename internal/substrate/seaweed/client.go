@@ -504,6 +504,37 @@ func (c *Client) VolumeSizesByNode(ctx context.Context) (map[string]int64, error
 	return sizes, nil
 }
 
+// WritableVolumeSizes reads the sizes of every volume server's writable
+// volumes from the master's volume listing, keyed by server URL: the room
+// they may still grow into counts against the server's free disk when it
+// derives its slots.
+func (c *Client) WritableVolumeSizes(ctx context.Context) (map[string][]int64, error) {
+	data, status, err := c.master(ctx, "/vol/status", nil)
+	if err != nil {
+		return nil, err
+	}
+	if status < 200 || status >= 300 {
+		return nil, fmt.Errorf("seaweed: volume status: status %d", status)
+	}
+	var vs volStatus
+	if err := json.Unmarshal(data, &vs); err != nil {
+		return nil, fmt.Errorf("seaweed: parse volume status: %w", err)
+	}
+	sizes := map[string][]int64{}
+	for _, dc := range vs.Volumes.DataCenters {
+		for _, rack := range dc {
+			for nodeURL, node := range rack {
+				for _, vol := range node {
+					if !vol.ReadOnly {
+						sizes[nodeURL] = append(sizes[nodeURL], vol.Size)
+					}
+				}
+			}
+		}
+	}
+	return sizes, nil
+}
+
 // ClusterStatus reads the master cluster view: leadership and the peer
 // list, the probe's raft-health input.
 func (c *Client) ClusterStatus(ctx context.Context) (leader string, peers []string, err error) {

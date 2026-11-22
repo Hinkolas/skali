@@ -91,3 +91,20 @@ WHERE id = $1 AND released_at IS NULL AND fenced_at IS NULL;
 UPDATE bucket_allocations
 SET fenced_at = NULL
 WHERE id = $1 AND fenced_at IS NOT NULL;
+
+-- Every live bucket on a store with its claim, the owning project and
+-- environment (NULL for system claims): the object storage page's bucket
+-- list in one query. Usage comes from the store itself.
+-- name: ListLiveBucketDetailsByStore :many
+SELECT a.id AS allocation_id, a.bucket_name, a.created_at,
+       c.id AS claim_id, c.owner_kind, c.system_key, c.service_key, c.phase,
+       c.visibility, c.storage_quota_bytes,
+       c.project_id, c.environment_id,
+       p.name AS project_name, p.display_name AS project_display_name,
+       e.name AS environment_name
+FROM bucket_allocations a
+JOIN bucket_claims c ON c.id = a.claim_id
+LEFT JOIN projects p ON p.id = c.project_id
+LEFT JOIN environments e ON e.id = c.environment_id
+WHERE a.store_id = $1 AND a.released_at IS NULL
+ORDER BY (c.owner_kind = 'system'), p.name, e.name, c.service_key, c.system_key;

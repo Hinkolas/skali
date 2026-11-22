@@ -118,6 +118,17 @@ func (s *Service) ListStoreAllocations(ctx context.Context, storeID uuid.UUID) (
 	return rows, nil
 }
 
+// ListStoreBucketDetails returns the live buckets on a store joined with
+// their claim, owning project and environment: the object storage page's
+// bucket list.
+func (s *Service) ListStoreBucketDetails(ctx context.Context, storeID uuid.UUID) ([]store.ListLiveBucketDetailsByStoreRow, error) {
+	rows, err := s.st.ListLiveBucketDetailsByStore(ctx, storeID)
+	if err != nil {
+		return nil, fmt.Errorf("dbstore: list store bucket details: %w", err)
+	}
+	return rows, nil
+}
+
 // CountStoreAllocations counts live allocations on a store.
 func (s *Service) CountStoreAllocations(ctx context.Context, storeID uuid.UUID) (int64, error) {
 	count, err := s.st.CountLiveBucketAllocationsByStore(ctx, storeID)
