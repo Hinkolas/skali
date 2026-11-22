@@ -28,17 +28,17 @@ const remoteFlagHelp = "remote to target for this one invocation, ignoring the c
 
 // newAccessCommand groups who-may-do-what on a project: memberships (a
 // user's role on the whole project) and cells (an explicit role on one
-// environment). The same verbs serve both; --environment picks the level.
+// environment). The same verbs serve both; --env picks the level.
 func newAccessCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "access",
 		Short: "Manage who may do what on a project",
 		Long: "Project access is one role ladder, none < read < deploy < maintain < admin,\n" +
 			"used at two levels: a member's project role applies to every environment\n" +
-			"unless an explicit per-environment role (set with --environment) overrides\n" +
+			"unless an explicit per-environment role (set with --env) overrides\n" +
 			"it, and an environment's ceiling (skali env set --max-role) caps inherited\n" +
 			"roles. Listing needs project read; changes need project admin (environment\n" +
-			"admin for --environment) and a recent login.\n\n" +
+			"admin for --env) and a recent login.\n\n" +
 			"The project is the checkout's (its binding or manifest) unless --project\n" +
 			"names one.",
 	}
@@ -187,8 +187,8 @@ func newAccessSetCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "set <user> <role>",
 		Short: "Set a member's project role, or their explicit role on one environment",
-		Long: "Without --environment sets the user's project role (read, deploy, maintain,\n" +
-			"admin), adding them as a member when needed. With --environment sets an\n" +
+		Long: "Without --env sets the user's project role (read, deploy, maintain,\n" +
+			"admin), adding them as a member when needed. With --env sets an\n" +
 			"explicit role on that environment only (none locks it for them); the user\n" +
 			"must already be a member. <user> is an email address or a user id.",
 		Args:              cobra.ExactArgs(2),
@@ -200,7 +200,7 @@ func newAccessSetCommand() *cobra.Command {
 			user, role := args[0], args[1]
 			if environment == "" {
 				if role == "none" {
-					return errors.New("none is not a project role: lock one environment with --environment, or remove the membership with skali access remove")
+					return errors.New("none is not a project role: lock one environment with --env, or remove the membership with skali access remove")
 				}
 				if !slices.Contains(projectRoles, role) {
 					return fmt.Errorf("role must be one of %s", strings.Join(projectRoles, ", "))
@@ -241,7 +241,7 @@ func newAccessSetCommand() *cobra.Command {
 		},
 	}
 	addAccessScopeFlags(command, &project, &remote)
-	command.Flags().StringVar(&environment, "environment", "", "set the role on this environment only")
+	command.Flags().StringVar(&environment, "env", "", "set the role on this environment only")
 	return command
 }
 
@@ -252,9 +252,9 @@ func newAccessRmCommand() *cobra.Command {
 		Use:     "remove <user>",
 		Aliases: []string{"rm"},
 		Short:   "Remove a member, or drop their explicit role on one environment",
-		Long: "Without --environment removes the membership; the user's explicit\n" +
+		Long: "Without --env removes the membership; the user's explicit\n" +
 			"per-environment roles go with it and the project disappears for them.\n" +
-			"With --environment drops only the explicit role there, so their project\n" +
+			"With --env drops only the explicit role there, so their project\n" +
 			"role applies again.",
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: completeMemberArg,
@@ -301,7 +301,7 @@ func newAccessRmCommand() *cobra.Command {
 		},
 	}
 	addAccessScopeFlags(command, &project, &remote)
-	command.Flags().StringVar(&environment, "environment", "", "drop only the explicit role on this environment")
+	command.Flags().StringVar(&environment, "env", "", "drop only the explicit role on this environment")
 	command.Flags().BoolVar(&yes, "yes", false, "skip the confirmation")
 	return command
 }

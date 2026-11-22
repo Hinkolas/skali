@@ -17,7 +17,7 @@ is rebuilt and no new revision is created.
 | --- | --- | --- | --- |
 | `--allow-destructive` | `bool` | `false` | allow a rollback that drops a database, bucket, or volume the active revision declares |
 | `--detach` | `bool` | `false` | start the rollback and return without attaching to the run |
-| `--environment` | `string` | `""` | environment name (default: the checkout binding) |
+| `--env` | `string` | `""` | environment name (default: the checkout binding) |
 | `--help`, `-h` | `bool` | `false` | help for rollback |
 | `--remote` | `string` | `""` | remote to target for this one invocation, ignoring the checkout binding and the current remote |
 | `--revision` | `string` | `""` | revision to roll back to (a revision id or unique checksum prefix) |

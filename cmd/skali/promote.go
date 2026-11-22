@@ -142,7 +142,7 @@ func runPromoteFlow(command *cobra.Command, opts *deployOptions, planOnly bool) 
 		style.Dim("(active in "+opts.From+")"))
 
 	// The bound environment is the target default, exactly like an ordinary
-	// deploy; --environment overrides it for one invocation.
+	// deploy; --env overrides it for one invocation.
 	if opts.Environment == "" && promote.binding != nil {
 		opts.Environment = promote.binding.Environment
 	}
@@ -154,7 +154,7 @@ func runPromoteFlow(command *cobra.Command, opts *deployOptions, planOnly bool) 
 	}
 	environmentID, access := environment.ID, environment.Access
 	if environmentID == promote.source.ID {
-		return "", errors.New("--from and the target environment name the same environment; pass --environment")
+		return "", errors.New("--from and the target environment name the same environment; pass --env")
 	}
 	if err := checkDeployAccess(access, opts.Environment); err != nil {
 		return "", err

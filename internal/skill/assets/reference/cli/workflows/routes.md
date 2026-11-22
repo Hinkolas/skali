@@ -12,5 +12,5 @@ Read with `skali skill read cli workflows routes`.
   installation, by another server, or not at all); a domain that answers
   here counts as arrived and the reconciler requests a fresh certificate
   issuance without waiting for its cadence or cert-manager's backoff. Both
-  take `--environment <name>` and `--remote <name>`; probe needs `deploy`
+  take `--env <name>` and `--remote <name>`; probe needs `deploy`
   on the environment.

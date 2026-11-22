@@ -12,13 +12,13 @@ skali backup list [flags]
 Aliases: `ls`.
 
 Lists the snapshots of every environment of the project, newest
-first, as the backup target holds them; --environment narrows the
+first, as the backup target holds them; --env narrows the
 list to one environment. Snapshots of environments that no longer
 exist are listed too and can be restored into another environment.
 
 | Flag | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `--environment` | `string` | `""` | only list snapshots of this environment |
+| `--env` | `string` | `""` | only list snapshots of this environment |
 | `--help`, `-h` | `bool` | `false` | help for list |
 | `--project` | `string` | `""` | project whose snapshots to list; defaults to the checkout's project |
 | `--remote` | `string` | `""` | remote to target for this one invocation, ignoring the checkout binding and the current remote |

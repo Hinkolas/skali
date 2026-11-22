@@ -189,7 +189,7 @@ Server-side, edited by environment admins unless noted:
 
 Creation: project `maintain` and up create environments; the creator gets an
 explicit `admin` cell. Implicit creation on first deploy (`skali deploy
---environment feat-x`) follows the same rule and is always `normal`
+--env feat-x`) follows the same rule and is always `normal`
 priority. Creation defaults by priority: `normal` starts with `max_role:
 admin` (open, a shared scratch environment); `high` starts with `max_role:
 read` and the CLI and Studio suggest `promote-only`. Creation-time
@@ -228,7 +228,7 @@ environment only changes through:
 A direct deploy, and a promotion from a source outside the list, are
 refused with `403 environment_protected` and a message that names the way
 in ("environment production is promote-only: promote with Skali deploy
---from staging --environment production; environment admins may pass
+--from staging --env production; environment admins may pass
 --bypass-protection"). The check runs in plan as well as in open, so the
 CLI refuses before anything is built (and, knowing the environment's
 settings, before it even submits the definition). Values changes, restore,
@@ -480,21 +480,21 @@ and so `skali` can refuse before doing work:
 API first; then CLI and Studio, both thin over the same routes.
 
 CLI (settled 2026-08-19): one ladder, one verb set, the level picked by
-`--environment`:
+`--env`:
 
 - `skali access list` prints the grid (members as rows, environments as
   columns, `*` marks an explicit per-environment role, `-` an environment
   the caller may not read, `(locked)` in its header).
-- `skali access set <user> <role> [--environment ENV]` sets the project
-  role (read..admin; adds the membership) or, with `--environment`, the
+- `skali access set <user> <role> [--env ENV]` sets the project
+  role (read..admin; adds the membership) or, with `--env`, the
   explicit role on that environment (none..admin; the user must already be
   a member, the 409 prints the hint). `<user>` is an email or a user id.
-- `skali access remove <user> [--environment ENV]` removes the membership
+- `skali access remove <user> [--env ENV]` removes the membership
   (confirmed, `--yes` to skip; the cells go with it) or only the explicit
   role on one environment.
 - `skali env list|create|set|stop|remove`: `list` shows state, access,
   priority, policy, ceiling, creation time (locked rows show `locked`);
-  `create <name> [--priority high]`; `set [--environment ENV] --max-role
+  `create <name> [--priority high]`; `set [--env ENV] --max-role
   --deploy-policy --promote-from a,b|any --priority`; `stop <name>` takes the
   workloads down and keeps the data (confirmed); `remove <name>` is the purge
   teardown behind a typed confirmation (the raw DELETE leaves cluster state

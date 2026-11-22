@@ -94,7 +94,7 @@ func newBackupAcceptCommand() *cobra.Command {
 			return nil
 		},
 	}
-	command.Flags().StringVar(&environment, "environment", "", "environment the restore holds; defaults to the checkout binding")
+	command.Flags().StringVar(&environment, "env", "", "environment the restore holds; defaults to the checkout binding")
 	command.Flags().StringVar(&remote, "remote", "",
 		"remote to target for this one invocation, ignoring the checkout binding and the current remote")
 	command.Flags().BoolVar(&yes, "yes", false, "skip the typed confirmation")
@@ -131,6 +131,6 @@ func restoreHoldError(status *client.EnvironmentStatus, runID, environment strin
 		return cause
 	}
 	return fmt.Errorf("%w\n%s stays down and deploys are refused until a restore completes: "+
-		"re-run the restore, or accept the data as it is with: skali backup accept --environment %s",
+		"re-run the restore, or accept the data as it is with: skali backup accept --env %s",
 		cause, environment, environment)
 }

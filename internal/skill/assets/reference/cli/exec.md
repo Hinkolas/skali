@@ -15,7 +15,7 @@ one service, like docker exec. Without a command it starts /bin/sh.
 | Flag | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `--container` | `string` | `""` | container name (default: the service's own container) |
-| `--environment` | `string` | `""` | environment name (default: the checkout binding) |
+| `--env` | `string` | `""` | environment name (default: the checkout binding) |
 | `--help`, `-h` | `bool` | `false` | help for exec |
 | `--no-stdin`, `-n` | `bool` | `false` | do not forward stdin: the command sees end of input at once (like ssh -n); implies --no-tty |
 | `--no-tty` | `bool` | `false` | never allocate a remote TTY |

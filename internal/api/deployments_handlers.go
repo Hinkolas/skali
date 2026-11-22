@@ -351,7 +351,7 @@ func protectedMessage(env *authz.EnvironmentGrant, sourceName string) string {
 		from = strings.Join(sources, " or ")
 	}
 	return "environment " + env.Name + " is promote-only: promote with skali deploy --from " + from +
-		" --environment " + env.Name + "; environment admins may pass --bypass-protection"
+		" --env " + env.Name + "; environment admins may pass --bypass-protection"
 }
 
 // POST /v1/environments/{id}/deployments

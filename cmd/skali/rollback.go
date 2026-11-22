@@ -41,7 +41,7 @@ func newRollbackCommand() *cobra.Command {
 	}
 	command.Flags().StringVar(&opts.Remote, "remote", "",
 		"remote to target for this one invocation, ignoring the checkout binding and the current remote")
-	command.Flags().StringVar(&opts.Environment, "environment", "",
+	command.Flags().StringVar(&opts.Environment, "env", "",
 		"environment name (default: the checkout binding)")
 	command.Flags().StringVar(&opts.Revision, "revision", "",
 		"revision to roll back to (a revision id or unique checksum prefix)")

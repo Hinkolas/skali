@@ -87,7 +87,7 @@ func newExecCommand() *cobra.Command {
 			return runExecSession(command, target.api, target.environmentID, inv, service, argv, prompt, reauth)
 		},
 	}
-	command.Flags().StringVar(&environment, "environment", "",
+	command.Flags().StringVar(&environment, "env", "",
 		"environment name (default: the checkout binding)")
 	command.Flags().StringVar(&remote, "remote", "",
 		"remote to target for this one invocation, ignoring the checkout binding and the current remote")

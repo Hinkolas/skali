@@ -11,10 +11,10 @@ skali access [flags]
 
 Project access is one role ladder, none < read < deploy < maintain < admin,
 used at two levels: a member's project role applies to every environment
-unless an explicit per-environment role (set with --environment) overrides
+unless an explicit per-environment role (set with --env) overrides
 it, and an environment's ceiling (skali env set --max-role) caps inherited
 roles. Listing needs project read; changes need project admin (environment
-admin for --environment) and a recent login.
+admin for --env) and a recent login.
 
 The project is the checkout's (its binding or manifest) unless --project
 names one.

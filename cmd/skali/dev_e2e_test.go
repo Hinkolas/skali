@@ -457,7 +457,7 @@ func TestDevEndToEnd(t *testing.T) {
 		require.NotEqual(t, string(content), slow, "slow-start edit did not apply")
 		require.NoError(t, os.WriteFile(source, []byte(slow), 0o644))
 
-		out := h.run(false, "", "deploy", "--remote", "local", "--environment", "local", "--yes", "--detach")
+		out := h.run(false, "", "deploy", "--remote", "local", "--env", "local", "--yes", "--detach")
 		require.Contains(t, out, "deployment continues on the server")
 
 		out = h.runInterrupt("following logs", 8*time.Minute, "dev")
@@ -471,7 +471,7 @@ func TestDevEndToEnd(t *testing.T) {
 	t.Run("DevForceCancelsInFlightRun", func(t *testing.T) {
 		// --force takes the slot instead of adopting it: the in-flight run
 		// is cancelled and the fresh forced deploy proceeds to ready.
-		out := h.run(false, "", "deploy", "--remote", "local", "--environment", "local", "--yes", "--detach")
+		out := h.run(false, "", "deploy", "--remote", "local", "--env", "local", "--yes", "--detach")
 		require.Contains(t, out, "deployment continues on the server")
 
 		out = h.run(false, "", "dev", "-d", "--force")
@@ -504,26 +504,26 @@ func TestDevEndToEnd(t *testing.T) {
 		require.NotEqual(t, string(content), v2, "v2 edit did not apply")
 		require.NoError(t, os.WriteFile(source, []byte(v2), 0o644))
 
-		out := h.run(false, "", "deploy", "--remote", "local", "--environment", "local", "--yes")
+		out := h.run(false, "", "deploy", "--remote", "local", "--env", "local", "--yes")
 		require.Contains(t, out, "ready")
 		match := regexp.MustCompile(`plan against active revision ([0-9a-f]+)`).FindStringSubmatch(out)
 		require.NotNil(t, match, "the deploy must print the active revision, got: %s", out)
 		previous := match[1]
 		h.waitRoute("hello from v2", 2*time.Minute)
 
-		out = h.run(false, "", "rollback", "--remote", "local", "--environment", "local",
+		out = h.run(false, "", "rollback", "--remote", "local", "--env", "local",
 			"--revision", previous, "--yes")
 		require.Contains(t, out, "roll back local to "+previous)
 		require.Contains(t, out, "ready")
 		h.waitRoute("hello from skali", 2*time.Minute)
 
 		// The rollback ran as its own journaled run kind.
-		out = h.run(false, "", "run", "list", "--remote", "local", "--environment", "local")
+		out = h.run(false, "", "run", "list", "--remote", "local", "--env", "local")
 		require.Contains(t, out, "rollback")
 
 		// Rolling back to the revision the target already points at is
 		// refused with a plain error.
-		out = h.run(true, "", "rollback", "--remote", "local", "--environment", "local",
+		out = h.run(true, "", "rollback", "--remote", "local", "--env", "local",
 			"--revision", previous, "--yes")
 		require.Contains(t, out, "already targets")
 
@@ -560,7 +560,7 @@ func TestDevEndToEnd(t *testing.T) {
 		require.NoError(t, os.WriteFile(source,
 			[]byte(strings.Replace(string(content), "hello from skali", "hello again from skali", 1)), 0o644))
 
-		out := h.run(false, "", "deploy", "--remote", "local", "--environment", "local",
+		out := h.run(false, "", "deploy", "--remote", "local", "--env", "local",
 			"--yes", "--detach")
 		require.Contains(t, out, "deployment continues on the server")
 		// Deploys against the dev-owned local remote are never bound.
@@ -585,7 +585,7 @@ func TestDevEndToEnd(t *testing.T) {
 				settled = "completed"
 				return true
 			}
-			runs, code := h.runExit("", "run", "list", "--remote", "local", "--environment", "local")
+			runs, code := h.runExit("", "run", "list", "--remote", "local", "--env", "local")
 			if code == 0 && strings.Contains(runs, restartReason) {
 				settled = "failed"
 				return true
@@ -882,7 +882,7 @@ func TestDevGuestbookBackupRestore(t *testing.T) {
 		"--access-key", "minioadmin", "--secret-key", "minioadmin")
 	require.Contains(t, run, "backup target set")
 
-	run = h.run(false, "", "backup", "create", "--remote", "local", "--environment", "local", "--yes")
+	run = h.run(false, "", "backup", "create", "--remote", "local", "--env", "local", "--yes")
 	require.Contains(t, run, "backup complete")
 
 	// The listing is project-wide (the checkout's manifest names the
@@ -918,9 +918,9 @@ func TestDevGuestbookBackupRestore(t *testing.T) {
 
 	// The fresh environment knows nothing in its database; the listing
 	// comes purely from the S3 manifests.
-	run = h.run(false, "", "backup", "ls", "--remote", "local", "--environment", "local")
+	run = h.run(false, "", "backup", "ls", "--remote", "local", "--env", "local")
 	require.Contains(t, run, snapshot)
-	run = h.run(false, "", "backup", "ls", "--remote", "local", "--environment", "nothing")
+	run = h.run(false, "", "backup", "ls", "--remote", "local", "--env", "nothing")
 	require.Contains(t, run, "no snapshots of environment nothing")
 
 	// The purge took the snapshot's environment with it: the redeployed
@@ -929,7 +929,7 @@ func TestDevGuestbookBackupRestore(t *testing.T) {
 	out, code := h.runExit("", "backup", "restore", snapshot, "--remote", "local", "--yes")
 	require.NotZero(t, code, "restore into a purged environment by default: %s", out)
 	require.Contains(t, out, "which the snapshot was taken from, does not exist")
-	run = h.run(false, "", "backup", "restore", snapshot, "--remote", "local", "--environment", "local", "--yes")
+	run = h.run(false, "", "backup", "restore", snapshot, "--remote", "local", "--env", "local", "--yes")
 	require.Contains(t, run, "restore "+snapshot+" (local) into local")
 	require.Contains(t, run, "restore complete")
 
@@ -1363,13 +1363,13 @@ func TestDevAccess(t *testing.T) {
 	t.Run("grant", func(t *testing.T) {
 		out := h.run(false, "", "env", "create", "staging", "--remote", "local", "--yes")
 		require.Contains(t, out, "created environment staging in project hello-world")
-		out = h.run(false, "", "deploy", "--remote", "local", "--environment", "staging", "--env-file", ".env.staging", "--yes")
+		out = h.run(false, "", "deploy", "--remote", "local", "--env", "staging", "--env-file", ".env.staging", "--yes")
 		require.Contains(t, out, "ready")
 		out = h.run(false, "", "access", "set", memberEmail, "read", "--remote", "local")
 		require.Contains(t, out, memberEmail+"  read on project hello-world")
-		out = h.run(false, "", "access", "set", memberEmail, "deploy", "--environment", "staging", "--remote", "local")
+		out = h.run(false, "", "access", "set", memberEmail, "deploy", "--env", "staging", "--remote", "local")
 		require.Contains(t, out, memberEmail+"  deploy on environment staging")
-		out = h.run(false, "", "env", "set", "--environment", "local", "--max-role", "read", "--remote", "local", "--yes")
+		out = h.run(false, "", "env", "set", "--env", "local", "--max-role", "read", "--remote", "local", "--yes")
 		require.Contains(t, out, "max role       read")
 		out = h.run(false, "", "access", "ls", "--remote", "local")
 		require.Regexp(t, `(?m)^MEMBER +PROJECT +local +staging$`, out)
@@ -1384,11 +1384,11 @@ func TestDevAccess(t *testing.T) {
 		require.Regexp(t, `(?m)^staging +active +deploy `, out)
 		// The same definition redeploys (a forced restart), with the stored
 		// values because a deploy role cannot stage any.
-		out = h.run(false, "", "deploy", "--remote", "member", "--environment", "staging", "--yes", "--force")
+		out = h.run(false, "", "deploy", "--remote", "member", "--env", "staging", "--yes", "--force")
 		require.Contains(t, out, "stored (deploy role cannot stage values)")
 		require.Contains(t, out, "ready")
 		// An explicit env file is refused before anything is built.
-		out = h.run(true, "", "deploy", "--remote", "member", "--environment", "staging", "--env-file", ".env.staging", "--yes")
+		out = h.run(true, "", "deploy", "--remote", "member", "--env", "staging", "--env-file", ".env.staging", "--yes")
 		require.Contains(t, out, "staging values needs maintain on environment staging (your role: deploy)")
 		// A definition change needs maintain: refused by the plan, so
 		// nothing is built either.
@@ -1397,22 +1397,22 @@ func TestDevAccess(t *testing.T) {
 		require.NoError(t, err)
 		require.Contains(t, string(original), "min: 3")
 		require.NoError(t, os.WriteFile(manifestPath, []byte(strings.Replace(string(original), "min: 3", "min: 2", 1)), 0o644))
-		out = h.run(true, "", "deploy", "--remote", "member", "--environment", "staging", "--yes")
+		out = h.run(true, "", "deploy", "--remote", "member", "--env", "staging", "--yes")
 		require.Contains(t, out, "maintain on environment staging required: this deploy changes the definition")
 		require.NoError(t, os.WriteFile(manifestPath, original, 0o644))
 		// Under the read ceiling the member cannot deploy into local at all,
 		// but reads it.
-		out = h.run(true, "", "deploy", "--remote", "member", "--environment", "local", "--yes")
+		out = h.run(true, "", "deploy", "--remote", "member", "--env", "local", "--yes")
 		require.Contains(t, out, "deploy on environment local required (your role: read)")
-		out = h.run(false, "", "values", "--remote", "member", "--environment", "local")
+		out = h.run(false, "", "values", "--remote", "member", "--env", "local")
 		require.Contains(t, out, "APP_DOMAIN")
 	})
 
 	t.Run("lock", func(t *testing.T) {
-		h.run(false, "", "access", "set", memberEmail, "none", "--environment", "local", "--remote", "local")
+		h.run(false, "", "access", "set", memberEmail, "none", "--env", "local", "--remote", "local")
 		out := h.run(false, "", "env", "ls", "--remote", "member")
 		require.Regexp(t, `(?m)^local +- +locked `, out)
-		out = h.run(true, "", "values", "--remote", "member", "--environment", "local")
+		out = h.run(true, "", "values", "--remote", "member", "--env", "local")
 		require.Contains(t, out, "read on environment local required")
 		out = h.run(false, "", "access", "ls", "--remote", "member")
 		require.Contains(t, out, "local (locked)")
@@ -1428,12 +1428,12 @@ func TestDevAccess(t *testing.T) {
 		// Sudo-gated writes on a non-local remote confirm the password on
 		// stdin when the login has aged; a fresh login passes straight
 		// through, so the answer is supplied either way.
-		out = h.run(false, memberPassword+"\n", "env", "set", "--environment", "feature", "--max-role", "read", "--remote", "member", "--yes")
+		out = h.run(false, memberPassword+"\n", "env", "set", "--env", "feature", "--max-role", "read", "--remote", "member", "--yes")
 		require.Contains(t, out, "max role       read")
 		out = h.run(false, memberPassword+"\n", "env", "rm", "feature", "--yes", "--remote", "member")
 		require.Contains(t, out, "feature is removed; nothing of it remains")
 		// Production-like environments stay out of reach: no cell, read ceiling.
-		out = h.run(true, "", "env", "set", "--environment", "staging", "--max-role", "read", "--remote", "member", "--yes")
+		out = h.run(true, "", "env", "set", "--env", "staging", "--max-role", "read", "--remote", "member", "--yes")
 		require.Contains(t, out, "admin on environment staging required")
 	})
 
@@ -1441,37 +1441,37 @@ func TestDevAccess(t *testing.T) {
 	// and a none cell on local; the current remote is member, so every
 	// command names its remote.
 	t.Run("protection", func(t *testing.T) {
-		out := h.run(false, "", "env", "set", "--environment", "staging", "--deploy-policy", "promote-only",
+		out := h.run(false, "", "env", "set", "--env", "staging", "--deploy-policy", "promote-only",
 			"--promote-from", "local", "--remote", "local", "--yes")
 		require.Contains(t, out, "deploy policy  promote-only (from local)")
 		out = h.run(false, "", "env", "ls", "--remote", "local")
 		require.Regexp(t, `(?m)^staging +active +admin +normal +promote-only \(from local\) `, out)
 		// A direct deploy is refused before anything is submitted or built.
-		out = h.run(true, "", "deploy", "--remote", "member", "--environment", "staging", "--yes", "--force")
-		require.Contains(t, out, "environment staging is promote-only: promote with skali deploy --from local --environment staging")
+		out = h.run(true, "", "deploy", "--remote", "member", "--env", "staging", "--yes", "--force")
+		require.Contains(t, out, "environment staging is promote-only: promote with skali deploy --from local --env staging")
 		require.NotContains(t, out, "plan against")
 		// The promotion source must be readable: local is locked for the
 		// member by the none cell.
-		out = h.run(true, "", "deploy", "--remote", "member", "--from", "local", "--environment", "staging", "--yes", "--force")
+		out = h.run(true, "", "deploy", "--remote", "member", "--from", "local", "--env", "staging", "--yes", "--force")
 		require.Contains(t, out, "environment local")
 		require.Contains(t, out, "required")
-		h.run(false, "", "access", "set", memberEmail, "read", "--environment", "local", "--remote", "local")
-		out = h.run(false, "", "deploy", "--remote", "member", "--from", "local", "--environment", "staging", "--yes", "--force")
+		h.run(false, "", "access", "set", memberEmail, "read", "--env", "local", "--remote", "local")
+		out = h.run(false, "", "deploy", "--remote", "member", "--from", "local", "--env", "staging", "--yes", "--force")
 		require.Contains(t, out, "promote local to staging")
 		require.Contains(t, out, "ready")
 		require.NotContains(t, out, "bypassed")
 		// The bypass is for environment admins only; the policy binds the
 		// instance admin too, who then bypasses explicitly (the local admin
 		// reauthenticates silently) and the run records it.
-		out = h.run(true, "", "deploy", "--remote", "member", "--environment", "staging", "--yes", "--force", "--bypass-protection")
+		out = h.run(true, "", "deploy", "--remote", "member", "--env", "staging", "--yes", "--force", "--bypass-protection")
 		require.Contains(t, out, "bypassing protection needs admin on environment staging (your role: deploy)")
-		out = h.run(true, "", "deploy", "--remote", "local", "--environment", "staging", "--yes", "--force")
+		out = h.run(true, "", "deploy", "--remote", "local", "--env", "staging", "--yes", "--force")
 		require.Contains(t, out, "environment staging is promote-only")
-		out = h.run(false, "", "deploy", "--remote", "local", "--environment", "staging", "--yes", "--force", "--bypass-protection")
+		out = h.run(false, "", "deploy", "--remote", "local", "--env", "staging", "--yes", "--force", "--bypass-protection")
 		require.Contains(t, out, "bypassed: environment staging is promote-only (recorded on the run)")
 		require.Contains(t, out, "ready")
 		require.Contains(t, out, "protection  bypassed (recorded on the run)")
-		out = h.run(false, "", "run", "list", "--remote", "local", "--environment", "staging")
+		out = h.run(false, "", "run", "list", "--remote", "local", "--env", "staging")
 		require.Regexp(t, `(?m)^\S+ +deployment +\S+ +.*bypassed protection$`, out)
 	})
 
@@ -1497,7 +1497,7 @@ func TestDevAccess(t *testing.T) {
 		require.Eventually(t, func() bool {
 			return slices.Equal(managedClasses(), []string{"skali-normal", "skali-normal"})
 		}, 2*time.Minute, 2*time.Second)
-		out := h.run(false, "", "env", "set", "--environment", "staging", "--priority", "high", "--remote", "local", "--yes")
+		out := h.run(false, "", "env", "set", "--env", "staging", "--priority", "high", "--remote", "local", "--yes")
 		require.Contains(t, out, "priority       high")
 		require.Contains(t, out, "application pods roll onto priority class skali-high")
 		// The kernel re-renders staging right away; its Deployment moves to
@@ -1555,7 +1555,7 @@ func TestDevGuestbookScheduledBackupRetention(t *testing.T) {
 	require.Contains(t, run, "backup target set")
 
 	// A manual anchor that retention must never touch.
-	run = h.run(false, "", "backup", "create", "--remote", "local", "--environment", "local", "--yes")
+	run = h.run(false, "", "backup", "create", "--remote", "local", "--env", "local", "--yes")
 	require.Contains(t, run, "backup complete")
 	manualRow := regexp.MustCompile(`(?m)^([0-9a-f-]{36})  local +manual `)
 	run = h.run(false, "", "backup", "ls", "--remote", "local")
@@ -1566,7 +1566,7 @@ func TestDevGuestbookScheduledBackupRetention(t *testing.T) {
 	// The schedule is an environment setting (the local admin reauthenticates
 	// silently for the settings change); the scheduler seeds it when it first
 	// sees it and fires at the next minute; the snapshot is marked scheduled.
-	run = h.run(false, "", "backup", "schedule", "set", "--remote", "local", "--environment", "local",
+	run = h.run(false, "", "backup", "schedule", "set", "--remote", "local", "--env", "local",
 		"--every", "* * * * *", "--keep", "2m", "--yes")
 	require.Contains(t, run, "backups        every minute UTC, keep 2 minutes")
 	scheduledRow := regexp.MustCompile(`(?m)^([0-9a-f-]{36})  local +scheduled `)

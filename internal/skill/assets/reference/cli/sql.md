@@ -46,7 +46,7 @@ on the environment, like exec, and a recent login on a promote-only one.
 | Flag | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `--command`, `-c` | `string` | `""` | run this SQL and exit (several statements may be separated by semicolons) |
-| `--environment` | `string` | `""` | environment name (default: the checkout binding) |
+| `--env` | `string` | `""` | environment name (default: the checkout binding) |
 | `--file`, `-f` | `string` | `""` | run the SQL script in this file and exit; - reads it from stdin |
 | `--format` | `string` | `""` | output of a script: psql (default), csv, or json |
 | `--help`, `-h` | `bool` | `false` | help for sql |

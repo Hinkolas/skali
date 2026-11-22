@@ -58,7 +58,7 @@ func TestDispatchWorkerUsesFrozenContext(t *testing.T) {
 		}
 		return childStatus{}, err
 	}
-	for _, args := range [][]string{{"skill", "read", "manifest"}, {"validate"}, {"deploy", "--yes", "--environment", "production"}} {
+	for _, args := range [][]string{{"skill", "read", "manifest"}, {"validate"}, {"deploy", "--yes", "--env", "production"}} {
 		seedConfig(t, &cliconfig.Config{CurrentRemote: "selected", Remotes: map[string]*cliconfig.Remote{
 			"selected": {Master: selected.URL, Token: "tok", Instance: "inst-1", Version: "v0.5.0"}, "other": {Master: other.URL},
 		}})

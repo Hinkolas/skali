@@ -60,7 +60,7 @@ func TestCompleteEnvironmentsAndProjects(t *testing.T) {
 	require.Equal(t, []string{"production\tadmin", "staging\tadmin"}, values)
 	require.Equal(t, noFiles, directive)
 
-	values, _ = complete(t, "deploy", "--environment", "st")
+	values, _ = complete(t, "deploy", "--env", "st")
 	require.Equal(t, []string{"staging\tadmin"}, values)
 	values, _ = complete(t, "deploy", "--from", "")
 	require.Len(t, values, 2)
@@ -122,7 +122,7 @@ func TestCompleteSnapshotsRunsAndMembers(t *testing.T) {
 	require.Equal(t, []string{"alice@example.com\tadmin", "bob@example.com\tread"}, values)
 	values, _ = complete(t, "access", "set", "bob@example.com", "")
 	require.Equal(t, projectRoles, values)
-	values, _ = complete(t, "access", "set", "--environment", "production", "bob@example.com", "")
+	values, _ = complete(t, "access", "set", "--env", "production", "bob@example.com", "")
 	require.Equal(t, cellRoles, values)
 	values, _ = complete(t, "access", "remove", "b")
 	require.Equal(t, []string{"bob@example.com\tread"}, values)

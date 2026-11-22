@@ -3,7 +3,7 @@
 Read with `skali skill read cli workflows buckets`.
 [CLI overview and command index](../../cli.md).
 
-- `skali bucket rotate <key> [--environment <name>] [--retire-after 1h]`
+- `skali bucket rotate <key> [--env <name>] [--retire-after 1h]`
   issues a new S3 keypair for the bucket declared as `buckets.<key>`
   (environment maintain, recent login). The store accepts both keypairs,
   the applications referencing the bucket restart with the new one (the

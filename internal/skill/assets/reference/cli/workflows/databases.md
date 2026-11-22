@@ -3,7 +3,7 @@
 Read with `skali skill read cli workflows databases`.
 [CLI overview and command index](../../cli.md).
 
-- `skali database rotate <key> [--environment <name>] [--retire-after 1h]`
+- `skali database rotate <key> [--env <name>] [--retire-after 1h]`
   issues a new login role for the database declared as `databases.<key>`
   (environment maintain, recent login). The pool accepts both roles, the
   applications referencing the database restart with the new username and
@@ -25,7 +25,7 @@ Read with `skali skill read cli workflows databases`.
   cannot be combined with `--auto-memory`. `--set key=value` and `--unset key`
   are repeatable; changes can restart pool instances. These are pool names,
   whereas `database rotate` and `sql` take manifest database keys.
-- `skali sql [database] [--environment <name>]` runs SQL against
+- `skali sql [database] [--env <name>]` runs SQL against
   `databases.<database>` (the manifest's sole database when omitted) with
   that database's own credentials, in a short-lived client the platform
   starts for the session (a few seconds); no application has to run and

@@ -129,7 +129,7 @@ func newBackupRestoreCommand() *cobra.Command {
 			"completes, or until its data is accepted (skali backup accept).\n\n" +
 			"Without a snapshot id the project's snapshots are offered to pick\n" +
 			"from. The snapshot restores into the environment it was taken from\n" +
-			"unless --environment names another environment of the same project.\n" +
+			"unless --env names another environment of the same project.\n" +
 			"The resolved remote, project, snapshot, and environment are shown\n" +
 			"and confirmed by typing the environment name; --yes skips that.",
 		Args:              cobra.MaximumNArgs(1),
@@ -219,7 +219,7 @@ func newBackupRestoreCommand() *cobra.Command {
 		},
 	}
 	command.Flags().StringVar(&project, "project", "", "project holding the snapshot; defaults to the checkout's project")
-	command.Flags().StringVar(&environment, "environment", "",
+	command.Flags().StringVar(&environment, "env", "",
 		"environment to restore into; defaults to the environment the snapshot was taken from")
 	command.Flags().StringVar(&remote, "remote", "",
 		"remote to target for this one invocation, ignoring the checkout binding and the current remote")
@@ -244,7 +244,7 @@ func findSnapshot(ctx context.Context, scope *queryProject, snapshotID string) (
 }
 
 // chooseSnapshot offers the project's snapshots, newest first, when the
-// command was given none; --environment narrows the offer like it narrows
+// command was given none; --env narrows the offer like it narrows
 // the list. Without a terminal the caller has to name one.
 func chooseSnapshot(ctx context.Context, out io.Writer, in *bufio.Reader, scope *queryProject, environment, commandPath string) (*client.BackupSnapshot, error) {
 	snapshots, err := scope.api.ListProjectBackups(ctx, scope.project.ID)
@@ -315,7 +315,7 @@ func restoreEnvironment(scope *queryProject, snapshot *client.BackupSnapshot, ex
 		return resolved, nil
 	}
 	return nil, fmt.Errorf("environment %s, which the snapshot was taken from, does not exist in project %s on %s; "+
-		"deploy it again or pass --environment to restore into another environment",
+		"deploy it again or pass --env to restore into another environment",
 		snapshot.Environment, scope.project.Name, scope.api.Master())
 }
 
@@ -403,7 +403,7 @@ func newBackupCreateCommand() *cobra.Command {
 			}
 		},
 	}
-	command.Flags().StringVar(&environment, "environment", "", "environment to back up; defaults to the checkout binding")
+	command.Flags().StringVar(&environment, "env", "", "environment to back up; defaults to the checkout binding")
 	command.Flags().StringVar(&remote, "remote", "",
 		"remote to target for this one invocation, ignoring the checkout binding and the current remote")
 	command.Flags().BoolVar(&detach, "detach", false, "start the backup and return without following it")
@@ -418,7 +418,7 @@ func newBackupLsCommand() *cobra.Command {
 		Aliases: []string{"ls"},
 		Short:   "List the project's snapshots on the backup target",
 		Long: "Lists the snapshots of every environment of the project, newest\n" +
-			"first, as the backup target holds them; --environment narrows the\n" +
+			"first, as the backup target holds them; --env narrows the\n" +
 			"list to one environment. Snapshots of environments that no longer\n" +
 			"exist are listed too and can be restored into another environment.",
 		Args: cobra.NoArgs,
@@ -458,7 +458,7 @@ func newBackupLsCommand() *cobra.Command {
 		},
 	}
 	command.Flags().StringVar(&project, "project", "", "project whose snapshots to list; defaults to the checkout's project")
-	command.Flags().StringVar(&environment, "environment", "", "only list snapshots of this environment")
+	command.Flags().StringVar(&environment, "env", "", "only list snapshots of this environment")
 	command.Flags().StringVar(&remote, "remote", "",
 		"remote to target for this one invocation, ignoring the checkout binding and the current remote")
 	return command

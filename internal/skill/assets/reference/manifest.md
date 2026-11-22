@@ -595,7 +595,7 @@ Backups are not a manifest concern; there is no `backups` key (a manifest
 that still has one fails to parse and `skali manifest upgrade` drops the
 block). Manual snapshots come from `skali backup create`. Automatic backups
 are a per-environment setting an environment admin turns on with
-`skali backup schedule set --environment <name> --every "0 3 * * *" --keep 7d`
+`skali backup schedule set --env <name> --every "0 3 * * *" --keep 7d`
 (five-field cron evaluated in UTC, retention as a duration) or in the
 environment's settings in the Studio; `skali backup schedule show` and
 `skali backup schedule remove` read and turn it off. Every database,

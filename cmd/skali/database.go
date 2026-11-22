@@ -148,7 +148,7 @@ func newDatabaseRotateCommand() *cobra.Command {
 			}
 		},
 	}
-	command.Flags().StringVar(&environment, "environment", "", "environment holding the database; defaults to the checkout binding")
+	command.Flags().StringVar(&environment, "env", "", "environment holding the database; defaults to the checkout binding")
 	command.Flags().StringVar(&remote, "remote", "",
 		"remote to target for this one invocation, ignoring the checkout binding and the current remote")
 	command.Flags().StringVar(&retireAfter, "retire-after", "1h",

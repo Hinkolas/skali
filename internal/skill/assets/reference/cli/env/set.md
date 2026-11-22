@@ -9,7 +9,7 @@ Read with `skali skill read cli env set`.
 skali env set [flags]
 ```
 
-Changes settings of the bound environment (or --environment); only the
+Changes settings of the bound environment (or --env); only the
 flags given change. --max-role caps the roles members inherit from their
 project role (explicit per-environment roles and project admins are not
 capped). --deploy-policy promote-only refuses direct deploys; --promote-from
@@ -20,7 +20,7 @@ only.
 | Flag | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `--deploy-policy` | `string` | `""` | direct or promote-only |
-| `--environment` | `string` | `""` | environment to change; defaults to the checkout binding |
+| `--env` | `string` | `""` | environment to change; defaults to the checkout binding |
 | `--help`, `-h` | `bool` | `false` | help for set |
 | `--max-role` | `string` | `""` | ceiling for inherited roles: none, read, deploy, maintain, or admin |
 | `--priority` | `string` | `""` | normal or high |

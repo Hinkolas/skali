@@ -99,12 +99,12 @@ func TestBackupRemoveConfirmsAndDeletes(t *testing.T) {
 
 func TestBackupLsEnvironmentFilters(t *testing.T) {
 	seedBackupScope(t)
-	out := runBackupLs(t, "--environment", "staging")
+	out := runBackupLs(t, "--env", "staging")
 	require.Contains(t, out, testSnapshotStaging)
 	require.NotContains(t, out, testSnapshotProduction)
 	require.NotContains(t, out, testSnapshotRetired)
 
-	out = runBackupLs(t, "--environment", "nothing")
+	out = runBackupLs(t, "--env", "nothing")
 	require.Contains(t, out, "no snapshots of environment nothing")
 }
 
@@ -146,7 +146,7 @@ func TestBackupCreateConfirmsWithSummary(t *testing.T) {
 	require.Empty(t, install.posts)
 
 	// Enter takes the default and starts the backup.
-	out, err = create("\n", "--environment", "staging")
+	out, err = create("\n", "--env", "staging")
 	require.NoError(t, err)
 	require.Contains(t, out, "environment  staging")
 	require.Contains(t, out, "back up staging")
@@ -187,7 +187,7 @@ func TestBackupRestoreSummaryAndBareInvocation(t *testing.T) {
 	_, err = restore("")
 	require.ErrorContains(t, err, "name the snapshot to restore")
 	require.ErrorContains(t, err, "restore <snapshot-id>")
-	_, err = restore("", "--environment", "nothing")
+	_, err = restore("", "--env", "nothing")
 	require.ErrorContains(t, err, "no snapshots of environment nothing")
 
 	// The picker rows lead with when and where, and carry the id as value.
@@ -207,7 +207,7 @@ func TestRestoreEnvironmentDefaultsToSnapshotOrigin(t *testing.T) {
 	scope, err := resolveQueryProject(context.Background(), ".", "", "", "")
 	require.NoError(t, err)
 
-	// Without --environment the snapshot goes back where it was taken.
+	// Without --env the snapshot goes back where it was taken.
 	snapshot, err := findSnapshot(context.Background(), scope, testSnapshotStaging)
 	require.NoError(t, err)
 	target, err := restoreEnvironment(scope, snapshot, "")
@@ -217,7 +217,7 @@ func TestRestoreEnvironmentDefaultsToSnapshotOrigin(t *testing.T) {
 	// Reusing a display name must not select a different identity implicitly.
 	snapshot.Orphaned = true
 	_, err = restoreEnvironment(scope, snapshot, "")
-	require.ErrorContains(t, err, "--environment")
+	require.ErrorContains(t, err, "--env")
 	target, err = restoreEnvironment(scope, snapshot, "production")
 	require.NoError(t, err)
 	require.Equal(t, "p1-e1", target.ID)
@@ -235,7 +235,7 @@ func TestRestoreEnvironmentDefaultsToSnapshotOrigin(t *testing.T) {
 	require.NoError(t, err)
 	_, err = restoreEnvironment(scope, snapshot, "")
 	require.ErrorContains(t, err, "environment retired, which the snapshot was taken from, does not exist")
-	require.ErrorContains(t, err, "--environment")
+	require.ErrorContains(t, err, "--env")
 
 	_, err = findSnapshot(context.Background(), scope, "nope")
 	require.ErrorContains(t, err, "no snapshot nope in project flowdemo")
@@ -295,7 +295,7 @@ func TestRestoreHoldError(t *testing.T) {
 	err := restoreHoldError(status, "run-1", "production", cause)
 	require.ErrorIs(t, err, cause)
 	require.ErrorContains(t, err, "production stays down and deploys are refused until a restore completes")
-	require.ErrorContains(t, err, "skali backup accept --environment production")
+	require.ErrorContains(t, err, "skali backup accept --env production")
 
 	require.Equal(t, cause, restoreHoldError(&client.EnvironmentStatus{}, "run-1", "production", cause))
 	status.IncompleteRestore.RunID = &other

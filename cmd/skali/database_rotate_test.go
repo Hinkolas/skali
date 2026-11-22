@@ -24,7 +24,7 @@ func TestDatabaseRotateConfirmsWithSummary(t *testing.T) {
 	require.Contains(t, out, "keep working for 1h; then they are terminated and the role is dropped")
 	require.Empty(t, install.posts)
 
-	out, err = rotate("\n", "data", "--environment", "staging", "--retire-after", "90m")
+	out, err = rotate("\n", "data", "--env", "staging", "--retire-after", "90m")
 	require.NoError(t, err)
 	require.Contains(t, out, "environment  staging")
 	require.Contains(t, out, "previous login role retires after 90m")

@@ -41,7 +41,7 @@ func newBackupScheduleSetCommand() *cobra.Command {
 		Use:   "set",
 		Short: "Turn automatic backups on or change their schedule",
 		Long: "Sets the automatic backup schedule of the bound environment (or\n" +
-			"--environment): --every is a five-field cron expression evaluated in\n" +
+			"--env): --every is a five-field cron expression evaluated in\n" +
 			"UTC, --keep how long the snapshots it takes are kept (7d, 4w, 12h; at\n" +
 			"least one minute). The first snapshot runs at the next fire of the\n" +
 			"schedule, never right away.",
@@ -105,7 +105,7 @@ func newBackupScheduleSetCommand() *cobra.Command {
 		},
 	}
 	addAccessScopeFlags(command, &project, &remote)
-	command.Flags().StringVar(&environment, "environment", "", "environment to schedule; defaults to the checkout binding")
+	command.Flags().StringVar(&environment, "env", "", "environment to schedule; defaults to the checkout binding")
 	command.Flags().StringVar(&every, "every", "", "five-field cron expression in UTC, for example \"0 3 * * *\"")
 	command.Flags().StringVar(&keep, "keep", "", "how long snapshots the schedule takes are kept, for example 7d or 4w")
 	command.Flags().BoolVar(&yes, "yes", false, "skip the confirmation")
@@ -120,7 +120,7 @@ func newBackupScheduleShowCommand() *cobra.Command {
 		Use:   "show",
 		Short: "Show the automatic backup schedule of an environment",
 		Long: "Prints whether automatic backups of the bound environment (or\n" +
-			"--environment) are on, their schedule, retention, and next fire.",
+			"--env) are on, their schedule, retention, and next fire.",
 		Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			out := command.OutOrStdout()
@@ -147,12 +147,12 @@ func newBackupScheduleShowCommand() *cobra.Command {
 				fmt.Fprintf(out, "next           %s %s\n", fire.Local().Format("2006-01-02 15:04"),
 					style.Dim("("+fire.UTC().Format("2006-01-02 15:04")+" UTC)"))
 			}
-			fmt.Fprintln(out, style.Dim("snapshots: skali backup list --environment "+scope.environment.Name))
+			fmt.Fprintln(out, style.Dim("snapshots: skali backup list --env "+scope.environment.Name))
 			return nil
 		},
 	}
 	addAccessScopeFlags(command, &project, &remote)
-	command.Flags().StringVar(&environment, "environment", "", "environment to show; defaults to the checkout binding")
+	command.Flags().StringVar(&environment, "env", "", "environment to show; defaults to the checkout binding")
 	return command
 }
 
@@ -163,7 +163,7 @@ func newBackupScheduleRemoveCommand() *cobra.Command {
 		Use:     "remove",
 		Aliases: []string{"rm"},
 		Short:   "Turn automatic backups of an environment off",
-		Long: "Turns automatic backups of the bound environment (or --environment)\n" +
+		Long: "Turns automatic backups of the bound environment (or --env)\n" +
 			"off. Snapshots already taken stay on the backup target and no longer\n" +
 			"expire; manual backups keep working.",
 		Args: cobra.NoArgs,
@@ -213,7 +213,7 @@ func newBackupScheduleRemoveCommand() *cobra.Command {
 		},
 	}
 	addAccessScopeFlags(command, &project, &remote)
-	command.Flags().StringVar(&environment, "environment", "", "environment to change; defaults to the checkout binding")
+	command.Flags().StringVar(&environment, "env", "", "environment to change; defaults to the checkout binding")
 	command.Flags().BoolVar(&yes, "yes", false, "skip the confirmation")
 	return command
 }

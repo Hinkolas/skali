@@ -127,7 +127,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--ssh', required=True)
     parser.add_argument('--remote', required=True)
-    parser.add_argument('--environment', default='baseline')
+    parser.add_argument('--env', '--environment', dest='environment', default='baseline')
     parser.add_argument('--domain', required=True)
     parser.add_argument('--output', required=True)
     parser.add_argument('--force', action='store_true')
@@ -187,7 +187,7 @@ def main():
     # Give the SSH watches time to attach before submitting the deployment.
     time.sleep(3)
     if ssh.poll() is not None: raise RuntimeError('SSH collector failed; see kubernetes.stderr')
-    command = ['skali', 'deploy', '--remote', args.remote, '--environment', args.environment, '--env-file', '.env', '--platform', 'linux/arm64', '--yes', '--detach']
+    command = ['skali', 'deploy', '--remote', args.remote, '--env', args.environment, '--env-file', '.env', '--platform', 'linux/arm64', '--yes', '--detach']
     if args.force: command.append('--force')
     if args.redeploy:
         command = [sys.executable, '-B', '-c', 'from measure import redeploy; import sys; redeploy(*sys.argv[1:])', args.remote, environment_id]

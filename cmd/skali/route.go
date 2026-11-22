@@ -27,7 +27,7 @@ func newRouteCommand() *cobra.Command {
 	var remote, environment string
 	command.PersistentFlags().StringVar(&remote, "remote", "",
 		"remote to target for this one invocation, ignoring the checkout binding and the current remote")
-	command.PersistentFlags().StringVar(&environment, "environment", "",
+	command.PersistentFlags().StringVar(&environment, "env", "",
 		"environment name (default: the checkout binding)")
 
 	list := &cobra.Command{

@@ -19,13 +19,13 @@ completes, or until its data is accepted (skali backup accept).
 
 Without a snapshot id the project's snapshots are offered to pick
 from. The snapshot restores into the environment it was taken from
-unless --environment names another environment of the same project.
+unless --env names another environment of the same project.
 The resolved remote, project, snapshot, and environment are shown
 and confirmed by typing the environment name; --yes skips that.
 
 | Flag | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `--environment` | `string` | `""` | environment to restore into; defaults to the environment the snapshot was taken from |
+| `--env` | `string` | `""` | environment to restore into; defaults to the environment the snapshot was taken from |
 | `--help`, `-h` | `bool` | `false` | help for restore |
 | `--project` | `string` | `""` | project holding the snapshot; defaults to the checkout's project |
 | `--remote` | `string` | `""` | remote to target for this one invocation, ignoring the checkout binding and the current remote |
