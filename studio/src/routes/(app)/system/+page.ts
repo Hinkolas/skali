@@ -11,17 +11,31 @@ import type { PageLoad } from './$types';
 // line. The update status, the backup target, the pools and the object
 // store feed the card summaries; a
 // target that could not be read is undefined, kept apart from the 404 that
-// means none is set.
+// means none is set. The object store reads the master live, the slowest
+// call by far, so the page does not wait for it: its pill fills in once
+// the answer arrives.
 export const load: PageLoad = async ({ fetch, parent }) => {
 	const { user } = await parent();
 	if (user?.role !== 'admin') {
 		error(403, 'You need the admin role to see system settings');
 	}
-	const [res, targetRes, poolsRes, storeRes] = await Promise.all([
+	// null: no store on this installation; undefined: could not be read.
+	const objectStore: Promise<ObjectStore | null | undefined> = apiFetch(
+		fetch,
+		'/v1/system/object-storage'
+	)
+		.then(async (storeRes) =>
+			storeRes.ok
+				? ((await storeRes.json()) as { store: ObjectStore }).store
+				: storeRes.status === 404
+					? null
+					: undefined
+		)
+		.catch(() => undefined);
+	const [res, targetRes, poolsRes] = await Promise.all([
 		apiFetch(fetch, '/v1/system/updates'),
 		apiFetch(fetch, '/v1/system/backup-target'),
-		apiFetch(fetch, '/v1/system/database-pools'),
-		apiFetch(fetch, '/v1/system/object-storage')
+		apiFetch(fetch, '/v1/system/database-pools')
 	]);
 	return {
 		updates: res.ok ? ((await res.json()) as UpdateStatus) : null,
@@ -31,11 +45,6 @@ export const load: PageLoad = async ({ fetch, parent }) => {
 				? null
 				: undefined,
 		pools: poolsRes.ok ? ((await poolsRes.json()) as DatabasePoolsResponse).pools : null,
-		// null: no store on this installation; undefined: could not be read.
-		objectStore: storeRes.ok
-			? ((await storeRes.json()) as { store: ObjectStore }).store
-			: storeRes.status === 404
-				? null
-				: undefined
+		objectStore
 	};
 };
