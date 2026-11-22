@@ -7,7 +7,11 @@
 // injected by the caller.
 package seaweed
 
-import "github.com/Hinkolas/skali/internal/platform"
+import (
+	"fmt"
+
+	"github.com/Hinkolas/skali/internal/platform"
+)
 
 // Image is the single SeaweedFS pin. Every rendered component uses exactly
 // this image; the measured behaviors below (identity channel, deletion
@@ -121,4 +125,52 @@ func FilersForNodes(nodes int) int {
 		return 2
 	}
 	return 1
+}
+
+// Volume size limits, in megabytes as the master's -volumeSizeLimitMB
+// takes them. Every bucket is its own collection and holds at least one
+// volume per replica however little it stores, and a volume server with
+// -max=0 derives its slot count from its free disk divided by the limit:
+// the limit is the growth ceiling of one volume, not an allocation, but
+// it decides how many buckets the store can hold (issue #289). 256 MB
+// gives a 40 GB node about 130 slots and costs a small bucket half a
+// gigabyte of reserved room at replication 001; large objects are
+// unaffected, the S3 gateway chunks uploads.
+const (
+	DefaultVolumeSizeLimitMB = 256
+	// MinVolumeSizeLimitMB: below about 100 MB a store under sustained
+	// writes mostly grows volumes, one at a time.
+	MinVolumeSizeLimitMB = 64
+	// MaxVolumeSizeLimitMB is the pinned build's ceiling: its master
+	// refuses to start above 30 GB ("30GB" in its version string).
+	MaxVolumeSizeLimitMB = 30000
+)
+
+// VolumeSizeLimitMB resolves the recorded limit: nil (never set) or a
+// non-positive value is the default.
+func VolumeSizeLimitMB(recorded *int32) int {
+	if recorded == nil || *recorded <= 0 {
+		return DefaultVolumeSizeLimitMB
+	}
+	return int(*recorded)
+}
+
+// ValidateVolumeSizeLimitMB reports why a requested limit cannot be
+// rendered, or nil.
+func ValidateVolumeSizeLimitMB(mb int) error {
+	if mb < MinVolumeSizeLimitMB || mb > MaxVolumeSizeLimitMB {
+		return fmt.Errorf("the volume size limit must be between %d and %d MB", MinVolumeSizeLimitMB, MaxVolumeSizeLimitMB)
+	}
+	return nil
+}
+
+// VolumesPerBucket is how many volumes a new bucket's first write grows:
+// the managed masters grow one volume per collection (copy_N = 1 in
+// master.toml, renderMasterConfig), the dev all-in-one runs the engine
+// default of seven for a single copy.
+func VolumesPerBucket(managed bool) int {
+	if managed {
+		return 1
+	}
+	return 7
 }

@@ -56,6 +56,18 @@ type StoreSpec struct {
 	// stamped on the filer pod templates so a changed metadata connection
 	// rolls the processes that only read it at start. Empty stamps nothing.
 	StoreConfigHash string
+	// VolumeSizeLimitMB is the masters' volume size limit; zero renders
+	// DefaultVolumeSizeLimitMB.
+	VolumeSizeLimitMB int
+}
+
+// volumeSizeLimitMB is the rendered limit; an unset spec renders the
+// default.
+func (spec StoreSpec) volumeSizeLimitMB() int {
+	if spec.VolumeSizeLimitMB <= 0 {
+		return DefaultVolumeSizeLimitMB
+	}
+	return spec.VolumeSizeLimitMB
 }
 
 // templateMeta is the pod-template metadata of a component: its labels
@@ -341,11 +353,16 @@ func capabilitySelector() map[string]string {
 func renderMasters(spec StoreSpec) *appsv1.StatefulSet {
 	peers := masterPeers(spec.Namespace, spec.Masters)
 	filesystem := corev1.PersistentVolumeFilesystem
-	// -volumeSizeLimitMB pins volumes small (8 GB, not the 30 GB default):
-	// volumes seal sooner, vacuum passes are smaller, rebalancing is
-	// finer-grained. New volumes only, which is why it is right from day
-	// one. -telemetry=false: since 4.41 the leader master otherwise reports
-	// cluster statistics to telemetry.seaweedfs.com once a day.
+	// -volumeSizeLimitMB is the admin's setting (DefaultVolumeSizeLimitMB
+	// unless changed): small volumes keep the slot count, and with it the
+	// bucket count, from running out on small disks. The master applies a
+	// changed limit to existing volumes too, on their next heartbeat:
+	// volumes at or over it are sealed (still readable), the others stay
+	// writable up to it, and the volume servers recompute their slot
+	// counts from it without a restart (measured on the pin, issue #289).
+	// Nothing is rewritten. -telemetry=false: since 4.41 the leader master
+	// otherwise reports cluster statistics to telemetry.seaweedfs.com once
+	// a day.
 	args := []string{
 		"master",
 		"-mdir=/data",
@@ -353,7 +370,7 @@ func renderMasters(spec StoreSpec) *appsv1.StatefulSet {
 		fmt.Sprintf("-port.grpc=%d", MasterGRPCPort),
 		"-ip=$(POD_NAME)." + MasterService + "." + spec.Namespace + ".svc.cluster.local",
 		"-peers=" + peers,
-		"-volumeSizeLimitMB=8000",
+		fmt.Sprintf("-volumeSizeLimitMB=%d", spec.volumeSizeLimitMB()),
 		"-defaultReplication=" + spec.Replication,
 		"-telemetry=false",
 	}
@@ -620,7 +637,7 @@ func renderAllInOne(spec StoreSpec) *appsv1.Deployment {
 	args := []string{
 		"server",
 		"-dir=/data",
-		"-master.volumeSizeLimitMB=1000",
+		fmt.Sprintf("-master.volumeSizeLimitMB=%d", spec.volumeSizeLimitMB()),
 		"-master.telemetry=false",
 		fmt.Sprintf("-master.port=%d", MasterPort),
 		fmt.Sprintf("-volume.port=%d", VolumePort),

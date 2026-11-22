@@ -61,8 +61,14 @@ func (c *Controller) SeaweedProbe() observe.Probe {
 		}
 		ready := min(int32(len(peers)+1), row.Masters)
 		storeObj.ObjectStore.MastersReady = ready
-		if count, err := c.deps.Seaweed.VolumeServerCount(ctx); err == nil {
-			storeObj.ObjectStore.VolumeServersReady = int32(count)
+		storeObj.ObjectStore.VolumeSizeLimitMB = int32(seaweed.VolumeSizeLimitMB(row.VolumeSizeLimitMb))
+		if slots, err := c.deps.Seaweed.Slots(ctx); err == nil {
+			storeObj.ObjectStore.VolumeServersReady = int32(len(slots.Servers))
+			storeObj.ObjectStore.SlotsObserved = true
+			storeObj.ObjectStore.VolumeSlots = int32(slots.Total())
+			storeObj.ObjectStore.FreeVolumeSlots = int32(slots.Free())
+			storeObj.ObjectStore.VolumeHeadroom = int32(slots.VolumeHeadroom(seaweed.ReplicationCopies(row.Replication)))
+			storeObj.ObjectStore.BucketHeadroom = int32(slots.BucketHeadroom(row.Replication, seaweed.VolumesPerBucket(c.cfg.Managed)))
 		}
 		storeObj.ObjectStore.FilerReady = c.deps.Seaweed.FilerAlive(ctx)
 		storeObj.ObjectStore.S3Ready, storeObj.ObjectStore.S3Detail = c.deps.Seaweed.S3Ready(ctx)

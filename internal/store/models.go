@@ -455,6 +455,7 @@ type ObjectStore struct {
 	State              string
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
+	VolumeSizeLimitMb  *int32
 }
 
 type PoolConnectionIncident struct {

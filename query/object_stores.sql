@@ -31,3 +31,9 @@ UPDATE object_stores
 SET masters = $2, volume_servers = $3, replication = $4,
     volume_storage_bytes = $5, updated_at = now()
 WHERE id = $1;
+
+-- The admin's volume size limit; NULL returns the store to the default.
+-- name: SetObjectStoreVolumeSizeLimit :execrows
+UPDATE object_stores
+SET volume_size_limit_mb = $2, updated_at = now()
+WHERE id = $1 AND state <> 'released';

@@ -521,28 +521,22 @@ func (c *Client) ClusterStatus(ctx context.Context) (leader string, peers []stri
 	return cs.Leader, cs.Peers, nil
 }
 
-// VolumeServerCount reads the number of connected volume servers from the
-// master's directory topology; a server counts from the moment it
-// announces, volumes or not.
-func (c *Client) VolumeServerCount(ctx context.Context) (int, error) {
+// Slots reads the master's directory topology: every connected volume
+// server (a server counts from the moment it announces, volumes or not)
+// with the slots it offers and holds.
+func (c *Client) Slots(ctx context.Context) (SlotReport, error) {
 	data, status, err := c.master(ctx, "/dir/status", nil)
 	if err != nil {
-		return 0, err
+		return SlotReport{}, err
 	}
 	if status < 200 || status >= 300 {
-		return 0, fmt.Errorf("seaweed: dir status: status %d", status)
+		return SlotReport{}, fmt.Errorf("seaweed: dir status: status %d", status)
 	}
 	var ds dirStatus
 	if err := json.Unmarshal(data, &ds); err != nil {
-		return 0, fmt.Errorf("seaweed: parse dir status: %w", err)
+		return SlotReport{}, fmt.Errorf("seaweed: parse dir status: %w", err)
 	}
-	count := 0
-	for _, dc := range ds.Topology.DataCenters {
-		for _, rack := range dc.Racks {
-			count += len(rack.DataNodes)
-		}
-	}
-	return count, nil
+	return slotReport(ds), nil
 }
 
 // FilerAlive reports whether the filer answers its HTTP API.

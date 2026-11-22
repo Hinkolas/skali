@@ -285,7 +285,8 @@ func (c *Controller) ensureObjectStore(ctx context.Context, row store.ObjectStor
 		// The filer reads its store config only at start: hashing the
 		// Secret's content into the pod template rolls the filers when the
 		// metadata connection or credential changes.
-		StoreConfigHash: secretDataHash(storeSecret),
+		StoreConfigHash:   secretDataHash(storeSecret),
+		VolumeSizeLimitMB: seaweed.VolumeSizeLimitMB(row.VolumeSizeLimitMb),
 	}
 	objects := seaweed.RenderDev(spec)
 	if c.cfg.Managed {
@@ -688,4 +689,25 @@ func secretDataHash(secret *corev1.Secret) string {
 	slices.Sort(lines)
 	sum := sha256.Sum256([]byte(strings.Join(lines, "\n")))
 	return hex.EncodeToString(sum[:8])
+}
+
+// errNoSeaweed answers the admin reads on a controller without an object
+// store client.
+var errNoSeaweed = errors.New("substrate: no seaweed client configured")
+
+// ObjectStoreSlots reads the store's live volume slot accounting from the
+// master: the admin page's capacity numbers, read on request rather than
+// from the probe's last pass so a changed volume size limit shows as soon
+// as the volume servers have recomputed their slots.
+func (c *Controller) ObjectStoreSlots(ctx context.Context) (seaweed.SlotReport, error) {
+	if c.deps.Seaweed == nil {
+		return seaweed.SlotReport{}, errNoSeaweed
+	}
+	return c.deps.Seaweed.Slots(ctx)
+}
+
+// EnqueueObjectStoreSettings re-applies the store after an admin changed
+// its settings, instead of at the next resync.
+func (c *Controller) EnqueueObjectStoreSettings() {
+	c.EnqueueObjectStore(reasonAPI)
 }

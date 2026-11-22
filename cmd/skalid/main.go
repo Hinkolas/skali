@@ -505,8 +505,10 @@ func runServe() error {
 	// A typed nil would satisfy the interface; only a live controller sizes
 	// pools.
 	var poolTuner api.PoolTuner
+	var objectStorage api.ObjectStorage
 	if substrateCtl != nil {
 		poolTuner = substrateCtl
+		objectStorage = substrateCtl
 	}
 	// Every request context derives from requestCtx, which shutdown cancels
 	// after requestGrace.
@@ -540,6 +542,7 @@ func runServe() error {
 			ManagedCluster:     cfg.ManagedCluster,
 			Databases:          dbstore.New(st),
 			Pools:              poolTuner,
+			ObjectStorage:      objectStorage,
 			SecretReader:       secretReader,
 			Version:            versionpkg.Version,
 			InstanceName:       cfg.InstanceName,

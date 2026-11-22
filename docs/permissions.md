@@ -374,10 +374,12 @@ Instance admin: `GET /nodes`, `GET /system/observation` (both member-readable
 today, the Studio only hides them), `GET /users`; sudo: `POST /users`,
 `PATCH /users/{id}` (gains `create_projects`), `DELETE /users/{id}`,
 `POST /users/{id}/password`, `PUT|DELETE /system/backup-target`,
-`PUT /system/database-pools/{name}/settings` (`GET /system/backup-target`,
-`GET /system/database-pools`, `GET /system/database-pools/{name}` and
-`GET /system/database-pools/{name}/metrics` are plain admin reads; the
-backup target read never returns its secret).
+`PUT /system/database-pools/{name}/settings`,
+`PUT /system/object-storage/settings` (`GET /system/backup-target`,
+`GET /system/database-pools`, `GET /system/database-pools/{name}`,
+`GET /system/database-pools/{name}/metrics` and
+`GET /system/object-storage` are plain admin reads; the backup target
+read never returns its secret).
 
 Project scoped:
 
