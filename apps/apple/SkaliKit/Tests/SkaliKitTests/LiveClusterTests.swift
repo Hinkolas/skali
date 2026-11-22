@@ -72,6 +72,10 @@ struct LiveClusterTests {
             _ = try await api.databasePool(name: pool.name)
             _ = try await api.databasePoolMetrics(name: pool.name, window: .hour)
         }
+        // Nil on an installation without the object-storage capability.
+        if try await api.objectStore() != nil {
+            _ = try await api.objectStoreBuckets()
+        }
         _ = try await api.backupTarget()
         // Nil without a target, and on an API-only daemon (no summary route).
         _ = try await api.backupSummary()

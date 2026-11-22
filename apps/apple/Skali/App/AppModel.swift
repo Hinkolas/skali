@@ -100,15 +100,22 @@ final class AppModel {
 
     /// `-SkaliDemo`, `-SkaliDemoMember`, `-SkaliDemoUpdate available` (or
     /// `updating`, `failed`) for where the demo's update stands, and
-    /// `-SkaliDemoBackups none` for a cluster without a backup target.
+    /// `-SkaliDemoBackups none` for a cluster without a backup target, and
+    /// `-SkaliDemoObjectStorage full` for an object store out of room.
     private static var launchDemo: DemoCluster? {
         let arguments = ProcessInfo.processInfo.arguments
         let update = UserDefaults.standard.string(forKey: "SkaliDemoUpdate")
             .flatMap(DemoUpdates.Scenario.init(rawValue:)) ?? .current
         let backups = UserDefaults.standard.string(forKey: "SkaliDemoBackups")
             .flatMap(DemoBackups.Scenario.init(rawValue:)) ?? .configured
-        if arguments.contains("-SkaliDemoMember") { return DemoCluster(member: true, update: update, backups: backups) }
-        if arguments.contains("-SkaliDemo") { return DemoCluster(update: update, backups: backups) }
+        let objectStorage = UserDefaults.standard.string(forKey: "SkaliDemoObjectStorage")
+            .flatMap(DemoObjectStorage.Scenario.init(rawValue:)) ?? .roomy
+        if arguments.contains("-SkaliDemoMember") {
+            return DemoCluster(member: true, update: update, backups: backups, objectStorage: objectStorage)
+        }
+        if arguments.contains("-SkaliDemo") {
+            return DemoCluster(update: update, backups: backups, objectStorage: objectStorage)
+        }
         return nil
     }
 

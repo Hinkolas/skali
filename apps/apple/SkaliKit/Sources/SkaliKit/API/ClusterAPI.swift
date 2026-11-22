@@ -110,6 +110,15 @@ public protocol ClusterAPI: Sendable {
     func databasePool(name: String) async throws -> DatabasePoolDetail
     /// Admin only: one pool's usage over `window`.
     func databasePoolMetrics(name: String, window: NodeMetrics.Window) async throws -> DatabasePoolMetrics
+    /// Admin only: the object store with its volume size and slots; nil
+    /// when the installation has no object store.
+    func objectStore() async throws -> ObjectStore?
+    /// Admin only: every bucket on the store with its usage; nil when the
+    /// installation has no object store.
+    func objectStoreBuckets() async throws -> ObjectStoreBuckets?
+    /// Admin only, sudo: sets the volume size limit (nil for the default);
+    /// the masters restart to apply it.
+    func saveObjectStorageSettings(_ settings: ObjectStorageSettings) async throws -> ObjectStore
     /// Admin only; nil when no target is configured.
     func backupTarget() async throws -> BackupTarget?
     /// Admin only: the target with what its bucket holds and how backups
@@ -373,6 +382,28 @@ extension APIClient: ClusterAPI {
         try await get(
             "v1/system/database-pools/\(name)/metrics",
             query: [URLQueryItem(name: "window", value: window.rawValue)])
+    }
+
+    public func objectStore() async throws -> ObjectStore? {
+        do {
+            let response: ObjectStoreResponse = try await get("v1/system/object-storage")
+            return response.store
+        } catch let error as APIError where error.status == 404 {
+            return nil
+        }
+    }
+
+    public func objectStoreBuckets() async throws -> ObjectStoreBuckets? {
+        do {
+            return try await get("v1/system/object-storage/buckets")
+        } catch let error as APIError where error.status == 404 {
+            return nil
+        }
+    }
+
+    public func saveObjectStorageSettings(_ settings: ObjectStorageSettings) async throws -> ObjectStore {
+        let response: ObjectStoreResponse = try await put("v1/system/object-storage/settings", body: settings)
+        return response.store
     }
 
     public func backupTarget() async throws -> BackupTarget? {
