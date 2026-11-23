@@ -4,6 +4,10 @@
 	<head>
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<!-- In the shell, not svelte:head: Safari reads the icon from the page
+		     as served and never picks up one the app adds after it starts. -->
+		<link rel="icon" href="%sveltekit.assets%/favicon.png" type="image/png" />
+		<link rel="apple-touch-icon" href="%sveltekit.assets%/favicon.png" />
 		%sveltekit.head%
 	</head>
 
